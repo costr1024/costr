@@ -35,6 +35,7 @@ class RelayPool {
 
   final List<RelayConnection> _connections;
   final Map<String, Map<String, dynamic>> _activeSubs = {};
+  final Set<String> _closeOnEose = {};
   final LinkedHashSet<String> _seenIds = LinkedHashSet();
   bool _mergedWired = false;
   bool _connecting = false;
@@ -89,8 +90,12 @@ class RelayPool {
           _seenIds.remove(_seenIds.first);
         }
       });
-      c.eose.listen((_) {
-        // v1: no-op. EOSE surfaced for future global-snapshot CLOSE behavior.
+      c.eose.listen((String subId) {
+        // On EOSE for a closeOnEose subscription, close it (bounded snapshot
+        // instead of an unbounded live firehose — critical on small hosts).
+        if (_closeOnEose.remove(subId)) {
+          closeSubscription(subId);
+        }
       });
     }
   }
@@ -103,8 +108,14 @@ class RelayPool {
 
   /// Issue a REQ to every connected relay; re-issues to relays that reconnect
   /// later. [subId] must be unique per logical subscription.
-  void request(String subId, Map<String, dynamic> filter) {
+  ///
+  /// If [closeOnEose] is true (used for the global feed), the subscription is
+  /// CLOSED on the first EOSE from any relay, bounding it to a recent snapshot
+  /// instead of an unbounded live firehose.
+  void request(String subId, Map<String, dynamic> filter,
+      {bool closeOnEose = false}) {
     _activeSubs[subId] = filter;
+    if (closeOnEose) _closeOnEose.add(subId);
     for (final c in _connections) {
       if (c.isConnected) c.request(subId, filter);
     }
@@ -113,6 +124,7 @@ class RelayPool {
   /// Close a subscription on every connected relay and stop tracking it.
   void closeSubscription(String subId) {
     _activeSubs.remove(subId);
+    _closeOnEose.remove(subId);
     for (final c in _connections) {
       if (c.isConnected) c.closeSubscription(subId);
     }

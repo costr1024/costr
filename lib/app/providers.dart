@@ -96,19 +96,35 @@ final bootstrapProvider = FutureProvider<void>((ref) async {
 class EventStoreNotifier extends Notifier<List<Event>> {
   final EventStore _store = EventStore();
   StreamSubscription<Event>? _sub;
+  Timer? _flush;
+  bool _dirty = false;
 
   @override
   List<Event> build() {
     final pool = ref.watch(relayPoolProvider);
     _sub = pool.events.listen((e) {
       if (e.isTextNote && _store.add(e)) {
-        state = _store.events;
+        _scheduleFlush();
       }
     });
     ref.onDispose(() {
       _sub?.cancel();
+      _flush?.cancel();
     });
     return _store.events;
+  }
+
+  /// Throttle state emission: instead of rebuilding on every single event
+  /// (which at firehose rates floods the UI/GC), batch at most once per 200ms.
+  void _scheduleFlush() {
+    _dirty = true;
+    _flush ??= Timer(const Duration(milliseconds: 200), () {
+      _flush = null;
+      if (_dirty) {
+        _dirty = false;
+        state = _store.events;
+      }
+    });
   }
 
   void clear() {
@@ -197,7 +213,13 @@ final feedSubscriptionProvider = Provider<void>((ref) {
   if (mode == FeedMode.following && follows.isEmpty) return;
 
   final subId = nextSubId('feed');
-  pool.request(subId, buildFeedFilter(mode, follows));
+  // Global feed: bounded snapshot (closeOnEose) to avoid an unbounded live
+  // firehose overwhelming small hosts. Following feed: low volume, live.
+  pool.request(
+    subId,
+    buildFeedFilter(mode, follows),
+    closeOnEose: mode == FeedMode.global,
+  );
   ref.onDispose(() => pool.closeSubscription(subId));
 });
 

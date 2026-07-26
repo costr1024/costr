@@ -56,6 +56,7 @@ class _FakeRelay implements RelayConnection {
   }
 
   void emit(Event e) => _events.add(e);
+  void emitEose(String subId) => _eose.add(subId);
   void markDisconnected() {
     _connected = false;
     _onDisconnected?.call();
@@ -154,6 +155,33 @@ void main() {
       expect(a.sent, [
         ['REQ', 'costr:feed:5', {'kinds': [1]}]
       ]);
+      await pool.dispose();
+    });
+
+    test('closeOnEose closes the sub on the first EOSE from any relay',
+        () async {
+      final a = _FakeRelay('wss://a');
+      final b = _FakeRelay('wss://b');
+      final pool = RelayPool([a, b]);
+      await pool.connect();
+      pool.request(
+        'costr:feed:7',
+        {'kinds': [1], 'limit': 200},
+        closeOnEose: true,
+      );
+
+      // First EOSE (from a) closes on every connected relay.
+      a.emitEose('costr:feed:7');
+      await Future<void>.delayed(Duration.zero);
+      expect(a.sent.last, ['CLOSE', 'costr:feed:7']);
+      expect(b.sent.last, ['CLOSE', 'costr:feed:7']);
+
+      // A later EOSE from b is a no-op (already closed/removed).
+      b.emitEose('costr:feed:7');
+      await Future<void>.delayed(Duration.zero);
+      final closeCount =
+          b.sent.where((m) => m[0] == 'CLOSE').length;
+      expect(closeCount, 1);
       await pool.dispose();
     });
   });
