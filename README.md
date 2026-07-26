@@ -21,6 +21,11 @@ Android、iOS、Windows、macOS、Linux 五端。
 - [NIP-02](https://github.com/nostr-protocol/nips/blob/master/02.md) —— 联系人列表（kind 3），作为关注列表来源。
 - [BIP-340](https://bips.xyz/340) —— secp256k1 Schnorr（用 `bip340` 包）做公钥派生。签名功能随发帖特性一同加入。
 
+**中继兼容性**：NIP-01 规定 EVENT 帧的 event 是数组形式
+`[id, pubkey, created_at, kind, tags, content, sig]`，但部分中继（如
+`relay.bostr.online`）发送对象形式 `{"id","pubkey",...}`。`Event.fromMessage`
+两者都解析，`_onData` 据此分发，所以对标准与非标准中继都能取到事件。
+
 ## 环境要求
 
 - Flutter 3.44.x（stable）。SDK 装在 `/home/user/flutter`；确保 `/home/user/flutter/bin` 在 PATH 中
@@ -35,8 +40,14 @@ Android、iOS、Windows、macOS、Linux 五端。
 ```bash
 flutter pub get
 flutter run -d linux        # 或：android / ios / macos / windows
-flutter doctor
 ```
+
+> **小内存机器注意**：`flutter run` 的调试编译峰值内存 ~1.5–2GB，无 swap 的
+> 小 ECS（如 2 vCPU / 7GB / 无 swap）会 OOM 卡死。这类机器直接跑已构建的
+> 二进制跳过编译：
+> ```bash
+> ./build/linux/x64/debug/bundle/costr
+> ```
 
 首次启动会要求粘贴 `nsec1` 私钥。私钥存入 OS 密钥库（Android Keystore / iOS Keychain / Linux 桌面用 libsecret），从不离开本机。
 
@@ -72,14 +83,14 @@ lib/
   utils/
     bech32_codec.dart    纯 Dart BIP-173 bech32
     nip19.dart           nsec/npub/note ↔ hex
-test/             单元与 widget 测试（49 个）
+test/             单元与 widget 测试（58 个）
 ```
 
 ## 验证
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 49 个测试
+flutter test             # 58 个测试
 flutter build linux --debug
 ```
 
@@ -89,7 +100,7 @@ flutter build linux --debug
 - 全球流是**有界快照**：EOSE 后即 CLOSE（取近期事件，不再持续接收 live firehose），切回全球模式会重新拉一次。关注流事件量小，保持 live。
 - 关注列表可能 stale（如果你的 kind 3 最后更新在默认中继集之外的中继上）。
 - 单 isolate 做 JSON 解析 + 去重；极高事件速率下 UI 可能卡顿（v1 有界可接受，后续可 isolate 化）。
-- Linux 桌面安全存储需要运行中的 keyring（GNOME Keyring / KDE Wallet）。无 keyring 时降级为"重启即登出"，不会崩溃。
+- 安全存储：优先用 OS keystore（Linux libsecret / Android Keystore / iOS Keychain 等）。Linux 上若 login keyring 锁着或会话未自动解锁（自动登录/SSH 转发桌面等），libsecret 会失败，此时**自动退回 0600 权限文件** `~/.config/costr/secret.json`（dir 0700）。文件兜底的安全级别≈空密码 keyring（都是磁盘可读），适合独占的单用户主机。libsecret 一旦失败即记忆，后续不再重试。
 
 ## 许可证
 
