@@ -1,114 +1,96 @@
 # costr
 
-A cross-platform Nostr social client built with Flutter, targeting Android,
-iOS, Windows, macOS, and Linux from a single Dart codebase.
+**costr** = Chinese Nostr。一个用 Flutter 构建的跨平台 Nostr 社交客户端，单一代码库覆盖
+Android、iOS、Windows、macOS、Linux 五端。
 
-## Status
+## 当前状态
 
-**v1** — private-key login (NIP-19 `nsec1`) + a public text-note feed with
-global and following timelines. No posting/compose yet.
+**v1** —— 私钥登录（NIP-19 `nsec1`）+ 公开帖子信息流（全球流 / 关注流）。暂不支持发帖。
 
-Implemented:
-- Identity: paste an `nsec1` private key → derive the x-only pubkey
-  (BIP-340 `getPublicKey`) → persist in OS secure storage (auto-login).
-- Feed: segmented toggle between **全球** (global kind-1 firehose, live, capped)
-  and **关注** (kind-1 from your NIP-02 kind-3 contact list).
-- Relay pool: multi-relay fan-out with per-event-id dedup, exponential-backoff
-  reconnect, and re-issue of active subscriptions on reconnect.
-- Event store: in-memory, dedup by id, newest-first, capped at 5000.
-- UI: login page, feed page (relay status chip + empty/error states),
-  profile page (npub/pubkey + logout), compose placeholder.
+已实现：
+- **身份**：粘贴 `nsec1` 私钥 → 用 BIP-340 `getPublicKey` 派生 x-only 公钥 → 存入 OS 安全存储，下次启动自动登录。
+- **信息流**：在 **全球**（kind 1 实时广播流，有界）和 **关注**（来自你的 NIP-02 kind 3 联系人列表中作者的 kind 1）之间切换。
+- **中继池**：多中继 fan-out，按 event id 去重，断线指数退避重连，重连后自动重发活跃订阅。
+- **事件存储**：内存单源，按 id 去重，按时间倒序，上限 5000 条淘汰最旧。
+- **界面**：登录页、信息流页（中继状态 chip + 空/错误态）、个人页（npub/pubkey + 登出）、发帖占位页。
 
-## Protocols
+## 协议
 
-- [NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md) —
-  events, REQ/EVENT/CLOSE/EOSE/NOTICE.
-- [NIP-19](https://github.com/nostr-protocol/nips/blob/master/19.md) —
-  `nsec1`/`npub1`/`note1` bech32 (pure-Dart codec; the `bech32` pub package
-  is incompatible with Dart 3.x).
-- [NIP-02](https://github.com/nostr-protocol/nips/blob/master/02.md) —
-  contact list (kind 3) as the source of follows.
-- [BIP-340](https://bips.xyz/340) — secp256k1 Schnorr (via the `bip340`
-  package) for pubkey derivation. Signing arrives with the compose feature.
+- [NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md) —— events、REQ/EVENT/CLOSE/EOSE/NOTICE。
+- [NIP-19](https://github.com/nostr-protocol/nips/blob/master/19.md) —— `nsec1`/`npub1`/`note1` bech32 编码（纯 Dart 自实现，因为 pub 上的 `bech32` 包不兼容 Dart 3.x）。
+- [NIP-02](https://github.com/nostr-protocol/nips/blob/master/02.md) —— 联系人列表（kind 3），作为关注列表来源。
+- [BIP-340](https://bips.xyz/340) —— secp256k1 Schnorr（用 `bip340` 包）做公钥派生。签名功能随发帖特性一同加入。
 
-## Requirements
+## 环境要求
 
-- Flutter 3.44.x (stable). SDK installed at `/home/user/flutter`; ensure
-  `/home/user/flutter/bin` is on your PATH (`export PATH="/home/user/flutter/bin:$PATH"`).
-- Linux desktop builds additionally need: clang, cmake, ninja-build,
-  libgtk-3-dev, pkg-config, mesa-utils, and **libsecret-1-dev + libglib2.0-dev**
-  (the latter are required by `flutter_secure_storage_linux`).
-- Android: Android SDK (not configured in this environment).
-- iOS: macOS + Xcode (cannot build on Linux).
+- Flutter 3.44.x（stable）。SDK 装在 `/home/user/flutter`；确保 `/home/user/flutter/bin` 在 PATH 中
+  （`export PATH="/home/user/flutter/bin:$PATH"`）。
+- Linux 桌面构建还需：clang、cmake、ninja-build、libgtk-3-dev、pkg-config、mesa-utils，以及
+  **libsecret-1-dev + libglib2.0-dev**（后者是 `flutter_secure_storage_linux` 构建必需）。
+- Android：Android SDK（当前环境未配置）。
+- iOS：macOS + Xcode（Linux 上无法构建）。
 
-## Getting started
+## 快速开始
 
 ```bash
 flutter pub get
-flutter run -d linux        # or: android, ios, macos, windows
+flutter run -d linux        # 或：android / ios / macos / windows
 flutter doctor
 ```
 
-On first launch you'll be asked to paste an `nsec1` private key. The key is
-stored in the OS keystore (Android Keystore / iOS Keychain / libsecret on
-Linux desktop) and never leaves the device.
+首次启动会要求粘贴 `nsec1` 私钥。私钥存入 OS 密钥库（Android Keystore / iOS Keychain / Linux 桌面用 libsecret），从不离开本机。
 
-## Default relays
+## 默认中继
 
 - `wss://relay.bostr.online/`
 - `wss://relay.ditto.pub/`
 
-## Project layout
+## 目录结构
 
 ```
 lib/
-  main.dart              entry point (ProviderScope)
-  app/                   app shell, theme, routing, providers (riverpod)
-    app.dart             bootstrap-gated MaterialApp.router
-    router.dart         GoRouter + auth redirect (/login /feed /profile /compose)
-    providers.dart      identity, relayPool, bootstrap, eventStore, feedMode,
-                        followingState, feedSubscription, currentFeed, relayStatus
-  models/                NIP-01 Event (parse, p-tags, verify hook)
+  main.dart              入口（ProviderScope）
+  app/                   app 外壳、主题、路由、providers（riverpod）
+    app.dart             以 bootstrap 门控的 MaterialApp.router
+    router.dart          GoRouter + 登录重定向（/login /feed /profile /compose）
+    providers.dart       identity、relayPool、bootstrap、eventStore、feedMode、
+                         followingState、feedSubscription、currentFeed、relayStatus
+  models/                NIP-01 Event（解析、p-tag、验签 hook）
   nostr/
-    identity.dart        Identity value (nsec1 -> pubkey, bip340)
-    relay_client.dart    WebSocket relay connection (long-lived broadcast, EOSE/NOTICE)
-    relay_pool.dart      RelayPool (dedup, reconnect, re-issue, RelayState)
-    event_store.dart    in-memory store (dedup/sort/cap)
+    identity.dart        Identity（nsec1 → 公钥，bip340）
+    relay_client.dart    WebSocket 中继连接（长生命周期广播，EOSE/NOTICE）
+    relay_pool.dart      RelayPool（去重、重连、重发、RelayState）
+    event_store.dart     内存存储（去重/排序/上限）
   services/
-    secure_storage_service.dart   nsec persistence (libsecret degrade-safe)
+    secure_storage_service.dart   nsec 持久化（libsecret 不可用时降级）
   features/
-    auth/login_page.dart      nsec input + validate + persist
-    feed/feed_page.dart       global/following toggle, list, status, empty states
-    feed/event_card.dart      npub + relative time + content
-    profile/profile_page.dart npub/pubkey + logout
-    compose/compose_page.dart placeholder (posting comes later)
+    auth/login_page.dart      nsec 输入 + 校验 + 持久化
+    feed/feed_page.dart       全球/关注切换、列表、状态、空态
+    feed/event_card.dart      npub + 相对时间 + 正文
+    profile/profile_page.dart npub/pubkey + 登出
+    compose/compose_page.dart 占位（发帖后续版本）
   utils/
-    bech32_codec.dart    pure-Dart BIP-173 bech32
+    bech32_codec.dart    纯 Dart BIP-173 bech32
     nip19.dart           nsec/npub/note ↔ hex
-test/             unit & widget tests (49 tests)
+test/             单元与 widget 测试（49 个）
 ```
 
-## Verification
+## 验证
 
 ```bash
-flutter analyze          # 0 issues
-flutter test             # 49 tests
+flutter analyze          # 0 issue
+flutter test             # 49 个测试
 flutter build linux --debug
 ```
 
-## Known v1 limitations
+## v1 已知限制
 
-- Arrival events are **not** Schnorr-verified (perf at firehose rates); the
-  `Event.isSignatureValid` hook is wired but off by default.
-- Global feed is live (bounded by the 5000-event store), not an EOSE-closed
-  snapshot.
-- The follows list may be stale if your kind-3 was last updated on relays
-  outside the default set.
-- Single-isolate JSON decode + dedup; very high event rates can jank the UI
-  (v1 is bounded by the store cap; isolate-ization is a later optimization).
-- Linux desktop secure storage needs a running keyring (GNOME Keyring / KDE
-  Wallet). Without one it degrades to "logged out on restart" rather than crash.
+- 到达事件**不做** Schnorr 验签（firehose 性能）；`Event.isSignatureValid` hook 已接线但默认关闭。
+- 全球流是实时的（靠 5000 条存储上限兜底），不是 EOSE 后关闭的有界快照。
+- 关注列表可能 stale（如果你的 kind 3 最后更新在默认中继集之外的中继上）。
+- 单 isolate 做 JSON 解析 + 去重；极高事件速率下 UI 可能卡顿（v1 有界可接受，后续可 isolate 化）。
+- Linux 桌面安全存储需要运行中的 keyring（GNOME Keyring / KDE Wallet）。无 keyring 时降级为"重启即登出"，不会崩溃。
 
-## License
+## 许可证
 
-TBD.
+待定。
