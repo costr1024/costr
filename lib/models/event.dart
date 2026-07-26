@@ -1,10 +1,14 @@
 /// NIP-01 Event model.
 ///
-/// Represents a Nostr event as defined in https://github.com/nostr-protocol/nips/blob/master/01.md
-/// Minimal parsing/serialization only — signing and validation land with the
-/// first real feature.
+/// Represents a Nostr event as defined in
+/// https://github.com/nostr-protocol/nips/blob/master/01.md
+///
+/// Parsing + signature-verification hook. Signing (building the canonical
+/// serialized form, hashing, and signing) lands with the compose/posting
+/// feature in a later version.
 library;
 
+import 'package:bip340/bip340.dart' as bip340;
 import 'package:flutter/foundation.dart';
 
 @immutable
@@ -19,14 +23,24 @@ class Event {
     required this.sig,
   });
 
-  /// Parse a NIP-01 event JSON array: [id, pubkey, created_at, kind, tags, content, sig]
+  /// Parse a NIP-01 event JSON array:
+  /// `[id, pubkey, created_at, kind, tags, content, sig]`
   factory Event.fromList(List<dynamic> list) {
+    if (list.length != 7) {
+      throw FormatException(
+        'event array must have 7 elements, got ${list.length}',
+      );
+    }
+    final tags = list[4];
+    if (tags is! List) {
+      throw FormatException('event tags must be a list, got ${tags.runtimeType}');
+    }
     return Event(
       id: list[0] as String,
       pubkey: list[1] as String,
       createdAt: (list[2] as num).toInt(),
       kind: (list[3] as num).toInt(),
-      tags: (list[4] as List).cast<List<dynamic>>(),
+      tags: tags.cast<List<dynamic>>(),
       content: list[5] as String,
       sig: list[6] as String,
     );
@@ -43,7 +57,35 @@ class Event {
   /// NIP-01 text note.
   static const int kindTextNote = 1;
 
+  /// NIP-02 contact list (the user's follows).
+  static const int kindContactList = 3;
+
   bool get isTextNote => kind == kindTextNote;
+  bool get isContactList => kind == kindContactList;
+
+  /// Pubkeys referenced by `p` tags (NIP-02 follows). Values only — relay
+  /// markers (NIP-65) and petnames are ignored. Deduped, order-preserving.
+  List<String> get pTagPubkeys {
+    final out = <String>[];
+    final seen = <String>{};
+    for (final tag in tags) {
+      if (tag.length >= 2 && tag[0] == 'p' && tag[1] is String) {
+        final pk = tag[1] as String;
+        if (seen.add(pk)) out.add(pk);
+      }
+    }
+    return out;
+  }
+
+  /// Verify the Schnorr signature against `pubkey` and `id` (hook; v1 leaves
+  /// arrival verification OFF for perf — available for selective use later).
+  bool get isSignatureValid {
+    try {
+      return bip340.verify(pubkey, id, sig);
+    } catch (_) {
+      return false;
+    }
+  }
 
   String get _preview =>
       content.length <= 40 ? content : '${content.substring(0, 40)}…';

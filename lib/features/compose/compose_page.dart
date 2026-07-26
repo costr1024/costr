@@ -1,4 +1,4 @@
-/// Compose page — placeholder.
+/// Compose page — placeholder (发帖功能将在后续版本推出).
 library;
 
 import 'package:flutter/material.dart';
@@ -14,8 +14,7 @@ class ComposePage extends StatelessWidget {
         child: Padding(
           padding: EdgeInsets.all(24),
           child: Text(
-            'Compose\n\nEvent signing (NIP-01) and publishing to relays '
-            'arrive once features are wired up.',
+            '发帖功能将在后续版本推出。',
             textAlign: TextAlign.center,
           ),
         ),

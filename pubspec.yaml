@@ -37,15 +37,20 @@ dependencies:
 
   # --- Nostr client foundation (shared across all 5 platforms) ---
   # Relay transport (WebSocket) — cross-platform.
-  web_socket_channel:
+  web_socket_channel: ^3.0.3
   # SHA-256 / hashing (event id computation per NIP-01).
-  crypto:
+  crypto: ^3.0.7
   # Hex encode/decode for event ids, pubkeys, signatures.
-  hex:
+  hex: ^0.2.0
   # State management.
-  flutter_riverpod:
+  flutter_riverpod: ^3.3.2
   # Declarative routing.
-  go_router:
+  go_router: ^17.3.0
+  # secp256k1 Schnorr (BIP-340): private->public key derivation, sign, verify.
+  # Used for NIP-01 identity. SDK >=2.13.0 <4.0.0 (Dart 3.12 compatible).
+  bip340: ^0.3.1
+  # OS keystore for the nsec (Android Keystore / iOS Keychain / libsecret on Linux).
+  flutter_secure_storage: ^10.3.1
 
 dev_dependencies:
   flutter_test:

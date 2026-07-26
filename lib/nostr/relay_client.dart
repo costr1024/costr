@@ -1,68 +1,164 @@
-/// Minimal relay client.
+/// NIP-01 relay connection over WebSocket.
 ///
-/// Opens a WebSocket to a Nostr relay and listens for `EVENT` messages.
-/// This is a thin foundation — pool management, REQ filters, reconnect logic,
-/// and signature verification arrive with the first real feature.
+/// One [RelayClient] per relay URL. Implements [RelayConnection] so the pool
+/// can be tested with fakes and can swap transports later.
+///
+/// Lifecycle note (the v1 regression fix): the event/eose/notice
+/// [StreamController]s are created once in the constructor and are broadcast,
+/// so subscribers attached before (or across) reconnects keep receiving — the
+/// stream identity never changes on reconnect.
 library;
 
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/event.dart';
 
-class RelayClient {
+/// Frame types a relay can push. v1 only consumes EVENT and EOSE; NOTICE and
+/// OK are surfaced but not acted on (NOTICE is not an error; OK acks publishes
+/// which v1 doesn't do).
+abstract class RelayConnection {
+  String get url;
+  bool get isConnected;
+
+  /// Kind-1 (and other) events received from the relay.
+  Stream<Event> get events;
+
+  /// Emits the subscription id on `["EOSE", subId]`.
+  Stream<String> get eose;
+
+  /// Emits the notice text on `["NOTICE", text]`.
+  Stream<String> get notices;
+
+  Future<void> connect();
+
+  /// Send a `["REQ", subId, filter]`.
+  void request(String subId, Map<String, dynamic> filter);
+
+  /// Send a `["CLOSE", subId]`.
+  void closeSubscription(String subId);
+
+  /// Hook fired after a successful (re)connect — the pool uses it to re-issue
+  /// active subscriptions to this relay.
+  void setOnConnected(void Function() cb);
+
+  /// Hook fired when the socket drops.
+  void setOnDisconnected(void Function() cb);
+
+  Future<void> dispose();
+}
+
+class RelayClient implements RelayConnection {
   RelayClient(this.url);
 
+  @override
   final String url;
+
   WebSocketChannel? _channel;
-  StreamSubscription? _sub;
-  StreamController<Event>? _events;
+  StreamSubscription<dynamic>? _sub;
+  Timer? _reconnectTimer;
+  bool _connected = false;
+  bool _disposed = false;
+  int _backoffMs = 1000;
 
-  /// Broadcast stream of text-note (kind 1) events received from this relay.
-  Stream<Event> get events => _events?.stream ?? const Stream.empty();
+  void Function()? _onConnected;
+  void Function()? _onDisconnected;
 
+  // Long-lived broadcast controllers — survive reconnect (regression fix R3).
+  final StreamController<Event> _events = StreamController<Event>.broadcast();
+  final StreamController<String> _eose = StreamController<String>.broadcast();
+  final StreamController<String> _notices = StreamController<String>.broadcast();
+
+  @override
+  Stream<Event> get events => _events.stream;
+  @override
+  Stream<String> get eose => _eose.stream;
+  @override
+  Stream<String> get notices => _notices.stream;
+  @override
+  bool get isConnected => _connected;
+  @override
+  void setOnConnected(void Function() cb) => _onConnected = cb;
+  @override
+  void setOnDisconnected(void Function() cb) => _onDisconnected = cb;
+
+  @override
   Future<void> connect() async {
-    _events = StreamController<Event>.broadcast();
-    _channel = WebSocketChannel.connect(Uri.parse(url));
-    _sub = _channel!.stream.listen(_onData, onError: (e) {
-      _events?.addError(e);
-    }, onDone: () {
-      _events?.close();
-    });
+    if (_disposed || _connected) return;
+    try {
+      final channel = WebSocketChannel.connect(Uri.parse(url));
+      _channel = channel;
+      _sub = channel.stream.listen(
+        _onData,
+        onError: (Object _) => _handleDisconnect(),
+        onDone: _handleDisconnect,
+      );
+      _connected = true;
+      _backoffMs = 1000; // reset on success
+      _onConnected?.call();
+    } catch (_) {
+      _scheduleReconnect();
+    }
+  }
+
+  void _handleDisconnect() {
+    if (!_connected && _reconnectTimer != null) return; // already reconnecting
+    _connected = false;
+    _onDisconnected?.call();
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    if (_disposed) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(
+      Duration(milliseconds: _backoffMs),
+      () {
+        _backoffMs = (_backoffMs * 2).clamp(1000, 30000);
+        connect();
+      },
+    );
   }
 
   void _onData(dynamic data) {
     try {
-      final msg = jsonDecode(data as String) as List;
-      // ["EVENT", <subscription id>, <event array>]
-      if (msg case ['EVENT', String _, List<dynamic> eventList]) {
-        final event = Event.fromList(eventList);
-        if (event.isTextNote) {
-          _events?.add(event);
-        }
+      final msg = jsonDecode(data as String);
+      if (msg is! List || msg.length < 2) return;
+      final type = msg[0];
+      if (type == 'EVENT' && msg.length >= 3 && msg[2] is List) {
+        _events.add(Event.fromList(msg[2] as List<dynamic>));
+      } else if (type == 'EOSE' && msg[1] is String) {
+        _eose.add(msg[1] as String);
+      } else if (type == 'NOTICE' && msg[1] is String) {
+        _notices.add(msg[1] as String);
       }
+      // 'OK' frames are publish acks — v1 doesn't publish, ignore.
     } catch (_) {
-      // Ignore malformed messages — relays sometimes send notices or OK frames.
+      // Malformed frame — ignore. Relays occasionally send odd payloads.
     }
   }
 
-  /// Send a REQ message. A real implementation builds filters from the caller.
-  void request(String subscriptionId, {List<String>? authors}) {
-    final filter = <String, dynamic>{'kinds': [Event.kindTextNote]};
-    if (authors != null && authors.isNotEmpty) {
-      filter['authors'] = authors;
-    }
-    _channel?.sink.add(jsonEncode(['REQ', subscriptionId, filter]));
+  @override
+  void request(String subId, Map<String, dynamic> filter) =>
+      _send(['REQ', subId, filter]);
+
+  @override
+  void closeSubscription(String subId) => _send(['CLOSE', subId]);
+
+  void _send(List<dynamic> message) {
+    _channel?.sink.add(jsonEncode(message));
   }
 
-  Future<void> close() async {
+  @override
+  Future<void> dispose() async {
+    _disposed = true;
+    _reconnectTimer?.cancel();
     await _sub?.cancel();
     await _channel?.sink.close();
-    await _events?.close();
-    _channel = null;
-    _sub = null;
-    _events = null;
+    await _events.close();
+    await _eose.close();
+    await _notices.close();
   }
 }
