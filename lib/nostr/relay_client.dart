@@ -127,8 +127,10 @@ class RelayClient implements RelayConnection {
       final msg = jsonDecode(data as String);
       if (msg is! List || msg.length < 2) return;
       final type = msg[0];
-      if (type == 'EVENT' && msg.length >= 3 && msg[2] is List) {
-        _events.add(Event.fromList(msg[2] as List<dynamic>));
+      if (type == 'EVENT' && msg.length >= 3) {
+        // Relays send events as either the NIP-01 array form or (non-standard
+        // but seen in the wild) the object form — fromMessage handles both.
+        _events.add(Event.fromMessage(msg[2]));
       } else if (type == 'EOSE' && msg[1] is String) {
         _eose.add(msg[1] as String);
       } else if (type == 'NOTICE' && msg[1] is String) {

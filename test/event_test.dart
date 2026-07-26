@@ -62,5 +62,43 @@ void main() {
         throwsFormatException,
       );
     });
+
+    test('fromJson parses the object form some relays send', () {
+      final m = <String, dynamic>{
+        'id': 'a' * 64,
+        'pubkey': 'b' * 64,
+        'created_at': 1700000000,
+        'kind': 1,
+        'tags': <dynamic>[
+          <dynamic>['p', 'c' * 64],
+        ],
+        'content': 'hello world',
+        'sig': 'e' * 128,
+      };
+      final ev = Event.fromJson(m);
+      expect(ev.id, 'a' * 64);
+      expect(ev.pubkey, 'b' * 64);
+      expect(ev.createdAt, 1700000000);
+      expect(ev.kind, 1);
+      expect(ev.content, 'hello world');
+      expect(ev.isTextNote, isTrue);
+      expect(ev.pTagPubkeys, ['c' * 64]);
+    });
+
+    test('fromMessage dispatches array vs object', () {
+      final arr = <dynamic>['a' * 64, 'b' * 64, 1, 1, <dynamic>[], 'c', 'd' * 128];
+      final obj = <String, dynamic>{
+        'id': 'a' * 64,
+        'pubkey': 'b' * 64,
+        'created_at': 1,
+        'kind': 1,
+        'tags': <dynamic>[],
+        'content': 'c',
+        'sig': 'd' * 128,
+      };
+      expect(Event.fromMessage(arr).id, 'a' * 64);
+      expect(Event.fromMessage(obj).id, 'a' * 64);
+      expect(() => Event.fromMessage('nope'), throwsFormatException);
+    });
   });
 }

@@ -46,6 +46,35 @@ class Event {
     );
   }
 
+  /// Parse an event sent as a JSON object (some relays send the object form
+  /// `{"id","pubkey","created_at","kind","tags","content","sig"}` instead of
+  /// the NIP-01 array). Handles both for robustness.
+  factory Event.fromJson(Map<String, dynamic> m) {
+    final tags = m['tags'];
+    if (tags is! List) {
+      throw FormatException('event tags must be a list, got ${tags.runtimeType}');
+    }
+    final sig = m['sig'];
+    return Event(
+      id: m['id'] as String,
+      pubkey: m['pubkey'] as String,
+      createdAt: (m['created_at'] as num).toInt(),
+      kind: (m['kind'] as num).toInt(),
+      tags: tags.cast<List<dynamic>>(),
+      content: m['content'] as String,
+      sig: (sig as String?) ?? '',
+    );
+  }
+
+  /// Parse an event from either the NIP-01 array form or the object form.
+  factory Event.fromMessage(dynamic m) {
+    if (m is List) return Event.fromList(m);
+    if (m is Map) return Event.fromJson(m as Map<String, dynamic>);
+    throw FormatException(
+      'event must be a JSON array or object, got ${m.runtimeType}',
+    );
+  }
+
   final String id;
   final String pubkey;
   final int createdAt;
