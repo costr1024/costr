@@ -86,7 +86,7 @@ flutter build linux --debug
 ## v1 已知限制
 
 - 到达事件**不做** Schnorr 验签（firehose 性能）；`Event.isSignatureValid` hook 已接线但默认关闭。
-- 全球流是实时的（靠 5000 条存储上限兜底），不是 EOSE 后关闭的有界快照。
+- 全球流是**有界快照**：EOSE 后即 CLOSE（取近期事件，不再持续接收 live firehose），切回全球模式会重新拉一次。关注流事件量小，保持 live。
 - 关注列表可能 stale（如果你的 kind 3 最后更新在默认中继集之外的中继上）。
 - 单 isolate 做 JSON 解析 + 去重；极高事件速率下 UI 可能卡顿（v1 有界可接受，后续可 isolate 化）。
 - Linux 桌面安全存储需要运行中的 keyring（GNOME Keyring / KDE Wallet）。无 keyring 时降级为"重启即登出"，不会崩溃。
