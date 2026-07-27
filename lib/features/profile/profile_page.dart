@@ -1,8 +1,4 @@
-/// Profile page — shows a user's NIP-01 kind-0 profile (avatar, name, about,
-/// website, banner) + npub + (hex pubkey for the logged-in user) + logout.
-///
-/// Parameterized by [pubkey]; when null, defaults to the logged-in identity.
-/// Designed so a future "view author" feature can pass any pubkey.
+/// Profile page — header (banner/avatar/metadata) + 帖子/回帖/关注 tabs.
 library;
 
 import 'package:flutter/material.dart';
@@ -33,7 +29,10 @@ class ProfilePage extends ConsumerWidget {
           final pk = pubkey ?? identity?.pubkeyHex;
           final isSelf = pubkey == null || pubkey == identity?.pubkeyHex;
           if (pk == null) return const Center(child: Text('未登录'));
-          return _ProfileBody(pubkey: pk, isSelf: isSelf, identity: identity);
+          return DefaultTabController(
+            length: 3,
+            child: _ProfileBody(pubkey: pk, isSelf: isSelf, identity: identity),
+          );
         },
       ),
     );
@@ -48,123 +47,206 @@ class _ProfileBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final meta = ref.watch(metadataProvider(pubkey));
+    final meta = ref.watch(metadataProvider(pubkey)).value;
     final theme = Theme.of(context);
-    final m = meta.value;
 
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (m?.banner != null && m!.banner!.isNotEmpty)
-            AspectRatio(
-              aspectRatio: 3 / 1,
-              child: Image.network(
-                m.banner!,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => const SizedBox.shrink(),
-              ),
-            )
-          else
-            Container(height: 8, color: theme.colorScheme.surfaceContainerHighest),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
- crossAxisAlignment: CrossAxisAlignment.end,
+    return Column(
+      children: [
+        // --- Header (banner + metadata, natural height) ---
+        Material(
+          color: theme.colorScheme.surface,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (meta?.banner != null && meta!.banner!.isNotEmpty)
+                AspectRatio(
+                  aspectRatio: 3 / 1,
+                  child: Image.network(
+                    meta.banner!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  ),
+                )
+              else
+                Container(height: 8, color: theme.colorScheme.surfaceContainerHighest),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Transform.translate(
                       offset: const Offset(0, -24),
                       child: Avatar(pubkey: pubkey, radius: 40),
-                    ),                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        m?.bestName ?? '(未设置名字)',
-                        style: theme.textTheme.titleLarge,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
                     ),
+                    const SizedBox(height: 4),
+                    Text(
+                      meta?.bestName ?? '(未设置名字)',
+                      style: theme.textTheme.titleLarge,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (meta?.about != null && meta!.about!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(meta.about!, style: theme.textTheme.bodyMedium),
+                    ],
+                    if (meta?.website != null && meta!.website!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(meta.website!, style: theme.textTheme.bodySmall),
+                    ],
+                    const SizedBox(height: 12),
+                    Text('npub', style: theme.textTheme.labelSmall),
+                    SelectableText(
+                      identity?.npub ?? '',
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                    if (isSelf) ...[
+                      const SizedBox(height: 12),
+                      Text('pubkey (hex)', style: theme.textTheme.labelSmall),
+                      SelectableText(
+                        identity?.pubkeyHex ?? pubkey,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: FilledButton.tonalIcon(
+                          icon: const Icon(Icons.logout),
+                          label: const Text('登出'),
+                          onPressed: () async {
+                            await ref.read(identityProvider.notifier).logout();
+                            if (context.mounted) context.go('/login');
+                          },
+                        ),
+                      ),
+                    ],
                   ],
                 ),
-                const SizedBox(height: 4),
-                if (m?.about != null && m!.about!.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(m.about!, style: theme.textTheme.bodyMedium),
-                ],
-                if (m?.website != null && m!.website!.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(m.website!, style: theme.textTheme.bodySmall),
-                ],
-                const SizedBox(height: 16),
-                Text('npub', style: theme.textTheme.labelSmall),
-                SelectableText(
-                  identity?.npub ?? '',
-                  style: theme.textTheme.bodyMedium,
-                ),
-                if (isSelf) ...[
-                  const SizedBox(height: 12),
-                  Text('pubkey (hex)', style: theme.textTheme.labelSmall),
-                  SelectableText(
-                    identity?.pubkeyHex ?? pubkey,
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 24),
-                  FilledButton.tonalIcon(
-                    icon: const Icon(Icons.logout),
-                    label: const Text('登出'),
-                    onPressed: () async {
-                      await ref.read(identityProvider.notifier).logout();
-                      if (context.mounted) context.go('/login');
-                    },
-                  ),
-                ],
-              ],
-            ),
+              ),
+              const Divider(height: 1),
+            ],
           ),
-          const Divider(height: 1),
-          _PostsSection(pubkey: pubkey),
-        ],
-      ),
+        ),
+        // --- Tabs ---
+        Material(
+          color: theme.colorScheme.surface,
+          child: TabBar(
+            tabAlignment: TabAlignment.start,
+            isScrollable: true,
+            tabs: const [
+              Tab(text: '帖子'),
+              Tab(text: '回帖'),
+              Tab(text: '关注'),
+            ],
+          ),
+        ),
+        // --- Tab content ---
+        Expanded(
+          child: TabBarView(
+            children: [
+              _PostsTab(pubkey: pubkey),
+              _RepliesTab(pubkey: pubkey),
+              _FollowsTab(pubkey: pubkey),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
 
-/// The user's public posts + replies (newest-first). Replies show the parent
-/// post quoted above, indented (hierarchy via a left rule).
-class _PostsSection extends ConsumerWidget {
-  const _PostsSection({required this.pubkey});
+class _PostsTab extends ConsumerWidget {
+  const _PostsTab({required this.pubkey});
   final String pubkey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(userPostsProvider(pubkey));
     return async.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (Object e, _) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Center(child: Text('帖子加载失败：$e')),
-      ),
-      data: (List<Event> posts) {
-        if (posts.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(child: Text('暂无公开帖子')),
-          );
-        }
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (Object e, _) => Center(child: Text('加载失败：$e')),
+      data: (List<Event> all) {
+        final posts = all.where((e) => !e.isReply).toList();
+        if (posts.isEmpty) return const Center(child: Text('暂无帖子'));
         return ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
           itemCount: posts.length,
           itemBuilder: (BuildContext context, int i) =>
               UserPostItem(event: posts[i]),
         );
       },
+    );
+  }
+}
+
+class _RepliesTab extends ConsumerWidget {
+  const _RepliesTab({required this.pubkey});
+  final String pubkey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(userPostsProvider(pubkey));
+    return async.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (Object e, _) => Center(child: Text('加载失败：$e')),
+      data: (List<Event> all) {
+        final replies = all.where((e) => e.isReply).toList();
+        if (replies.isEmpty) return const Center(child: Text('暂无回帖'));
+        return ListView.builder(
+          itemCount: replies.length,
+          itemBuilder: (BuildContext context, int i) =>
+              UserPostItem(event: replies[i]),
+        );
+      },
+    );
+  }
+}
+
+class _FollowsTab extends ConsumerWidget {
+  const _FollowsTab({required this.pubkey});
+  final String pubkey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(userFollowsProvider(pubkey));
+    return async.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (Object e, _) => Center(child: Text('加载失败：$e')),
+      data: (List<String> follows) {
+        if (follows.isEmpty) return const Center(child: Text('暂无关注'));
+        return ListView.builder(
+          itemCount: follows.length,
+          itemBuilder: (BuildContext context, int i) => _FollowRow(
+            pubkey: follows[i],
+            onTap: () => context.push('/u/${follows[i]}'),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _FollowRow extends ConsumerWidget {
+  const _FollowRow({required this.pubkey, required this.onTap});
+  final String pubkey;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final meta = ref.watch(metadataProvider(pubkey)).value;
+    final theme = Theme.of(context);
+    return ListTile(
+      leading: Avatar(pubkey: pubkey, radius: 18),
+      title: Text(
+        displayLabelFor(pubkey, meta),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      onTap: onTap,
+      trailing: meta?.bestName == null
+          ? Text(
+              pubkey.length > 10 ? '${pubkey.substring(0, 8)}…' : pubkey,
+              style: theme.textTheme.labelSmall,
+            )
+          : null,
     );
   }
 }

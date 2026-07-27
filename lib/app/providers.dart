@@ -353,6 +353,43 @@ final userPostsProvider =
   return collected;
 });
 
+/// A user's follows (NIP-02 kind-3 p-tags) for the profile 关注 tab. Fetches
+/// the user's kind-3 (replace-by-author) and resolves on EOSE / timeout.
+final userFollowsProvider =
+    FutureProvider.family<List<String>, String>((ref, pubkey) async {
+  final pool = ref.watch(relayPoolProvider);
+  final completer = Completer<List<String>>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.isContactList && e.pubkey == pubkey && !completer.isCompleted) {
+      completer.complete(e.pTagPubkeys);
+    }
+  });
+  final subId = nextSubId('follows');
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    if (!completer.isCompleted) completer.complete(const <String>[]);
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{
+      'authors': [pubkey],
+      'kinds': [Event.kindContactList],
+      'limit': 1,
+    },
+    closeOnEose: true,
+  );
+  ref.onDispose(() {
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  return completer.future.timeout(
+    const Duration(seconds: 10),
+    onTimeout: () => const <String>[],
+  );
+});
+
 // --- Relay status -----------------------------------------------------------
 
 final relayStatusProvider =
