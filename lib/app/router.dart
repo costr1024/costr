@@ -47,6 +47,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (BuildContext context, GoRouterState state) =>
             const ComposePage(),
       ),
+      GoRoute(
+        path: '/u/:pubkey',
+        builder: (BuildContext context, GoRouterState state) => ProfilePage(
+          pubkey: state.pathParameters['pubkey'],
+        ),
+      ),
       StatefulShellRoute.indexedStack(
         builder: (
           BuildContext context,

@@ -92,8 +92,9 @@ class Event {
   bool get isTextNote => kind == kindTextNote;
   bool get isContactList => kind == kindContactList;
 
-  /// Hashtags from NIP-12 `["t", "value"]` tags. Values are lowercased and
-  /// deduped (NIP-12 recommends lowercase). Order-preserving.
+  /// Hashtags from NIP-12 `["t", "value"]` tags AND inline `#hashtag` patterns
+  /// found in the content body. Values are lowercased and deduped (NIP-12
+  /// recommends lowercase). Order: t-tags first, then content matches.
   List<String> get hashtags {
     final out = <String>[];
     final seen = <String>{};
@@ -102,6 +103,15 @@ class Event {
         final v = (tag[1] as String).trim().toLowerCase();
         if (v.isNotEmpty && seen.add(v)) out.add(v);
       }
+    }
+    // Inline #hashtag in content. `#` must start a word (not be part of a
+    // URL/path/protocol), and be followed by letters/digits/underscore (incl.
+    // Unicode, so #中文 works). Markdown headings `# Heading` (with space)
+    // don't match — there's no word char immediately after `#`.
+    final inline = RegExp(r'(?<![\w/:.])#([\p{L}\p{N}_]+)', unicode: true);
+    for (final m in inline.allMatches(content)) {
+      final v = m.group(1)!.toLowerCase();
+      if (v.isNotEmpty && seen.add(v)) out.add(v);
     }
     return out;
   }

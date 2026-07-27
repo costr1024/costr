@@ -14,8 +14,9 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **事件存储**：内存单源，按 id 去重，按时间倒序，上限 5000 条淘汰最旧。
 - **头像与资料**：按作者 pubkey 拉取 NIP-01 kind 0 元数据（name / display_name / picture / about / website / banner），内存缓存 + 去重 in-flight 请求（`closeOnEose` 一次性快照）。feed 帖子卡显示头像 + 名字（无名字回退 npub 缩写），个人 profile 页展示 banner / 头像 / 名字 / about / website / npub / 登出。头像图片用 `cached_network_image` 缓存 + 占位/错误回退。
 - **帖子正文渲染**：GitHub 风格 markdown（`flutter_markdown`），内联图片用 `cached_network_image`，内联视频用 `video_player`（点按播放/暂停）。同时解析 NIP-92 `imeta` tag 附带的图/视频（按 mimetype 或 URL 后缀判别），未出现在正文里的附加媒体追加在正文下方。
-- **标签与语言过滤**：解析 NIP-12 `["t","value"]` hashtag，正文下方渲染成可点 chip（点选设为 tag 过滤器，AppBar 出现可清除的 tag chip）。AppBar 语言下拉：全部 / 中文 / 英文——启发式检测（含 CJK 判中文，否则含拉丁字母判英文），与 mode / tag 过滤叠加。
-- **界面与导航**：登录页、信息流页（中继状态 chip + 语言下拉 + tag 过滤 chip + 空/错误态）、个人页（头像 + 资料 + npub/pubkey + 登出）、发帖占位页。Feed/Profile 共用一个底栏导航 shell（`StatefulShellRoute.indexedStack`，保留各 tab 状态）；发帖页 push 进栈、AppBar 自带返回键。
+- **标签与语言过滤**：解析 NIP-12 `["t","value"]` tag **及**正文内联 `#hashtag`（支持中文 tag，忽略 markdown 标题与 URL 片段），合并去重小写；正文下方渲染成可点 chip（点选设为 tag 过滤器，AppBar 出现可清除的 tag chip）。AppBar 语言下拉：全部 / 中文 / 英文——启发式检测（含 CJK 判中文，否则含拉丁字母判英文），与 mode / tag 过滤叠加。
+- **用户主页**：点 feed 帖子的头像或作者名 → 打开该用户 profile（`/u/:pubkey`，push 进栈、自带返回）。复用 ProfilePage（参数化 pubkey）：他人主页只展示资料，自己的主页才有 hex pubkey + 登出。
+- **界面与导航**：登录页、信息流页（中继状态 chip + 语言下拉 + tag 过滤 chip + 空/错误态）、个人页（头像 + 资料 + npub/pubkey + 登出）、发帖占位页。Feed/Profile 共用一个底栏导航 shell（`StatefulShellRoute.indexedStack`，保留各 tab 状态）；发帖页 / 用户主页 push 进栈、AppBar 自带返回键。
 
 ## 协议
 

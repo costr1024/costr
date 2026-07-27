@@ -161,5 +161,37 @@ void main() {
       final ev = Event.fromList(list);
       expect(ev.hashtags, ['nostr', 'bitcoin']);
     });
+
+    test('hashtags also extracts inline #hashtag from content', () {
+      final list = <dynamic>[
+        'id', 'pk', 1, 1, <dynamic>[],
+        'check this #Bitcoin out and #中文 too',
+        's',
+      ];
+      final ev = Event.fromList(list);
+      expect(ev.hashtags, ['bitcoin', '中文']);
+    });
+
+    test('hashtags dedupes across t-tags and inline content', () {
+      final list = <dynamic>[
+        'id', 'pk', 1, 1,
+        <dynamic>[<dynamic>['t', 'nostr']],
+        'posting about #nostr again',
+        's',
+      ];
+      expect(Event.fromList(list).hashtags, ['nostr']);
+    });
+
+    test('hashtags ignores markdown headings and URL fragments', () {
+      final list = <dynamic>[
+        'id', 'pk', 1, 1, <dynamic>[],
+        '# A Heading\n\nsee https://example.com/page#section and #realtag',
+        's',
+      ];
+      final ev = Event.fromList(list);
+      // '# A Heading' has a space after # → not a tag.
+      // '#section' is preceded by '/' inside the URL → ignored.
+      expect(ev.hashtags, ['realtag']);
+    });
   });
 }

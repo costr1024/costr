@@ -3,6 +3,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
 import '../../models/event.dart';
@@ -26,7 +27,10 @@ class EventCard extends ConsumerWidget {
           children: [
             Padding(
               padding: const EdgeInsets.only(top: 2, right: 10),
-              child: Avatar(pubkey: event.pubkey, radius: 16),
+              child: GestureDetector(
+                onTap: () => context.push('/u/${event.pubkey}'),
+                child: Avatar(pubkey: event.pubkey, radius: 16),
+              ),
             ),
             Expanded(
               child: Column(
@@ -35,12 +39,15 @@ class EventCard extends ConsumerWidget {
                   Row(
                     children: [
                       Flexible(
-                        child: Text(
-                          displayLabelFor(event.pubkey, meta),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
+                        child: GestureDetector(
+                          onTap: () => context.push('/u/${event.pubkey}'),
+                          child: Text(
+                            displayLabelFor(event.pubkey, meta),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
