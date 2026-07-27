@@ -14,8 +14,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/event.dart';
 import '../models/metadata.dart';
+import '../nostr/actions.dart';
 import '../nostr/event_store.dart';
 import '../nostr/identity.dart';
+import '../nostr/relay_client.dart';
 import '../nostr/relay_pool.dart';
 import '../services/secure_storage_service.dart';
 import '../utils/language.dart';
@@ -394,6 +396,52 @@ final userFollowsProvider =
     onTimeout: () => const <String>[],
   );
 });
+
+/// Follow [pubkey] (NIP-02). Fetches the current user's kind-3 event (to
+/// preserve existing entries' relay/petname), signs an updated kind-3 with the
+/// new pubkey added, publishes, and refreshes [followingStateProvider].
+/// Returns the relay verdict.
+Future<RelayOk> followUser(WidgetRef ref, String pubkey) async {
+  final identity = ref.read(identityProvider).value;
+  if (identity == null) {
+    return const RelayOk('', false, '未登录');
+  }
+  final pool = ref.read(relayPoolProvider);
+  // Fetch the current kind-3 event (full, to preserve relay/petname).
+  final completer = Completer<Event?>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.isContactList &&
+        e.pubkey == identity.pubkeyHex &&
+        !completer.isCompleted) {
+      completer.complete(e);
+    }
+  });
+  final subId = nextSubId('kind3-now');
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    if (!completer.isCompleted) completer.complete(null);
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{
+      'authors': [identity.pubkeyHex],
+      'kinds': [Event.kindContactList],
+      'limit': 1,
+    },
+    closeOnEose: true,
+  );
+  final current = await completer.future
+      .timeout(const Duration(seconds: 8), onTimeout: () => null);
+  await evSub.cancel();
+  await eoseSub.cancel();
+  pool.closeSubscription(subId);
+
+  final signed = NostrActions(identity).follow(current, pubkey);
+  final ok = await pool.publishAndWait(signed);
+  if (ok.ok) ref.invalidate(followingStateProvider);
+  return ok;
+}
 
 // --- Relay status -----------------------------------------------------------
 

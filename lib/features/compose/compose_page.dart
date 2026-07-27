@@ -1,4 +1,5 @@
-/// Compose page — write a kind-1 text note, sign it (NIP-01), publish to relays.
+/// Compose page — write a kind-1 note, sign it, publish. Supports reply
+/// (replyTo) and quote (quoteOf) contexts.
 library;
 
 import 'package:flutter/material.dart';
@@ -6,9 +7,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
+import '../../models/event.dart';
+import '../../nostr/actions.dart';
 
 class ComposePage extends ConsumerStatefulWidget {
-  const ComposePage({super.key});
+  const ComposePage({super.key, this.replyTo, this.quoteOf});
+
+  final Event? replyTo;
+  final Event? quoteOf;
 
   @override
   ConsumerState<ComposePage> createState() => _ComposePageState();
@@ -17,9 +23,15 @@ class ComposePage extends ConsumerStatefulWidget {
 class _ComposePageState extends ConsumerState<ComposePage> {
   final TextEditingController _controller = TextEditingController();
   bool _sending = false;
-
-  /// Soft char limit (X-style). Nostr has no hard limit; we warn past this.
   static const int _softLimit = 280;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.quoteOf != null) {
+      // Quote: pre-fill nothing; the quote ref is appended on send.
+    }
+  }
 
   @override
   void dispose() {
@@ -27,28 +39,33 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     super.dispose();
   }
 
+  String get _hint {
+    if (widget.replyTo != null) return '回复…';
+    if (widget.quoteOf != null) return '引用评论…';
+    return '有什么新鲜事？';
+  }
+
   Future<void> _send() async {
     final text = _controller.text.trim();
-    if (text.isEmpty) {
-      _snack('内容不能为空');
-      return;
-    }
     final identity = ref.read(identityProvider).value;
     if (identity == null) {
-      _snack('未登录');
-      return;
+      _snack('未登录'); return;
+    }
+    if (text.isEmpty && widget.quoteOf == null) {
+      _snack('内容不能为空'); return;
     }
     setState(() => _sending = true);
     try {
-      final signed = identity.signEvent(kind: 1, content: text, tags: const []);
-      final pool = ref.read(relayPoolProvider);
-      final ok = await pool.publishAndWait(signed);
+      final actions = NostrActions(identity);
+      final signed = widget.replyTo != null
+          ? actions.reply(widget.replyTo!, text)
+          : widget.quoteOf != null
+              ? actions.quote(widget.quoteOf!, text)
+              : identity.signEvent(kind: 1, content: text, tags: const []);
+      final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;
-      if (ok.ok) {
-        context.pop();
-      } else {
-        _snack('发布失败：${ok.reason}');
-      }
+      _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}');
+      if (ok.ok && context.mounted) context.pop();
     } catch (e) {
       _snack('发送失败：$e');
     } finally {
@@ -68,7 +85,11 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('发帖'),
+        title: Text(widget.replyTo != null
+            ? '回复'
+            : widget.quoteOf != null
+                ? '引用'
+                : '发帖'),
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -83,24 +104,20 @@ class _ComposePageState extends ConsumerState<ComposePage> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            if (widget.replyTo != null) _ContextCard(event: widget.replyTo!, label: '回复'),
+            if (widget.quoteOf != null) _ContextCard(event: widget.quoteOf!, label: '引用'),
             Expanded(
               child: TextField(
                 controller: _controller,
                 autofocus: true,
                 maxLines: null,
-                decoration: const InputDecoration(
-                  hintText: '有什么新鲜事？',
-                  border: InputBorder.none,
-                ),
+                decoration: InputDecoration(hintText: _hint, border: InputBorder.none),
                 onChanged: (_) => setState(() {}),
               ),
             ),
             Row(
               children: [
-                Text(
-                  '仅文本（附图后续支持）',
-                  style: theme.textTheme.labelSmall,
-                ),
+                Text('仅文本（附图后续支持）', style: theme.textTheme.labelSmall),
                 const Spacer(),
                 Text(
                   '$count',
@@ -112,6 +129,39 @@ class _ComposePageState extends ConsumerState<ComposePage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Compact quoted context (the post being replied to / quoted).
+class _ContextCard extends StatelessWidget {
+  const _ContextCard({required this.event, required this.label});
+  final Event event;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: theme.textTheme.labelSmall),
+          const SizedBox(height: 4),
+          Text(
+            event.content,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
       ),
     );
   }

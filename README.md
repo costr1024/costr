@@ -19,7 +19,14 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **帖子菜单**：每条帖子右上角 `⋮` → 弹出菜单「复制 event id」「复制全文」，便于定位/反馈问题。
 - **发帖（Compose）**：FAB → 撰写页，字数计数（280 软上限提示），签名（`Identity.signEvent`：computeId + bip340 sign + secure-random aux）+ 发布到中继。**EVENT 消息用对象形式**（2026 现行 NIP-01，中继拒绝旧数组形式）；`publishAndWait` 等中继 OK 应答，成功/失败带原因反馈到 UI，并本地 echo 让作者立即看到自己的帖子。**NIP-42 认证**：中继发 `["AUTH", challenge]` 时，pool 用当前身份签 kind-22242（含 `relay`/`challenge` tag）回送；`publishAndWait` 遇 auth-required 自动重试该中继。附图后续支持。
 - **默认中继**：`damus.io` / `nos.lol` / `ditto.pub` / `bostr.online`。前三个接受写入且被广泛订阅（帖子能被其他客户端看到）；`bostr.online` 写入需 NIP-42 认证（已支持）+ **白名单**（你的 key 须在白名单内，否则拒 `restricted: whitelisted`，这是中继策略）。
-- **帖子交互（X 风格）**：每条帖子下方一排 💬回复 / 🔁转发 / ❤️点赞 / 🔖收藏 / ↗分享。分享可用（复制 `note1` 链接）；其余点按提示"即将支持"（待签发层接入 NIP-25/NIP-18/回复）。点帖子正文 → `/n/:id` 详情页（单帖全屏 + 交互栏 + 回复占位）。
+- **帖子交互（X 风格）**：每条帖子下方一排 💬回复 / 🔁转发 / ❤️reaction / 📌引用 / ↗分享。
+  - **回复**（NIP-10）：push Compose 带 `replyTo`，签 kind-1 带 root+reply `e` tag + `p` tag。
+  - **转发**（NIP-18）：确认后签 kind-6（content = 被转帖事件 JSON）+ `e`/`p` tag。
+  - **reaction**（NIP-25 + NIP-30）：表情选择器，签 kind-7（`e`/`p`/`k` tag；unicode emoji 或 `:shortcode:` 自定义表情 + `emoji` tag）。自定义表情的 URL 由 `NostrActions.reaction(customShortcode/customUrl)` 支持。
+  - **引用**（quote）：push Compose 带 `quoteOf`，签 kind-1，正文带 `nostr:note1` 引用 + `e` mention tag。
+  - **分享**：复制 `https://njump.me/<note1>`（参考 Amethyst）。
+- **关注**（NIP-02）：他人主页头像旁"关注"按钮。拉取当前用户完整 kind-3（保留 relay/petname）→ `NostrActions.follow` 加新 pubkey → 签 kind-3 全量发布 → 刷新关注列表。已关注则显示"已关注"。
+- **点帖进详情页**：点帖子正文 → `/n/:id` 详情页（单帖全屏 + 交互栏 + 回复占位）。
 - **下拉刷新 + 加载更多**：下拉刷新重新拉取当前流；滚到底自动发 `until: 最旧时间戳` 的 REQ 追加更早的事件。
 - **界面与导航**：**中文优先**（面向中国用户，所有 UI 文案中文化；品牌名 costr 保留）。登录页、信息流页（中继状态 chip + 语言下拉 + tag 过滤 chip + 空/错误态）、个人页（头像 + 资料 + npub/pubkey + 登出）、发帖页、帖子详情页、用户主页。Feed/Profile 共用一个底栏导航 shell（`StatefulShellRoute.indexedStack`，保留各 tab 状态）；发帖页 / 用户主页 / 详情页 push 进栈、AppBar 自带返回键。相对时间中文（刚刚/分/时/天）。
 

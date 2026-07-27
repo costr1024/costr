@@ -1,98 +1,157 @@
-/// X-style action row under a post: reply / repost / like / bookmark / share.
+/// X-style action row: 回复 / 转发 / reaction / 引用 / 分享.
 ///
-/// v1: share works (copies the `note1…` link). Reply/repost/like/bookmark need
-/// signing (NIP-25/NIP-18/kind-1 reply) which lands with the compose feature;
-/// until then they show a "即将支持" toast so the interaction is honest.
+/// - 回复 / 引用 → push Compose with a replyTo / quoteOf context.
+/// - 转发 → sign NIP-18 kind-6 + publish (with confirm).
+/// - reaction → bottom-sheet emoji picker (NIP-25 kind-7, supports NIP-30
+///   custom-emoji via NostrActions.reaction(customShortcode/customUrl)).
+/// - 分享 → copy `https://njump.me/<note1>` (Amethyst-style).
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
-import '../models/event.dart';
-import '../utils/nip19.dart';
+import '../../app/providers.dart';
+import '../../models/event.dart';
+import '../../nostr/actions.dart';
+import '../../utils/nip19.dart';
 
-class PostActions extends StatelessWidget {
+class PostActions extends ConsumerWidget {
   const PostActions({super.key, required this.event});
   final Event event;
 
+  static const List<String> _emoji = [
+    '❤️', '🔥', '👍', '👎', '😮', '😂', '🎉', '🤔', '👏', '🙏',
+  ];
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final fg = theme.colorScheme.onSurfaceVariant;
     return Row(
       children: [
         _Action(
           icon: Icons.chat_bubble_outline,
-          onTap: () => _soon(context, '回复'),
           color: fg,
+          onTap: () => context.push('/compose', extra: {'replyTo': event}),
         ),
         _Action(
           icon: Icons.repeat_rounded,
-          onTap: () => _soon(context, '转发'),
           color: fg,
+          onTap: () => _repost(context, ref),
         ),
         _Action(
           icon: Icons.favorite_border,
-          onTap: () => _soon(context, '点赞'),
           color: fg,
+          onTap: () => _pickReaction(context, ref),
         ),
         _Action(
-          icon: Icons.bookmark_border,
-          onTap: () => _soon(context, '收藏'),
+          icon: Icons.format_quote_rounded,
           color: fg,
+          onTap: () => context.push('/compose', extra: {'quoteOf': event}),
         ),
         const Spacer(),
         _Action(
           icon: Icons.ios_share,
-          onTap: () => _share(context, event),
           color: fg,
+          onTap: () => _share(context),
         ),
       ],
     );
   }
 
-  void _soon(BuildContext context, String name) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$name即将支持（待发帖功能上线后启用）'),
-        duration: const Duration(seconds: 1),
+  Future<void> _repost(BuildContext context, WidgetRef ref) async {
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return;
+    final confirmed = await _confirm(context, '转发这条帖子？');
+    if (confirmed != true) return;
+    final signed = NostrActions(identity).repost(event);
+    final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
+    if (context.mounted) {
+      _snack(context, ok.ok ? '已转发' : '转发失败：${ok.reason}');
+    }
+  }
+
+  Future<void> _pickReaction(BuildContext context, WidgetRef ref) async {
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return;
+    final emoji = await showModalBottomSheet<String>(
+      context: context,
+      builder: (BuildContext ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('选择表情',
+                  style: Theme.of(ctx).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final e in _emoji)
+                    ActionChip(
+                      label: Text(e, style: const TextStyle(fontSize: 22)),
+                      onPressed: () => Navigator.pop(ctx, e),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (emoji == null) return;
+    final signed = NostrActions(identity).reaction(event, emoji);
+    final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
+    if (context.mounted) {
+      _snack(context, ok.ok ? '已发送 $emoji' : '反应失败：${ok.reason}');
+    }
+  }
+
+  Future<void> _share(BuildContext context) async {
+    try {
+      final url = 'https://njump.me/${hexToNote(event.id)}';
+      await Clipboard.setData(ClipboardData(text: url));
+      if (context.mounted) _snack(context, '已复制分享链接');
+    } catch (_) {
+      if (context.mounted) _snack(context, '复制失败');
+    }
+  }
+
+  Future<bool?> _confirm(BuildContext context, String message) {
+    return showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确认')),
+        ],
       ),
     );
   }
 
-  Future<void> _share(BuildContext context, Event e) async {
-    try {
-      final note = hexToNote(e.id);
-      await Clipboard.setData(ClipboardData(text: note));
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('已复制 note1 链接'),
-            duration: Duration(seconds: 1),
-          ),
-        );
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('复制失败')),
-        );
-      }
-    }
+  void _snack(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
+    );
   }
 }
 
 class _Action extends StatelessWidget {
-  const _Action({required this.icon, required this.onTap, required this.color});
+  const _Action({required this.icon, required this.color, required this.onTap});
   final IconData icon;
-  final VoidCallback onTap;
   final Color color;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return IconButton(
       icon: Icon(icon, size: 18),
-      visualDensity: VisualDensity.compact,
       iconSize: 18,
       padding: const EdgeInsets.symmetric(horizontal: 4),
       constraints: const BoxConstraints(minWidth: 36, minHeight: 32),

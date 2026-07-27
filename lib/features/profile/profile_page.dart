@@ -114,11 +114,18 @@ class _Header extends ConsumerWidget {
                 child: Avatar(pubkey: pubkey, radius: 40),
               ),
               const SizedBox(height: 4),
-              Text(
-                meta?.bestName ?? '(未设置名字)',
-                style: theme.textTheme.titleLarge,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      meta?.bestName ?? '(未设置名字)',
+                      style: theme.textTheme.titleLarge,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (!isSelf) _FollowButton(pubkey: pubkey),
+                ],
               ),
               if (meta?.about != null && meta!.about!.isNotEmpty) ...[
                 const SizedBox(height: 8),
@@ -163,9 +170,44 @@ class _Header extends ConsumerWidget {
   }
 }
 
+/// 关注 button for an other-user profile. Shows 已关注 if the logged-in user
+/// already follows them (per followingStateProvider); tap publishes an updated
+/// kind-3 via [followUser].
+class _FollowButton extends ConsumerStatefulWidget {
+  const _FollowButton({required this.pubkey});
+  final String pubkey;
+
+  @override
+  ConsumerState<_FollowButton> createState() => _FollowButtonState();
+}
+
+class _FollowButtonState extends ConsumerState<_FollowButton> {
+  bool _busy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final follows = ref.watch(followingStateProvider).value ?? const <String>[];
+    final followed = follows.contains(widget.pubkey);
+    return FilledButton.tonalIcon(
+      icon: Icon(followed ? Icons.check : Icons.person_add_outlined, size: 18),
+      label: Text(followed ? '已关注' : '关注'),
+      onPressed: _busy ? null : (followed ? null : _follow),
+    );
+  }
+
+  Future<void> _follow() async {
+    setState(() => _busy = true);
+    final ok = await followUser(ref, widget.pubkey);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(ok.ok ? '已关注' : '关注失败：${ok.reason}')),
+    );
+    if (mounted) setState(() => _busy = false);
+  }
+}
+
 /// Pinned TabBar sliver.
-class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {
-  _StickyTabBarDelegate(this.tabBar, {required this.color});
+class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {  _StickyTabBarDelegate(this.tabBar, {required this.color});
   final TabBar tabBar;
   final Color color;
 

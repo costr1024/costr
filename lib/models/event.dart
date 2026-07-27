@@ -121,6 +121,18 @@ class Event {
   /// True if this note is a reply (has a parent it replies to).
   bool get isReply => replyToId != null;
 
+  /// The thread root for this note (for building reply tags). The `e` tag with
+  /// marker "root" if present; else the reply parent chain (replyToId); else
+  /// this note itself (top-level post is its own root).
+  String get rootEventId {
+    for (final t in tags) {
+      if (t.length >= 4 && t[0] == 'e' && t[3] is String && t[3] == 'root') {
+        return t[1] as String;
+      }
+    }
+    return replyToId ?? id;
+  }
+
   /// Hashtags from NIP-12 `["t", "value"]` tags AND inline `#hashtag` patterns
   /// found in the content body. Values are lowercased and deduped (NIP-12
   /// recommends lowercase). Order: t-tags first, then content matches.

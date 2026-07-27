@@ -14,6 +14,7 @@ import '../features/compose/compose_page.dart';
 import '../features/feed/feed_page.dart';
 import '../features/feed/post_detail_page.dart';
 import '../features/profile/profile_page.dart';
+import '../models/event.dart';
 import 'providers.dart';
 
 final GlobalKey<NavigatorState> rootNavigator =
@@ -45,8 +46,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/compose',
-        builder: (BuildContext context, GoRouterState state) =>
-            const ComposePage(),
+        builder: (BuildContext context, GoRouterState state) {
+          final extra = state.extra;
+          Event? replyTo;
+          Event? quoteOf;
+          if (extra is Map) {
+            final r = extra['replyTo'];
+            final q = extra['quoteOf'];
+            if (r is Event) replyTo = r;
+            if (q is Event) quoteOf = q;
+          }
+          return ComposePage(replyTo: replyTo, quoteOf: quoteOf);
+        },
       ),
       GoRoute(
         path: '/u/:pubkey',
