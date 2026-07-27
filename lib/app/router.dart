@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/login_page.dart';
 import '../features/compose/compose_page.dart';
 import '../features/feed/feed_page.dart';
+import '../features/feed/post_detail_page.dart';
 import '../features/profile/profile_page.dart';
 import 'providers.dart';
 
@@ -51,6 +52,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/u/:pubkey',
         builder: (BuildContext context, GoRouterState state) => ProfilePage(
           pubkey: state.pathParameters['pubkey'],
+        ),
+      ),
+      GoRoute(
+        path: '/n/:id',
+        builder: (BuildContext context, GoRouterState state) => PostDetailPage(
+          id: state.pathParameters['id']!,
         ),
       ),
       StatefulShellRoute.indexedStack(

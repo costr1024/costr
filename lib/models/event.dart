@@ -8,7 +8,10 @@
 /// feature in a later version.
 library;
 
+import 'dart:convert';
+
 import 'package:bip340/bip340.dart' as bip340;
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 @immutable
@@ -189,6 +192,21 @@ class Event {
 
   String get _preview =>
       content.length <= 40 ? content : '${content.substring(0, 40)}…';
+
+  /// NIP-01 canonical serialization for the event id: the JSON array
+  /// `[0, pubkey, created_at, kind, tags, content]` (compact, no signature).
+  String computeId() {
+    final serialized = jsonEncode(
+      <dynamic>[0, pubkey, createdAt, kind, tags, content],
+    );
+    return sha256.convert(utf8.encode(serialized)).toString();
+  }
+
+  /// NIP-01 wire array form: `[id, pubkey, created_at, kind, tags, content, sig]`,
+  /// used for publishing `["EVENT", <this>]` to relays.
+  List<dynamic> toWireList() => <dynamic>[
+        id, pubkey, createdAt, kind, tags, content, sig,
+      ];
 
   @override
   String toString() => 'Event(kind=$kind, id=$id, content=$_preview)';

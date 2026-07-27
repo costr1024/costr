@@ -32,16 +32,17 @@ const int _kCollapseThreshold = 400;
 const double _kCollapsedMaxHeight = 220;
 
 class MarkdownContent extends ConsumerStatefulWidget {
-  const MarkdownContent({super.key, required this.event});
+  const MarkdownContent({super.key, required this.event, this.initiallyExpanded = false});
 
   final Event event;
+  final bool initiallyExpanded;
 
   @override
   ConsumerState<MarkdownContent> createState() => _MarkdownContentState();
 }
 
 class _MarkdownContentState extends ConsumerState<MarkdownContent> {
-  bool _expanded = false;
+  late bool _expanded = widget.initiallyExpanded;
 
   @override
   Widget build(BuildContext context) {

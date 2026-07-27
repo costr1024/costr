@@ -40,6 +40,9 @@ abstract class RelayConnection {
   /// Send a `["CLOSE", subId]`.
   void closeSubscription(String subId);
 
+  /// Publish a signed event: `["EVENT", <wire array>]`.
+  void publish(Event event);
+
   /// Hook fired after a successful (re)connect — the pool uses it to re-issue
   /// active subscriptions to this relay.
   void setOnConnected(void Function() cb);
@@ -148,6 +151,9 @@ class RelayClient implements RelayConnection {
 
   @override
   void closeSubscription(String subId) => _send(['CLOSE', subId]);
+
+  @override
+  void publish(Event event) => _send(['EVENT', event.toWireList()]);
 
   void _send(List<dynamic> message) {
     _channel?.sink.add(jsonEncode(message));

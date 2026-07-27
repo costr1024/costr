@@ -44,6 +44,9 @@ class _FakeRelay implements RelayConnection {
   void closeSubscription(String subId) => sent.add(['CLOSE', subId]);
 
   @override
+  void publish(Event event) => sent.add(['EVENT', event.toWireList()]);
+
+  @override
   void setOnConnected(void Function() cb) => _onConnected = cb;
   @override
   void setOnDisconnected(void Function() cb) => _onDisconnected = cb;

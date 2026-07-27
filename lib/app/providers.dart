@@ -280,6 +280,32 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   return events.toList();
 });
 
+/// Find an event by id: hit the store first, else fetch via REQ {ids:[id]}.
+/// Used by the post detail page.
+final eventByIdProvider =
+    FutureProvider.family<Event?, String>((ref, id) async {
+  final store = ref.watch(eventStoreProvider);
+  for (final e in store) {
+    if (e.id == id) return e;
+  }
+  final pool = ref.watch(relayPoolProvider);
+  final completer = Completer<Event?>();
+  late StreamSubscription<Event> sub;
+  sub = pool.events.listen((e) {
+    if (e.id == id && !completer.isCompleted) completer.complete(e);
+  });
+  final subId = nextSubId('note');
+  pool.request(subId, <String, dynamic>{'ids': [id]}, closeOnEose: true);
+  ref.onDispose(() {
+    sub.cancel();
+    pool.closeSubscription(subId);
+  });
+  return completer.future.timeout(
+    const Duration(seconds: 5),
+    onTimeout: () => null,
+  );
+});
+
 // --- Relay status -----------------------------------------------------------
 
 final relayStatusProvider =

@@ -74,5 +74,26 @@ void main() {
       expect(a, b);
       expect(a.hashCode, b.hashCode);
     });
+
+    test('signEvent: id verifies and signature is valid', () {
+      final id = Identity.fromPrivkeyHex(privHex);
+      final signed = id.signEvent(
+        kind: 1,
+        content: 'hello costr',
+        tags: const [
+          ['t', 'nostr'],
+        ],
+        createdAt: 1700000000,
+      );
+      expect(signed.pubkey, id.pubkeyHex);
+      expect(signed.kind, 1);
+      expect(signed.content, 'hello costr');
+      // id is the sha256 of the canonical serialization (not empty).
+      expect(signed.id.length, 64);
+      expect(signed.id, signed.computeId());
+      expect(signed.sig.length, 128);
+      // BIP-340 verify(pubkey, id, sig) == true.
+      expect(id.verifyEventSignature(id: signed.id, sig: signed.sig), isTrue);
+    });
   });
 }

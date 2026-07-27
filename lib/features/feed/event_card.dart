@@ -10,6 +10,7 @@ import '../../app/providers.dart';
 import '../../models/event.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/markdown_content.dart';
+import '../../widgets/post_actions.dart';
 
 class EventCard extends ConsumerWidget {
   const EventCard({super.key, required this.event});
@@ -61,7 +62,10 @@ class EventCard extends ConsumerWidget {
                     ],
                   ),
                   const SizedBox(height: 6),
-                  MarkdownContent(event: event),
+                  GestureDetector(
+                    onTap: () => context.push('/n/${event.id}'),
+                    child: MarkdownContent(event: event),
+                  ),
                   if (event.hashtags.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Wrap(
@@ -79,6 +83,8 @@ class EventCard extends ConsumerWidget {
                       ],
                     ),
                   ],
+                  const SizedBox(height: 2),
+                  PostActions(event: event),
                 ],
               ),
             ),

@@ -130,6 +130,16 @@ class RelayPool {
     }
   }
 
+  /// Publish a signed event to every connected relay (`["EVENT", ...]`).
+  /// Also echoes it locally so the author sees their post in the feed
+  /// immediately (relays only ack with OK, they don't echo EVENT on publish).
+  void publish(Event event) {
+    for (final c in _connections) {
+      if (c.isConnected) c.publish(event);
+    }
+    if (!_merged.isClosed) _merged.add(event);
+  }
+
   void _emitStatus() {
     if (!_status.isClosed) {
       _status.add(states);

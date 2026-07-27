@@ -7,9 +7,13 @@
 /// error reports.
 library;
 
+import 'dart:math';
+
 import 'package:bip340/bip340.dart' as bip340;
 import 'package:flutter/foundation.dart';
+import 'package:hex/hex.dart';
 
+import '../models/event.dart';
 import '../utils/nip19.dart';
 
 @immutable
@@ -60,6 +64,50 @@ class Identity {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Sign a NIP-01 event. Builds the canonical id (sha256 of
+  /// `[0, pubkey, created_at, kind, tags, content]`), signs it with the
+  /// private key (BIP-340, secure-random aux), and returns the signed Event.
+  /// [createdAt] defaults to now (unix seconds).
+  Event signEvent({
+    required int kind,
+    required String content,
+    List<List<String>> tags = const [],
+    int? createdAt,
+  }) {
+    final ts = createdAt ??
+        (DateTime.now().millisecondsSinceEpoch ~/ 1000);
+    final wireTags = tags
+        .map((t) => t.map((e) => e as dynamic).toList())
+        .toList(growable: false);
+    final unsigned = Event(
+      id: '',
+      pubkey: pubkeyHex,
+      createdAt: ts,
+      kind: kind,
+      tags: wireTags,
+      content: content,
+      sig: '',
+    );
+    final id = unsigned.computeId();
+    final aux = _secureRandomHex32();
+    final sig = bip340.sign(privkeyHex, id, aux);
+    return Event(
+      id: id,
+      pubkey: pubkeyHex,
+      createdAt: ts,
+      kind: kind,
+      tags: wireTags,
+      content: content,
+      sig: sig,
+    );
+  }
+
+  static String _secureRandomHex32() {
+    final r = Random.secure();
+    final bytes = List<int>.generate(32, (_) => r.nextInt(256));
+    return HEX.encode(bytes);
   }
 
   /// Equality by pubkey (the identity is the key pair; privkey is unique).
