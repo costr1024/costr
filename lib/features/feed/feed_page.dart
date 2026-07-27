@@ -168,6 +168,7 @@ class _LanguageDropdown extends ConsumerWidget {
           DropdownMenuItem(value: LanguageFilter.all, child: Text('全部')),
           DropdownMenuItem(value: LanguageFilter.zh, child: Text('中文')),
           DropdownMenuItem(value: LanguageFilter.en, child: Text('英文')),
+          DropdownMenuItem(value: LanguageFilter.ja, child: Text('日文')),
         ],
         onChanged: (LanguageFilter? f) {
           if (f != null) ref.read(languageFilterProvider.notifier).set(f);

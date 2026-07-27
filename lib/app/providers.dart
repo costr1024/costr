@@ -164,7 +164,7 @@ final feedModeProvider =
 
 // --- Feed filters: language + hashtag ---------------------------------------
 
-enum LanguageFilter { all, zh, en }
+enum LanguageFilter { all, zh, en, ja }
 
 class LanguageFilterNotifier extends Notifier<LanguageFilter> {
   @override
@@ -277,7 +277,12 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
         });
 
   if (lang != LanguageFilter.all) {
-    final want = lang == LanguageFilter.zh ? 'zh' : 'en';
+    final want = switch (lang) {
+      LanguageFilter.zh => 'zh',
+      LanguageFilter.en => 'en',
+      LanguageFilter.ja => 'ja',
+      LanguageFilter.all => '',
+    };
     events = events.where((e) => detectLanguage(e.content) == want);
   }
   if (tag != null) {
