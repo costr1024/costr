@@ -2,6 +2,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -56,6 +57,7 @@ class EventCard extends ConsumerWidget {
                         _relativeTime(event.createdAt),
                         style: theme.textTheme.labelSmall,
                       ),
+                      _PostMenu(event: event),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -100,5 +102,39 @@ class EventCard extends ConsumerWidget {
     if (days < 30) return '${days}d';
     return '${eventTime.year}-${eventTime.month.toString().padLeft(2, '0')}'
         '-${eventTime.day.toString().padLeft(2, '0')}';
+  }
+}
+
+/// Top-right `⋮` menu for a post: copy event id / copy full content.
+class _PostMenu extends StatelessWidget {
+  const _PostMenu({required this.event});
+  final Event event;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, size: 18),
+      padding: EdgeInsets.zero,
+      itemBuilder: (BuildContext context) => const <PopupMenuEntry<String>>[
+        PopupMenuItem<String>(
+          value: 'copy_id',
+          child: Text('复制 event id'),
+        ),
+        PopupMenuItem<String>(
+          value: 'copy_content',
+          child: Text('复制全文'),
+        ),
+      ],
+      onSelected: (String value) async {
+        final text = value == 'copy_id' ? event.id : event.content;
+        await Clipboard.setData(ClipboardData(text: text));
+        if (context.mounted) {
+          final label = value == 'copy_id' ? 'event id' : '全文';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已复制 $label'), duration: const Duration(seconds: 1)),
+          );
+        }
+      },
+    );
   }
 }
