@@ -127,7 +127,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         icon: const Icon(Icons.edit),
-        label: const Text('Compose'),
+        label: const Text('发帖'),
         onPressed: () => context.push('/compose'),
       ),
     );

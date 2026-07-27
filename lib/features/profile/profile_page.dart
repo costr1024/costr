@@ -23,7 +23,7 @@ class ProfilePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final idAsync = ref.watch(identityProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Profile')),
+      appBar: AppBar(title: const Text('我的')),
       body: idAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object e, _) => Center(child: Text('加载失败：$e')),
@@ -80,7 +80,7 @@ class _ProfileBody extends ConsumerWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        m?.bestName ?? '(no name)',
+                        m?.bestName ?? '(未设置名字)',
                         style: theme.textTheme.titleLarge,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

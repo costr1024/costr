@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:costr/models/event.dart';
+import 'package:costr/nostr/identity.dart';
 import 'package:costr/nostr/relay_client.dart';
 import 'package:costr/nostr/relay_pool.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,6 +16,7 @@ class _FakeRelay implements RelayConnection {
   final StreamController<String> _eose = StreamController<String>.broadcast();
   final StreamController<String> _notices = StreamController<String>.broadcast();
   final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
+  final StreamController<String> _auths = StreamController<String>.broadcast();
 
   final List<List<dynamic>> sent = [];
   bool _connected = false;
@@ -32,6 +34,8 @@ class _FakeRelay implements RelayConnection {
   Stream<String> get notices => _notices.stream;
   @override
   Stream<RelayOk> get oks => _oks.stream;
+  @override
+  Stream<String> get auths => _auths.stream;
 
   @override
   Future<void> connect() async {
@@ -50,6 +54,9 @@ class _FakeRelay implements RelayConnection {
   void publish(Event event) => sent.add(['EVENT', event.toWireObject()]);
 
   @override
+  void sendAuth(Event event) => sent.add(['AUTH', event.toWireObject()]);
+
+  @override
   void setOnConnected(void Function() cb) => _onConnected = cb;
   @override
   void setOnDisconnected(void Function() cb) => _onDisconnected = cb;
@@ -60,11 +67,13 @@ class _FakeRelay implements RelayConnection {
     await _eose.close();
     await _notices.close();
     await _oks.close();
+    await _auths.close();
   }
 
   void emit(Event e) => _events.add(e);
   void emitEose(String subId) => _eose.add(subId);
   void emitOk(RelayOk ok) => _oks.add(ok);
+  void emitAuth(String challenge) => _auths.add(challenge);
   void markDisconnected() {
     _connected = false;
     _onDisconnected?.call();
@@ -105,6 +114,34 @@ void main() {
       expect(b.sent, [
         ['REQ', 'costr:feed:1', {'kinds': [1], 'limit': 200}]
       ]);
+      await pool.dispose();
+    });
+
+    test('NIP-42: signs kind-22242 + sendAuth on AUTH challenge', () async {
+      final a = _FakeRelay('wss://relay.bostr.online/');
+      final pool = RelayPool([a]);
+      final id = Identity.fromPrivkeyHex(
+          '0000000000000000000000000000000000000000000000000000000000000001');
+      pool.identityGetter = () => id;
+      await pool.connect();
+
+      a.emitAuth('challenge-xyz');
+      await Future<void>.delayed(Duration.zero);
+
+      final authMsg = a.sent.where((m) => m[0] == 'AUTH').toList();
+      expect(authMsg.length, 1);
+      final ev = authMsg[0][1] as Map<String, dynamic>;
+      expect(ev['kind'], 22242);
+      expect(ev['content'], '');
+      expect(ev['tags'], [
+        ['relay', 'wss://relay.bostr.online/'],
+        ['challenge', 'challenge-xyz'],
+      ]);
+      expect((ev['sig'] as String).length, 128);
+      expect(
+        id.verifyEventSignature(id: ev['id'] as String, sig: ev['sig'] as String),
+        isTrue,
+      );
       await pool.dispose();
     });
 
@@ -167,8 +204,7 @@ void main() {
     });
 
     test('closeOnEose closes the sub on the first EOSE from any relay',
-        () async {
-      final a = _FakeRelay('wss://a');
+        () async {      final a = _FakeRelay('wss://a');
       final b = _FakeRelay('wss://b');
       final pool = RelayPool([a, b]);
       await pool.connect();

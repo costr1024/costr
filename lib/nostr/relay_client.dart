@@ -18,12 +18,14 @@ import '../models/event.dart';
 
 /// A relay's OK ack for a published event: `["OK", id, true/false, reason]`.
 class RelayOk {
-  const RelayOk(this.id, this.ok, this.reason);
+  const RelayOk(this.id, this.ok, this.reason, {this.url});
   final String id;
   final bool ok;
   final String? reason;
+  /// Which relay sent this ack (for per-relay retry / NIP-42 auth flow).
+  final String? url;
   @override
-  String toString() => 'RelayOk($id: ${ok ? 'OK' : 'rejected'}${reason == null || reason!.isEmpty ? '' : ' — $reason'})';
+  String toString() => 'RelayOk($url: ${ok ? 'OK' : 'rejected'}${reason == null || reason!.isEmpty ? '' : ' — $reason'})';
 }
 
 /// Frame types a relay can push. v1 only consumes EVENT and EOSE; NOTICE and
@@ -44,6 +46,12 @@ abstract class RelayConnection {
 
   /// Emits OK acks for published events: `["OK", id, ok, reason]`.
   Stream<RelayOk> get oks;
+
+  /// Emits NIP-42 AUTH challenges: `["AUTH", challenge]`.
+  Stream<String> get auths;
+
+  /// Send a signed NIP-42 auth response: `["AUTH", <event object>]`.
+  void sendAuth(Event event);
 
   Future<void> connect();
 
@@ -87,6 +95,7 @@ class RelayClient implements RelayConnection {
   final StreamController<String> _eose = StreamController<String>.broadcast();
   final StreamController<String> _notices = StreamController<String>.broadcast();
   final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
+  final StreamController<String> _auths = StreamController<String>.broadcast();
 
   @override
   Stream<Event> get events => _events.stream;
@@ -96,6 +105,8 @@ class RelayClient implements RelayConnection {
   Stream<String> get notices => _notices.stream;
   @override
   Stream<RelayOk> get oks => _oks.stream;
+  @override
+  Stream<String> get auths => _auths.stream;
   @override
   bool get isConnected => _connected;
   @override
@@ -157,7 +168,10 @@ class RelayClient implements RelayConnection {
       } else if (type == 'OK' && msg[1] is String) {
         final ok = msg[2] is bool ? msg[2] as bool : msg[2] == true;
         final reason = (msg.length >= 4 ? msg[3] : null)?.toString();
-        _oks.add(RelayOk(msg[1] as String, ok, reason));
+        _oks.add(RelayOk(msg[1] as String, ok, reason, url: url));
+      } else if (type == 'AUTH' && msg[1] is String) {
+        // NIP-42: relay challenges the client to authenticate.
+        _auths.add(msg[1] as String);
       }
     } catch (_) {
       // Malformed frame — ignore. Relays occasionally send odd payloads.
@@ -174,6 +188,9 @@ class RelayClient implements RelayConnection {
   @override
   void publish(Event event) => _send(['EVENT', event.toWireObject()]);
 
+  @override
+  void sendAuth(Event event) => _send(['AUTH', event.toWireObject()]);
+
   void _send(List<dynamic> message) {
     _channel?.sink.add(jsonEncode(message));
   }
@@ -188,5 +205,6 @@ class RelayClient implements RelayConnection {
     await _eose.close();
     await _notices.close();
     await _oks.close();
+    await _auths.close();
   }
 }

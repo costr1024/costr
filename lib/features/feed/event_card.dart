@@ -98,14 +98,14 @@ class EventCard extends ConsumerWidget {
     final eventTime =
         DateTime.fromMillisecondsSinceEpoch(createdAt * 1000, isUtc: true);
     final delta = DateTime.now().difference(eventTime);
-    if (delta.isNegative) return 'just now';
+    if (delta.isNegative) return '刚刚';
     final mins = delta.inMinutes;
-    if (mins < 1) return 'just now';
-    if (mins < 60) return '${mins}m';
+    if (mins < 1) return '刚刚';
+    if (mins < 60) return '$mins分';
     final hours = delta.inHours;
-    if (hours < 24) return '${hours}h';
+    if (hours < 24) return '$hours时';
     final days = delta.inDays;
-    if (days < 30) return '${days}d';
+    if (days < 30) return '$days天';
     return '${eventTime.year}-${eventTime.month.toString().padLeft(2, '0')}'
         '-${eventTime.day.toString().padLeft(2, '0')}';
   }

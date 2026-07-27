@@ -88,6 +88,8 @@ final identityProvider =
 
 final relayPoolProvider = Provider<RelayPool>((ref) {
   final pool = RelayPool.fromUrls(defaultRelays);
+  // Lazy identity getter for NIP-42 AUTH responses (works after login).
+  pool.identityGetter = () => ref.read(identityProvider).value;
   ref.onDispose(pool.dispose);
   return pool;
 });

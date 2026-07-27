@@ -10,6 +10,7 @@ import 'dart:async';
 import 'dart:collection';
 
 import '../models/event.dart';
+import 'identity.dart';
 import 'relay_client.dart';
 
 enum RelayStatus { connecting, connected, disconnected, error }
@@ -39,6 +40,11 @@ class RelayPool {
   final LinkedHashSet<String> _seenIds = LinkedHashSet();
   bool _mergedWired = false;
   bool _connecting = false;
+
+  /// Lazily returns the current identity, used to sign NIP-42 AUTH responses.
+  /// Set by the app so the pool can auth after login (identity may arrive
+  /// after the pool is created).
+  Identity? Function() identityGetter = () => null;
 
   final StreamController<Event> _merged = StreamController<Event>.broadcast();
   final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
@@ -104,6 +110,22 @@ class RelayPool {
       c.oks.listen((RelayOk ok) {
         if (!_oks.isClosed) _oks.add(ok);
       });
+      c.auths.listen((String challenge) async {
+        // NIP-42: sign a kind-22242 auth event with [relay, url] + [challenge,
+        // challenge] tags and send it back. Lazy-fetch identity so it works
+        // after a login that happened post-connect.
+        final id = identityGetter();
+        if (id == null) return;
+        final auth = id.signEvent(
+          kind: 22242,
+          content: '',
+          tags: [
+            ['relay', c.url],
+            ['challenge', challenge],
+          ],
+        );
+        c.sendAuth(auth);
+      });
     }
   }
 
@@ -148,27 +170,39 @@ class RelayPool {
   }
 
   /// Publish and wait for relay OK verdicts. Resolves on the first relay that
-  /// accepts (OK true); if all connected relays reject, resolves with the
-  /// joined rejection reasons; times out if no ack within [timeout].
+  /// accepts (OK true); if a relay rejects with "auth-required" (NIP-42), it
+  /// retries that relay once after the auth round-trip; if all reject, resolves
+  /// with the joined rejection reasons; times out if no ack within [timeout].
   Future<RelayOk> publishAndWait(Event event,
-      {Duration timeout = const Duration(seconds: 10)}) async {
+      {Duration timeout = const Duration(seconds: 15)}) async {
     final expected = event.id;
     final connected = _connections.where((c) => c.isConnected).toList();
-    final rejected = <String>[];
-    final completer = Completer<RelayOk>();
+    final byUrl = <String, RelayConnection>{for (final c in connected) c.url: c};
+    final verdicts = <String, RelayOk>{}; // final non-auth verdicts (url -> ok)
+    final retried = <String>{}; // relays already retried for auth-required
     bool resolved = false;
+    final completer = Completer<RelayOk>();
+
+    bool isAuthReq(String? r) =>
+        (r ?? '').toLowerCase().contains('auth');
 
     final sub = oks.listen((RelayOk ok) {
-      if (ok.id != expected || resolved) return;
+      if (resolved || ok.id != expected || ok.url == null) return;
+      final url = ok.url!;
       if (ok.ok) {
         resolved = true;
         completer.complete(ok);
+        return;
+      }
+      // Rejected. If it's an auth-required rejection and we haven't retried,
+      // wait for the NIP-42 auth round-trip then re-send the EVENT to that relay.
+      if (isAuthReq(ok.reason) && !retried.contains(url)) {
+        retried.add(url);
+        Future<void>.delayed(const Duration(seconds: 3)).then((_) {
+          if (!resolved) byUrl[url]?.publish(event);
+        });
       } else {
-        rejected.add(ok.reason?.isNotEmpty == true ? ok.reason! : 'rejected');
-        if (rejected.length >= connected.length) {
-          resolved = true;
-          completer.complete(RelayOk(expected, false, rejected.join('; ')));
-        }
+        verdicts[url] = ok;
       }
     });
 
@@ -176,8 +210,19 @@ class RelayPool {
 
     return completer.future
         .timeout(timeout,
-            onTimeout: () => RelayOk(expected, false,
-                'no relay ack in ${timeout.inSeconds}s (${connected.length} connected)'))
+            onTimeout: () {
+              final accepted = verdicts.values.where((v) => v.ok);
+              if (accepted.isNotEmpty) return accepted.first;
+              final fails = verdicts.values.where((v) => !v.ok).toList();
+              if (fails.isEmpty) {
+                return RelayOk(expected, false,
+                    'no relay ack in ${timeout.inSeconds}s (${connected.length} connected)');
+              }
+              final reasons = fails
+                  .map((v) => '${v.url}: ${v.reason ?? 'rejected'}')
+                  .join('; ');
+              return RelayOk(expected, false, reasons);
+            })
         .whenComplete(() => sub.cancel());
   }
 

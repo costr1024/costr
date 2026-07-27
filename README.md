@@ -17,11 +17,11 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **标签与语言过滤**：解析 NIP-12 `["t","value"]` tag **及**正文内联 `#hashtag`（支持中文 tag，忽略 markdown 标题与 URL 片段），合并去重小写；正文下方渲染成可点 chip（点选设为 tag 过滤器，AppBar 出现可清除的 tag chip）。AppBar 语言下拉：全部 / 中文 / 英文——启发式检测（含 CJK 判中文，否则含拉丁字母判英文），与 mode / tag 过滤叠加。
 - **用户主页**：点 feed 帖子的头像或作者名 → 打开该用户 profile（`/u/:pubkey`，push 进栈、自带返回）。复用 ProfilePage（参数化 pubkey）：他人主页只展示资料，自己的主页才有 hex pubkey + 登出。
 - **帖子菜单**：每条帖子右上角 `⋮` → 弹出菜单「复制 event id」「复制全文」，便于定位/反馈问题。
-- **发帖（Compose）**：FAB → 撰写页，字数计数（280 软上限提示），签名（`Identity.signEvent`：computeId + bip340 sign + secure-random aux）+ 发布到中继。**EVENT 消息用对象形式**（2026 现行 NIP-01，中继拒绝旧数组形式）；`publishAndWait` 等中继 OK 应答，成功/失败带原因反馈到 UI，并本地 echo 让作者立即看到自己的帖子。附图后续支持。
-- **默认中继**：`damus.io` / `nos.lol` / `ditto.pub` / `bostr.online`。前三个接受写入且被广泛订阅（帖子能被其他客户端看到）；`bostr.online` 写入需 NIP-42 认证（暂不支持，仅读取）。
+- **发帖（Compose）**：FAB → 撰写页，字数计数（280 软上限提示），签名（`Identity.signEvent`：computeId + bip340 sign + secure-random aux）+ 发布到中继。**EVENT 消息用对象形式**（2026 现行 NIP-01，中继拒绝旧数组形式）；`publishAndWait` 等中继 OK 应答，成功/失败带原因反馈到 UI，并本地 echo 让作者立即看到自己的帖子。**NIP-42 认证**：中继发 `["AUTH", challenge]` 时，pool 用当前身份签 kind-22242（含 `relay`/`challenge` tag）回送；`publishAndWait` 遇 auth-required 自动重试该中继。附图后续支持。
+- **默认中继**：`damus.io` / `nos.lol` / `ditto.pub` / `bostr.online`。前三个接受写入且被广泛订阅（帖子能被其他客户端看到）；`bostr.online` 写入需 NIP-42 认证（已支持）+ **白名单**（你的 key 须在白名单内，否则拒 `restricted: whitelisted`，这是中继策略）。
 - **帖子交互（X 风格）**：每条帖子下方一排 💬回复 / 🔁转发 / ❤️点赞 / 🔖收藏 / ↗分享。分享可用（复制 `note1` 链接）；其余点按提示"即将支持"（待签发层接入 NIP-25/NIP-18/回复）。点帖子正文 → `/n/:id` 详情页（单帖全屏 + 交互栏 + 回复占位）。
 - **下拉刷新 + 加载更多**：下拉刷新重新拉取当前流；滚到底自动发 `until: 最旧时间戳` 的 REQ 追加更早的事件。
-- **界面与导航**：登录页、信息流页（中继状态 chip + 语言下拉 + tag 过滤 chip + 空/错误态）、个人页（头像 + 资料 + npub/pubkey + 登出）、发帖页、帖子详情页、用户主页。Feed/Profile 共用一个底栏导航 shell（`StatefulShellRoute.indexedStack`，保留各 tab 状态）；发帖页 / 用户主页 / 详情页 push 进栈、AppBar 自带返回键。
+- **界面与导航**：**中文优先**（面向中国用户，所有 UI 文案中文化；品牌名 costr 保留）。登录页、信息流页（中继状态 chip + 语言下拉 + tag 过滤 chip + 空/错误态）、个人页（头像 + 资料 + npub/pubkey + 登出）、发帖页、帖子详情页、用户主页。Feed/Profile 共用一个底栏导航 shell（`StatefulShellRoute.indexedStack`，保留各 tab 状态）；发帖页 / 用户主页 / 详情页 push 进栈、AppBar 自带返回键。相对时间中文（刚刚/分/时/天）。
 
 ## 协议
 
