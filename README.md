@@ -13,7 +13,7 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **中继池**：多中继 fan-out，按 event id 去重，断线指数退避重连，重连后自动重发活跃订阅。
 - **事件存储**：内存单源，按 id 去重，按时间倒序，上限 5000 条淘汰最旧。
 - **头像与资料**：按作者 pubkey 拉取 NIP-01 kind 0 元数据（name / display_name / picture / about / website / banner），内存缓存 + 去重 in-flight 请求（`closeOnEose` 一次性快照）。feed 帖子卡显示头像 + 名字（无名字回退 npub 缩写），个人 profile 页展示 banner / 头像 / 名字 / about / website / npub / 登出。头像图片用 `cached_network_image` 缓存 + 占位/错误回退。
-- **帖子正文渲染**：GitHub 风格 markdown（`flutter_markdown`），内联图片用 `cached_network_image`，内联视频用 `video_player`（点按播放/暂停）。同时解析 NIP-92 `imeta` tag 附带的图/视频（按 mimetype 或 URL 后缀判别），未出现在正文里的附加媒体追加在正文下方。正文里的 NIP-19 `npub1`/`nprofile1` 提及自动 linkify 成可点链接（`nprofile1` 解 TLV 取 pubkey），标签显示已解析的 kind-0 用户名（无则缩写 entity），点选跳转 `/u/:pubkey` 用户主页。
+- **帖子正文渲染**：GitHub 风格 markdown（`flutter_markdown`）。**多图九宫格**：正文里连续的 markdown 图片（无文字间隔）合成 3 列方格缩略图（按实际数量，不封顶 9）；图片间有文字则各自成组；单张仍全宽显示。内联视频用 `video_player`（点按播放/暂停）。NIP-92 `imeta` tag 附带的图/视频未在正文里的追加在下方（图片合成方格、视频全宽）。NIP-19 `npub1`/`nprofile1` 提及自动 linkify 成可点链接（`nprofile1` 解 TLV 取 pubkey），标签显示已解析的 kind-0 用户名（无则缩写），点选跳 `/u/:pubkey`。**长帖折叠**：正文 >400 字符默认折叠到限高 + 渐变"展开"，展开后底部"收起"。
 - **标签与语言过滤**：解析 NIP-12 `["t","value"]` tag **及**正文内联 `#hashtag`（支持中文 tag，忽略 markdown 标题与 URL 片段），合并去重小写；正文下方渲染成可点 chip（点选设为 tag 过滤器，AppBar 出现可清除的 tag chip）。AppBar 语言下拉：全部 / 中文 / 英文——启发式检测（含 CJK 判中文，否则含拉丁字母判英文），与 mode / tag 过滤叠加。
 - **用户主页**：点 feed 帖子的头像或作者名 → 打开该用户 profile（`/u/:pubkey`，push 进栈、自带返回）。复用 ProfilePage（参数化 pubkey）：他人主页只展示资料，自己的主页才有 hex pubkey + 登出。
 - **帖子菜单**：每条帖子右上角 `⋮` → 弹出菜单「复制 event id」「复制全文」，便于定位/反馈问题。
