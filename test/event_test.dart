@@ -193,5 +193,39 @@ void main() {
       // '#section' is preceded by '/' inside the URL → ignored.
       expect(ev.hashtags, ['realtag']);
     });
+
+    test('replyToId: reply marker > legacy positional > root marker', () {
+      Event ev(List tags) => Event.fromList(<dynamic>[
+        'id', 'pk', 1, 1, tags, 'c', 's',
+      ]);
+      expect(
+        ev([
+          ['e', 'root-id', 'wss://x', 'root'],
+          ['e', 'parent-id', 'wss://x', 'reply'],
+        ]).replyToId,
+        'parent-id',
+      );
+      expect(
+        ev([
+          ['e', 'first-id'],
+          ['e', 'parent-id'],
+        ]).replyToId,
+        'parent-id',
+      );
+      expect(
+        ev([
+          ['e', 'root-id', 'wss://x', 'root'],
+        ]).replyToId,
+        'root-id',
+      );
+      expect(
+        ev([
+          ['e', 'mention-id', 'wss://x', 'mention'],
+        ]).isReply,
+        isFalse,
+      );
+      expect(ev([]).isReply, isFalse);
+      expect(ev([]).replyToId, isNull);
+    });
   });
 }

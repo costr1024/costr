@@ -312,6 +312,47 @@ final eventByIdProvider =
   );
 });
 
+/// A user's public kind-1 notes (posts + replies), newest-first. Resolves on
+/// the first relay's EOSE (or a 10s timeout). Used by the profile page.
+final userPostsProvider =
+    FutureProvider.family<List<Event>, String>((ref, pubkey) async {
+  final pool = ref.watch(relayPoolProvider);
+  final collected = <Event>[];
+  final seen = <String>{};
+  final completer = Completer<void>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.isTextNote && e.pubkey == pubkey && seen.add(e.id)) {
+      collected.add(e);
+    }
+  });
+  final subId = nextSubId('user');
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    if (!completer.isCompleted) completer.complete();
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{
+      'authors': [pubkey],
+      'kinds': [1],
+      'limit': 100,
+    },
+    closeOnEose: true,
+  );
+  ref.onDispose(() {
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  await completer.future.timeout(
+    const Duration(seconds: 10),
+    onTimeout: () {},
+  );
+  collected.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return collected;
+});
+
 // --- Relay status -----------------------------------------------------------
 
 final relayStatusProvider =

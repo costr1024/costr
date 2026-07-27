@@ -10,8 +10,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
+import '../../models/event.dart';
 import '../../nostr/identity.dart';
 import '../../widgets/avatar.dart';
+import 'user_post_item.dart';
 
 class ProfilePage extends ConsumerWidget {
   const ProfilePage({super.key, this.pubkey});
@@ -76,8 +78,7 @@ class _ProfileBody extends ConsumerWidget {
                     Transform.translate(
                       offset: const Offset(0, -24),
                       child: Avatar(pubkey: pubkey, radius: 40),
-                    ),
-                    const SizedBox(width: 12),
+                    ),                    const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         m?.bestName ?? '(未设置名字)',
@@ -123,8 +124,47 @@ class _ProfileBody extends ConsumerWidget {
               ],
             ),
           ),
+          const Divider(height: 1),
+          _PostsSection(pubkey: pubkey),
         ],
       ),
+    );
+  }
+}
+
+/// The user's public posts + replies (newest-first). Replies show the parent
+/// post quoted above, indented (hierarchy via a left rule).
+class _PostsSection extends ConsumerWidget {
+  const _PostsSection({required this.pubkey});
+  final String pubkey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(userPostsProvider(pubkey));
+    return async.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (Object e, _) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Center(child: Text('帖子加载失败：$e')),
+      ),
+      data: (List<Event> posts) {
+        if (posts.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: Text('暂无公开帖子')),
+          );
+        }
+        return ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: posts.length,
+          itemBuilder: (BuildContext context, int i) =>
+              UserPostItem(event: posts[i]),
+        );
+      },
     );
   }
 }

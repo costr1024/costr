@@ -95,6 +95,32 @@ class Event {
   bool get isTextNote => kind == kindTextNote;
   bool get isContactList => kind == kindContactList;
 
+  /// The event id this kind-1 note directly replies to (NIP-10), or null if it
+  /// is a top-level post. Marker precedence: "reply" > legacy positional (empty
+  /// marker, last one wins) > "root" (reply-to-root). "mention" tags are not
+  /// replies and are ignored.
+  String? get replyToId {
+    String? replyMarker;
+    String? rootMarker;
+    String? lastPositional;
+    for (final t in tags) {
+      if (t.length < 2 || t[0] != 'e' || t[1] is! String) continue;
+      final id = t[1] as String;
+      final marker = (t.length >= 4 && t[3] is String) ? (t[3] as String) : '';
+      if (marker == 'reply') {
+        replyMarker = id;
+      } else if (marker == 'root') {
+        rootMarker = id;
+      } else if (marker.isEmpty) {
+        lastPositional = id;
+      }
+    }
+    return replyMarker ?? lastPositional ?? rootMarker;
+  }
+
+  /// True if this note is a reply (has a parent it replies to).
+  bool get isReply => replyToId != null;
+
   /// Hashtags from NIP-12 `["t", "value"]` tags AND inline `#hashtag` patterns
   /// found in the content body. Values are lowercased and deduped (NIP-12
   /// recommends lowercase). Order: t-tags first, then content matches.

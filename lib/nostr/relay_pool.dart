@@ -48,6 +48,7 @@ class RelayPool {
 
   final StreamController<Event> _merged = StreamController<Event>.broadcast();
   final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
+  final StreamController<String> _eose = StreamController<String>.broadcast();
   // late so the initializer can reference the instance method _emitStatus.
   late final StreamController<List<RelayState>> _status =
       StreamController<List<RelayState>>.broadcast(
@@ -59,6 +60,9 @@ class RelayPool {
 
   /// Merged stream of OK acks from all relays (publish verdicts).
   Stream<RelayOk> get oks => _oks.stream;
+
+  /// Merged stream of EOSE subIds (a subId is emitted when any relay EOSEs it).
+  Stream<String> get eoseStream => _eose.stream;
 
   /// Stream of relay connection states (emits current state on subscribe, and
   /// on every connect/disconnect thereafter).
@@ -101,6 +105,7 @@ class RelayPool {
         }
       });
       c.eose.listen((String subId) {
+        if (!_eose.isClosed) _eose.add(subId);
         // On EOSE for a closeOnEose subscription, close it (bounded snapshot
         // instead of an unbounded live firehose — critical on small hosts).
         if (_closeOnEose.remove(subId)) {
@@ -238,6 +243,7 @@ class RelayPool {
     }
     await _merged.close();
     await _oks.close();
+    await _eose.close();
     await _status.close();
   }
 }
