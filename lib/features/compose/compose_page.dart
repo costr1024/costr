@@ -41,8 +41,14 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     setState(() => _sending = true);
     try {
       final signed = identity.signEvent(kind: 1, content: text, tags: const []);
-      ref.read(relayPoolProvider).publish(signed);
-      if (mounted) context.pop();
+      final pool = ref.read(relayPoolProvider);
+      final ok = await pool.publishAndWait(signed);
+      if (!mounted) return;
+      if (ok.ok) {
+        context.pop();
+      } else {
+        _snack('发布失败：${ok.reason}');
+      }
     } catch (e) {
       _snack('发送失败：$e');
     } finally {

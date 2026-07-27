@@ -21,10 +21,14 @@ import '../services/secure_storage_service.dart';
 import '../utils/language.dart';
 
 
-/// Default relays (user-specified).
+/// Default relays. bostr requires NIP-42 auth to write (read-only for us);
+/// ditto/damus/nos.lol accept writes and are broadly queried, so posts reach
+/// other clients. All four are read for feed diversity.
 const List<String> defaultRelays = <String>[
-  'wss://relay.bostr.online/',
+  'wss://relay.damus.io/',
+  'wss://nos.lol/',
   'wss://relay.ditto.pub/',
+  'wss://relay.bostr.online/',
 ];
 
 // Monotonic subId counter, namespaced for relay-log readability.

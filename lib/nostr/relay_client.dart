@@ -16,6 +16,16 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/event.dart';
 
+/// A relay's OK ack for a published event: `["OK", id, true/false, reason]`.
+class RelayOk {
+  const RelayOk(this.id, this.ok, this.reason);
+  final String id;
+  final bool ok;
+  final String? reason;
+  @override
+  String toString() => 'RelayOk($id: ${ok ? 'OK' : 'rejected'}${reason == null || reason!.isEmpty ? '' : ' — $reason'})';
+}
+
 /// Frame types a relay can push. v1 only consumes EVENT and EOSE; NOTICE and
 /// OK are surfaced but not acted on (NOTICE is not an error; OK acks publishes
 /// which v1 doesn't do).
@@ -31,6 +41,9 @@ abstract class RelayConnection {
 
   /// Emits the notice text on `["NOTICE", text]`.
   Stream<String> get notices;
+
+  /// Emits OK acks for published events: `["OK", id, ok, reason]`.
+  Stream<RelayOk> get oks;
 
   Future<void> connect();
 
@@ -73,6 +86,7 @@ class RelayClient implements RelayConnection {
   final StreamController<Event> _events = StreamController<Event>.broadcast();
   final StreamController<String> _eose = StreamController<String>.broadcast();
   final StreamController<String> _notices = StreamController<String>.broadcast();
+  final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
 
   @override
   Stream<Event> get events => _events.stream;
@@ -80,6 +94,8 @@ class RelayClient implements RelayConnection {
   Stream<String> get eose => _eose.stream;
   @override
   Stream<String> get notices => _notices.stream;
+  @override
+  Stream<RelayOk> get oks => _oks.stream;
   @override
   bool get isConnected => _connected;
   @override
@@ -138,8 +154,11 @@ class RelayClient implements RelayConnection {
         _eose.add(msg[1] as String);
       } else if (type == 'NOTICE' && msg[1] is String) {
         _notices.add(msg[1] as String);
+      } else if (type == 'OK' && msg[1] is String) {
+        final ok = msg[2] is bool ? msg[2] as bool : msg[2] == true;
+        final reason = (msg.length >= 4 ? msg[3] : null)?.toString();
+        _oks.add(RelayOk(msg[1] as String, ok, reason));
       }
-      // 'OK' frames are publish acks — v1 doesn't publish, ignore.
     } catch (_) {
       // Malformed frame — ignore. Relays occasionally send odd payloads.
     }
@@ -153,7 +172,7 @@ class RelayClient implements RelayConnection {
   void closeSubscription(String subId) => _send(['CLOSE', subId]);
 
   @override
-  void publish(Event event) => _send(['EVENT', event.toWireList()]);
+  void publish(Event event) => _send(['EVENT', event.toWireObject()]);
 
   void _send(List<dynamic> message) {
     _channel?.sink.add(jsonEncode(message));
@@ -168,5 +187,6 @@ class RelayClient implements RelayConnection {
     await _events.close();
     await _eose.close();
     await _notices.close();
+    await _oks.close();
   }
 }

@@ -14,6 +14,7 @@ class _FakeRelay implements RelayConnection {
   final StreamController<Event> _events = StreamController<Event>.broadcast();
   final StreamController<String> _eose = StreamController<String>.broadcast();
   final StreamController<String> _notices = StreamController<String>.broadcast();
+  final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
 
   final List<List<dynamic>> sent = [];
   bool _connected = false;
@@ -29,6 +30,8 @@ class _FakeRelay implements RelayConnection {
   Stream<String> get eose => _eose.stream;
   @override
   Stream<String> get notices => _notices.stream;
+  @override
+  Stream<RelayOk> get oks => _oks.stream;
 
   @override
   Future<void> connect() async {
@@ -44,7 +47,7 @@ class _FakeRelay implements RelayConnection {
   void closeSubscription(String subId) => sent.add(['CLOSE', subId]);
 
   @override
-  void publish(Event event) => sent.add(['EVENT', event.toWireList()]);
+  void publish(Event event) => sent.add(['EVENT', event.toWireObject()]);
 
   @override
   void setOnConnected(void Function() cb) => _onConnected = cb;
@@ -56,10 +59,12 @@ class _FakeRelay implements RelayConnection {
     await _events.close();
     await _eose.close();
     await _notices.close();
+    await _oks.close();
   }
 
   void emit(Event e) => _events.add(e);
   void emitEose(String subId) => _eose.add(subId);
+  void emitOk(RelayOk ok) => _oks.add(ok);
   void markDisconnected() {
     _connected = false;
     _onDisconnected?.call();

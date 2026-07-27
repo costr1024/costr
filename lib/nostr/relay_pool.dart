@@ -41,6 +41,7 @@ class RelayPool {
   bool _connecting = false;
 
   final StreamController<Event> _merged = StreamController<Event>.broadcast();
+  final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
   // late so the initializer can reference the instance method _emitStatus.
   late final StreamController<List<RelayState>> _status =
       StreamController<List<RelayState>>.broadcast(
@@ -49,6 +50,9 @@ class RelayPool {
 
   /// Merged, deduped stream of all events from all relays.
   Stream<Event> get events => _merged.stream;
+
+  /// Merged stream of OK acks from all relays (publish verdicts).
+  Stream<RelayOk> get oks => _oks.stream;
 
   /// Stream of relay connection states (emits current state on subscribe, and
   /// on every connect/disconnect thereafter).
@@ -97,6 +101,9 @@ class RelayPool {
           closeSubscription(subId);
         }
       });
+      c.oks.listen((RelayOk ok) {
+        if (!_oks.isClosed) _oks.add(ok);
+      });
     }
   }
 
@@ -140,6 +147,40 @@ class RelayPool {
     if (!_merged.isClosed) _merged.add(event);
   }
 
+  /// Publish and wait for relay OK verdicts. Resolves on the first relay that
+  /// accepts (OK true); if all connected relays reject, resolves with the
+  /// joined rejection reasons; times out if no ack within [timeout].
+  Future<RelayOk> publishAndWait(Event event,
+      {Duration timeout = const Duration(seconds: 10)}) async {
+    final expected = event.id;
+    final connected = _connections.where((c) => c.isConnected).toList();
+    final rejected = <String>[];
+    final completer = Completer<RelayOk>();
+    bool resolved = false;
+
+    final sub = oks.listen((RelayOk ok) {
+      if (ok.id != expected || resolved) return;
+      if (ok.ok) {
+        resolved = true;
+        completer.complete(ok);
+      } else {
+        rejected.add(ok.reason?.isNotEmpty == true ? ok.reason! : 'rejected');
+        if (rejected.length >= connected.length) {
+          resolved = true;
+          completer.complete(RelayOk(expected, false, rejected.join('; ')));
+        }
+      }
+    });
+
+    publish(event);
+
+    return completer.future
+        .timeout(timeout,
+            onTimeout: () => RelayOk(expected, false,
+                'no relay ack in ${timeout.inSeconds}s (${connected.length} connected)'))
+        .whenComplete(() => sub.cancel());
+  }
+
   void _emitStatus() {
     if (!_status.isClosed) {
       _status.add(states);
@@ -151,6 +192,7 @@ class RelayPool {
       await c.dispose();
     }
     await _merged.close();
+    await _oks.close();
     await _status.close();
   }
 }

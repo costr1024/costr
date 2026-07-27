@@ -202,11 +202,18 @@ class Event {
     return sha256.convert(utf8.encode(serialized)).toString();
   }
 
-  /// NIP-01 wire array form: `[id, pubkey, created_at, kind, tags, content, sig]`,
-  /// used for publishing `["EVENT", <this>]` to relays.
-  List<dynamic> toWireList() => <dynamic>[
-        id, pubkey, createdAt, kind, tags, content, sig,
-      ];
+  /// NIP-01 wire OBJECT form: `{"id","pubkey","created_at","kind","tags",
+  /// "content","sig"}`. Modern relays (2026) require the EVENT message's
+  /// event payload to be an object, not the legacy array form.
+  Map<String, dynamic> toWireObject() => <String, dynamic>{
+        'id': id,
+        'pubkey': pubkey,
+        'created_at': createdAt,
+        'kind': kind,
+        'tags': tags,
+        'content': content,
+        'sig': sig,
+      };
 
   @override
   String toString() => 'Event(kind=$kind, id=$id, content=$_preview)';
