@@ -106,6 +106,53 @@ class Event {
     return out;
   }
 
+  /// Media attachments from NIP-92 `imeta` tags. Each imeta tag is
+  /// `["imeta", "url <u>", "m <mimetype>", "x <w>", "y <h>", "dim WxH", ...]`.
+  /// `blurhash`/`alt` are parsed but not surfaced in v1.
+  List<MediaAttachment> get mediaAttachments {
+    final out = <MediaAttachment>[];
+    for (final tag in tags) {
+      if (tag.isEmpty || tag[0] != 'imeta') continue;
+      String? url;
+      String? mimeType;
+      int? width;
+      int? height;
+      for (int i = 1; i < tag.length; i++) {
+        final part = tag[i];
+        if (part is! String) continue;
+        final sp = part.indexOf(' ');
+        if (sp <= 0) continue;
+        final key = part.substring(0, sp);
+        final value = part.substring(sp + 1);
+        switch (key) {
+          case 'url':
+            url = value;
+          case 'm':
+            mimeType = value;
+          case 'x':
+            width = int.tryParse(value);
+          case 'y':
+            height = int.tryParse(value);
+          case 'dim':
+            final parts = value.split('x');
+            if (parts.length == 2) {
+              width = int.tryParse(parts[0]);
+              height = int.tryParse(parts[1]);
+            }
+        }
+      }
+      if (url != null && url.isNotEmpty) {
+        out.add(MediaAttachment(
+          url: url,
+          mimeType: mimeType,
+          width: width,
+          height: height,
+        ));
+      }
+    }
+    return out;
+  }
+
   /// Verify the Schnorr signature against `pubkey` and `id` (hook; v1 leaves
   /// arrival verification OFF for perf — available for selective use later).
   bool get isSignatureValid {
@@ -121,4 +168,41 @@ class Event {
 
   @override
   String toString() => 'Event(kind=$kind, id=$id, content=$_preview)';
+}
+
+/// A media attachment (image or video) from a NIP-92 imeta tag, or inferred
+/// from a URL's extension when the mimetype is absent.
+@immutable
+class MediaAttachment {
+  const MediaAttachment({
+    required this.url,
+    this.mimeType,
+    this.width,
+    this.height,
+  });
+
+  final String url;
+  final String? mimeType;
+  final int? width;
+  final int? height;
+
+  bool get isVideo {
+    final m = mimeType;
+    if (m != null && m.isNotEmpty) return m.startsWith('video/');
+    return _hasExt(const {'.mp4', '.webm', '.mov', '.m4v', '.mkv'});
+  }
+
+  bool get isImage {
+    final m = mimeType;
+    if (m != null && m.isNotEmpty) return m.startsWith('image/');
+    return _hasExt(const {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'});
+  }
+
+  bool _hasExt(Set<String> exts) {
+    final lower = url.toLowerCase().split('?').first;
+    return exts.any(lower.endsWith);
+  }
+
+  @override
+  String toString() => 'MediaAttachment($url, m=$mimeType, ${width}x$height)';
 }

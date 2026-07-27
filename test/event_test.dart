@@ -100,5 +100,50 @@ void main() {
       expect(Event.fromMessage(obj).id, 'a' * 64);
       expect(() => Event.fromMessage('nope'), throwsFormatException);
     });
+
+    test('mediaAttachments parses NIP-92 imeta tags (x/y and dim)', () {
+      final list = <dynamic>[
+        'id', 'pk', 1, 1,
+        <dynamic>[
+          <dynamic>['imeta', 'url https://x/a.jpg', 'm image/jpeg', 'x 1200', 'y 630'],
+          <dynamic>['imeta', 'url https://x/v.mp4', 'm video/mp4', 'dim 1920x1080'],
+          <dynamic>['other', 'ignore'],
+        ],
+        'content',
+        'sig',
+      ];
+      final ev = Event.fromList(list);
+      final media = ev.mediaAttachments;
+      expect(media.length, 2);
+      expect(media[0].url, 'https://x/a.jpg');
+      expect(media[0].mimeType, 'image/jpeg');
+      expect(media[0].width, 1200);
+      expect(media[0].height, 630);
+      expect(media[0].isImage, isTrue);
+      expect(media[1].isVideo, isTrue);
+      expect(media[1].width, 1920);
+      expect(media[1].height, 1080);
+    });
+
+    test('MediaAttachment infers image/video from URL when mimetype absent', () {
+      const img = MediaAttachment(url: 'https://x/PHOTO.PNG?w=1');
+      const vid = MediaAttachment(url: 'https://x/clip.webm');
+      const other = MediaAttachment(url: 'https://x/page.html');
+      expect(img.isImage, isTrue);
+      expect(vid.isVideo, isTrue);
+      expect(other.isImage, isFalse);
+      expect(other.isVideo, isFalse);
+    });
+
+    test('mediaAttachments ignores malformed imeta without url', () {
+      final list = <dynamic>[
+        'id', 'pk', 1, 1,
+        <dynamic>[
+          <dynamic>['imeta', 'm image/jpeg', 'x 100'],
+        ],
+        'c', 's',
+      ];
+      expect(Event.fromList(list).mediaAttachments, isEmpty);
+    });
   });
 }

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/providers.dart';
 import '../../models/event.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/markdown_content.dart';
 
 class EventCard extends ConsumerWidget {
   const EventCard({super.key, required this.event});
@@ -51,10 +52,7 @@ class EventCard extends ConsumerWidget {
                     ],
                   ),
                   const SizedBox(height: 6),
-                  SelectableText(
-                    event.content,
-                    style: theme.textTheme.bodyMedium,
-                  ),
+                  MarkdownContent(event: event),
                 ],
               ),
             ),

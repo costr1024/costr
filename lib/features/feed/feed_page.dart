@@ -68,24 +68,7 @@ class FeedPage extends ConsumerWidget {
       floatingActionButton: FloatingActionButton.extended(
         icon: const Icon(Icons.edit),
         label: const Text('Compose'),
-        onPressed: () => context.go('/compose'),
-      ),
-      bottomNavigationBar: NavigationBar(
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Feed',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profile',
-          ),
-        ],
-        selectedIndex: 0,
-        onDestinationSelected: (int i) =>
-            context.go(i == 0 ? '/feed' : '/profile'),
+        onPressed: () => context.push('/compose'),
       ),
     );
   }

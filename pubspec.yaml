@@ -53,6 +53,12 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   # Avatar image loading with disk cache + placeholder/error fallback (NIP-01 kind 0 picture).
   cached_network_image: ^3.4.1
+  # Markdown rendering of post content (GitHub-flavored).
+  flutter_markdown: ^0.7.7+1
+  # markdown core (ExtensionSet) — direct import per lint; transitive via flutter_markdown.
+  markdown: ^7.3.1
+  # Inline video playback (network) for video media in posts.
+  video_player: ^2.13.0
 
 dev_dependencies:
   flutter_test:

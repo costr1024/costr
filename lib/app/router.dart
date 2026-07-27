@@ -1,11 +1,11 @@
 /// Routing + auth redirect.
 ///
-/// The router is built from a provider so the redirect can read the identity
-/// provider. [GoRouterRefreshNotifier] bridges identity state changes (login /
-/// logout) into GoRouter's refreshListenable so redirects re-evaluate.
+/// Feed and Profile live inside a [StatefulShellRoute] so a bottom nav bar
+/// persists across them (and each tab keeps its state). Compose is pushed
+/// full-screen (auto back button). Login is a standalone top-level route.
 library;
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -43,20 +43,73 @@ final routerProvider = Provider<GoRouter>((ref) {
             const LoginPage(),
       ),
       GoRoute(
-        path: '/feed',
-        builder: (BuildContext context, GoRouterState state) =>
-            const FeedPage(),
-      ),
-      GoRoute(
-        path: '/profile',
-        builder: (BuildContext context, GoRouterState state) =>
-            const ProfilePage(),
-      ),
-      GoRoute(
         path: '/compose',
         builder: (BuildContext context, GoRouterState state) =>
             const ComposePage(),
       ),
+      StatefulShellRoute.indexedStack(
+        builder: (
+          BuildContext context,
+          GoRouterState state,
+          StatefulNavigationShell navigationShell,
+        ) =>
+            AppShell(navigationShell: navigationShell),
+        branches: <StatefulShellBranch>[
+          StatefulShellBranch(
+            routes: <RouteBase>[
+              GoRoute(
+                path: '/feed',
+                builder: (BuildContext context, GoRouterState state) =>
+                    const FeedPage(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: <RouteBase>[
+              GoRoute(
+                path: '/profile',
+                builder: (BuildContext context, GoRouterState state) =>
+                    const ProfilePage(),
+              ),
+            ],
+          ),
+        ],
+      ),
     ],
   );
 });
+
+/// Shared bottom-nav shell wrapping Feed + Profile. Persists across the two
+/// tabs and preserves each tab's state (scroll position, etc.).
+class AppShell extends StatelessWidget {
+  const AppShell({super.key, required this.navigationShell});
+  final StatefulNavigationShell navigationShell;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: navigationShell,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: navigationShell.currentIndex,
+        onDestinationSelected: (int index) {
+          navigationShell.goBranch(
+            index,
+            initialLocation: index == navigationShell.currentIndex,
+          );
+        },
+        destinations: const <NavigationDestination>[
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: 'Feed',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: 'Profile',
+          ),
+        ],
+      ),
+    );
+  }
+}
