@@ -473,6 +473,69 @@ Future<RelayOk> followUser(WidgetRef ref, String pubkey) async {
   return ok;
 }
 
+/// Bookmark [eventId] (NIP-51 kind-10003). Fetches the current kind-10003 (to
+/// preserve existing entries), signs an updated one via NostrActions.bookmark,
+/// publishes. [publicList]: public `e` tag (plain) vs private (NIP-44-encrypted
+/// to self in content). Same safety as [followUser]: aborts if the current
+/// list can't be confirmed (never wipes bookmarks).
+Future<RelayOk> bookmarkEvent(
+    WidgetRef ref, String eventId, {required bool publicList}) async {
+  final identity = ref.read(identityProvider).value;
+  if (identity == null) {
+    return const RelayOk('', false, '未登录');
+  }
+  final pool = ref.read(relayPoolProvider);
+  final completer = Completer<Event?>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.kind == 10003 && e.pubkey == identity.pubkeyHex && !completer.isCompleted) {
+      completer.complete(e);
+    }
+  });
+  final subId = nextSubId('bookmarks');
+  final connectedCount =
+      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  var eoses = 0;
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (eoses >= connectedCount && !completer.isCompleted) {
+      completer.complete(null);
+    }
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{
+      'authors': [identity.pubkeyHex],
+      'kinds': [10003],
+      'limit': 1,
+    },
+    closeOnEose: false,
+  );
+  Event? current;
+  bool certain = false;
+  try {
+    current = await completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        certain = false;
+        return null;
+      },
+    );
+    certain = true;
+  } finally {
+    await evSub.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+  }
+  if (!certain) {
+    return const RelayOk('', false, '无法确认现有书签列表（中继未及时响应），已取消以防清空。请重试。');
+  }
+  final signed =
+      NostrActions(identity).bookmark(current, eventId, publicList: publicList);
+  return pool.publishAndWait(signed);
+}
+
 // --- Relay status -----------------------------------------------------------
 
 final relayStatusProvider =

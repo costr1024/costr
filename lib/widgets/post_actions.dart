@@ -51,6 +51,11 @@ class PostActions extends ConsumerWidget {
           color: fg,
           onTap: () => context.push('/compose', extra: {'quoteOf': event}),
         ),
+        _Action(
+          icon: Icons.bookmark_border,
+          color: fg,
+          onTap: () => _bookmark(context, ref),
+        ),
         const Spacer(),
         _Action(
           icon: Icons.ios_share,
@@ -119,6 +124,40 @@ class PostActions extends ConsumerWidget {
       if (context.mounted) _snack(context, '已复制分享链接');
     } catch (_) {
       if (context.mounted) _snack(context, '复制失败');
+    }
+  }
+
+  Future<void> _bookmark(BuildContext context, WidgetRef ref) async {
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (BuildContext ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.public_outlined),
+              title: const Text('收藏到公开书签'),
+              subtitle: const Text('他人可见（NIP-51 kind 10003 公开 tag）'),
+              onTap: () => Navigator.pop(ctx, 'public'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.lock_outline),
+              title: const Text('收藏到私人书签'),
+              subtitle: const Text('仅自己可见（NIP-44 加密）'),
+              onTap: () => Navigator.pop(ctx, 'private'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null) return;
+    final ok = await bookmarkEvent(ref, event.id, publicList: choice == 'public');
+    if (context.mounted) {
+      _snack(context, ok.ok
+          ? '已收藏到${choice == 'public' ? '公开' : '私人'}书签'
+          : '收藏失败：${ok.reason}');
     }
   }
 

@@ -7,6 +7,7 @@ import 'dart:convert';
 
 import '../models/event.dart';
 import '../utils/nip19.dart';
+import '../utils/nip44.dart';
 import 'identity.dart';
 
 class NostrActions {
@@ -93,5 +94,59 @@ class NostrActions {
       tags.add(['p', newPubkey, relay]);
     }
     return id.signEvent(kind: 3, content: '', tags: tags);
+  }
+
+  /// Bookmark [eventId] in the NIP-51 kind-10003 list (NIP-44-encrypted to self
+  /// for private). [current] is the user's existing kind-10003 event (or null
+  /// for a first bookmark). Existing public (e/a tags) and private (encrypted
+  /// content) entries are preserved.
+  Event bookmark(Event? current, String eventId, {required bool publicList}) {
+    final tags = <List<String>>[];
+    // Preserve existing public e/a tags.
+    if (current != null) {
+      for (final t in current.tags) {
+        if (t.isNotEmpty && (t[0] == 'e' || t[0] == 'a')) {
+          tags.add([for (final x in t) x.toString()]);
+        }
+      }
+    }
+    // Load existing private entries (encrypted content → decrypt → JSON array).
+    final privateTags = <List<String>>[];
+    if (current != null && current.content.isNotEmpty) {
+      try {
+        final decoded =
+            nip44Decrypt(id.privkeyHex, id.pubkeyHex, current.content);
+        final arr = jsonDecode(decoded);
+        if (arr is List) {
+          for (final t in arr) {
+            if (t is List) privateTags.add(t.map((e) => e.toString()).toList());
+          }
+        }
+      } catch (_) {
+        // Malformed/undecryptable content — start fresh private list.
+      }
+    }
+
+    String content = '';
+    if (publicList) {
+      // Add the new e tag to the public tags (dedup).
+      if (!tags.any((t) => t.length >= 2 && t[0] == 'e' && t[1] == eventId)) {
+        tags.add(['e', eventId]);
+      }
+      // Re-encrypt the (unchanged) private list back into content.
+      if (privateTags.isNotEmpty) {
+        content =
+            nip44Encrypt(id.privkeyHex, id.pubkeyHex, jsonEncode(privateTags));
+      }
+    } else {
+      // Add to the private list (dedup) + re-encrypt.
+      if (!privateTags
+          .any((t) => t.length >= 2 && t[0] == 'e' && t[1] == eventId)) {
+        privateTags.add(['e', eventId]);
+      }
+      content =
+          nip44Encrypt(id.privkeyHex, id.pubkeyHex, jsonEncode(privateTags));
+    }
+    return id.signEvent(kind: 10003, content: content, tags: tags);
   }
 }

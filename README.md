@@ -26,6 +26,7 @@ Android、iOS、Windows、macOS、Linux 五端。
   - **引用**（quote）：push Compose 带 `quoteOf`，签 kind-1，正文带 `nostr:note1` 引用 + `e` mention tag。
   - **分享**：复制 `https://njump.me/<note1>`（参考 Amethyst）。
 - **关注**（NIP-02）：他人主页头像旁"关注"按钮。拉取当前用户完整 kind-3（保留 relay/petname）→ `NostrActions.follow` 加新 pubkey → 签 kind-3 全量发布 → 刷新关注列表。已关注则显示"已关注"。**安全护栏**：拉 kind-3 不 closeOnEose、等事件或所有中继 EOSE；超时未确认则**中止不发布**（绝不发只含新 pubkey 的 kind-3 清空已有关注）。RelayPool 的 closeOnEose 也改成等**所有**已连中继 EOSE 才关（之前首个中继 EOSE 就关，多中继竞态会丢慢中继的事件）。
+- **收藏**（NIP-51 kind-10003 + NIP-44）：每条帖子收藏动作，弹"公开书签 / 私人书签"选择。**公开**：`e` tag 加进事件 `tags`（明文，他人可见）；**私人**：`e` tag 加进 `.content`——用 **NIP-44 v2 加密给自己**（secp256k1 ECDH + HKDF + ChaCha20 RFC7539 + HMAC-SHA256，纯 Dart 自实现，通过官方向量验证）。保留现有公开 tag + 私人条目。同样的中止护栏（拉取不确定时不发布，绝不清空书签）。
 - **点帖进详情页**：点帖子正文 → `/n/:id` 详情页（单帖全屏 + 交互栏 + 回复占位）。
 - **下拉刷新 + 加载更多**：下拉刷新重新拉取当前流；滚到底自动发 `until: 最旧时间戳` 的 REQ 追加更早的事件。
 - **界面与导航**：**中文优先**（面向中国用户，所有 UI 文案中文化；品牌名 costr 保留）。登录页、信息流页（中继状态 chip + 语言下拉 + tag 过滤 chip + 空/错误态）、个人页（头像 + 资料 + npub/pubkey + 登出）、发帖页、帖子详情页、用户主页。Feed/Profile 共用一个底栏导航 shell（`StatefulShellRoute.indexedStack`，保留各 tab 状态）；发帖页 / 用户主页 / 详情页 push 进栈、AppBar 自带返回键。相对时间中文（刚刚/分/时/天）。
