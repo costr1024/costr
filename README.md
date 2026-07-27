@@ -12,7 +12,8 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **信息流**：在 **全球**（kind 1 实时广播流，有界）和 **关注**（来自你的 NIP-02 kind 3 联系人列表中作者的 kind 1）之间切换。
 - **中继池**：多中继 fan-out，按 event id 去重，断线指数退避重连，重连后自动重发活跃订阅。
 - **事件存储**：内存单源，按 id 去重，按时间倒序，上限 5000 条淘汰最旧。
-- **界面**：登录页、信息流页（中继状态 chip + 空/错误态）、个人页（npub/pubkey + 登出）、发帖占位页。
+- **头像与资料**：按作者 pubkey 拉取 NIP-01 kind 0 元数据（name / display_name / picture / about / website / banner），内存缓存 + 去重 in-flight 请求（`closeOnEose` 一次性快照）。feed 帖子卡显示头像 + 名字（无名字回退 npub 缩写），个人 profile 页展示 banner / 头像 / 名字 / about / website / npub / 登出。头像图片用 `cached_network_image` 缓存 + 占位/错误回退。
+- **界面**：登录页、信息流页（中继状态 chip + 空/错误态）、个人页（头像 + 资料 + npub/pubkey + 登出）、发帖占位页。
 
 ## 协议
 

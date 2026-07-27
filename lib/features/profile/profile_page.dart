@@ -1,4 +1,8 @@
-/// Profile page — shows the logged-in identity (npub + hex pubkey) + logout.
+/// Profile page — shows a user's NIP-01 kind-0 profile (avatar, name, about,
+/// website, banner) + npub + (hex pubkey for the logged-in user) + logout.
+///
+/// Parameterized by [pubkey]; when null, defaults to the logged-in identity.
+/// Designed so a future "view author" feature can pass any pubkey.
 library;
 
 import 'package:flutter/material.dart';
@@ -6,9 +10,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
+import '../../nostr/identity.dart';
+import '../../widgets/avatar.dart';
 
 class ProfilePage extends ConsumerWidget {
-  const ProfilePage({super.key});
+  const ProfilePage({super.key, this.pubkey});
+
+  /// If null, the logged-in identity's pubkey is used.
+  final String? pubkey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -19,54 +28,102 @@ class ProfilePage extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object e, _) => Center(child: Text('加载失败：$e')),
         data: (identity) {
-          if (identity == null) {
-            return const Center(child: Text('未登录'));
-          }
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+          final pk = pubkey ?? identity?.pubkeyHex;
+          final isSelf = pubkey == null || pubkey == identity?.pubkeyHex;
+          if (pk == null) return const Center(child: Text('未登录'));
+          return _ProfileBody(pubkey: pk, isSelf: isSelf, identity: identity);
+        },
+      ),
+    );
+  }
+}
+
+class _ProfileBody extends ConsumerWidget {
+  const _ProfileBody({required this.pubkey, required this.isSelf, this.identity});
+  final String pubkey;
+  final bool isSelf;
+  final Identity? identity;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final meta = ref.watch(metadataProvider(pubkey));
+    final theme = Theme.of(context);
+    final m = meta.value;
+
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (m?.banner != null && m!.banner!.isNotEmpty)
+            AspectRatio(
+              aspectRatio: 3 / 1,
+              child: Image.network(
+                m.banner!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
+            )
+          else
+            Container(height: 8, color: theme.colorScheme.surfaceContainerHighest),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+ crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Icon(
-                      Icons.account_circle,
-                      size: 64,
-                      color: Theme.of(context).colorScheme.primary,
+                    Transform.translate(
+                      offset: const Offset(0, -24),
+                      child: Avatar(pubkey: pubkey, radius: 40),
                     ),
-                    const SizedBox(height: 12),
-                    Text('npub',
-                        style: Theme.of(context).textTheme.labelSmall),
-                    SelectableText(
-                      identity.npub,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 12),
-                    Text('pubkey (hex)',
-                        style: Theme.of(context).textTheme.labelSmall),
-                    SelectableText(
-                      identity.pubkeyHex,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 24),
-                    FilledButton.tonalIcon(
-                      icon: const Icon(Icons.logout),
-                      label: const Text('登出'),
-                      onPressed: () async {
-                        await ref
-                            .read(identityProvider.notifier)
-                            .logout();
-                        if (context.mounted) context.go('/login');
-                      },
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        m?.bestName ?? '(no name)',
+                        style: theme.textTheme.titleLarge,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ],
                 ),
-              ),
+                const SizedBox(height: 4),
+                if (m?.about != null && m!.about!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(m.about!, style: theme.textTheme.bodyMedium),
+                ],
+                if (m?.website != null && m!.website!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(m.website!, style: theme.textTheme.bodySmall),
+                ],
+                const SizedBox(height: 16),
+                Text('npub', style: theme.textTheme.labelSmall),
+                SelectableText(
+                  identity?.npub ?? '',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                if (isSelf) ...[
+                  const SizedBox(height: 12),
+                  Text('pubkey (hex)', style: theme.textTheme.labelSmall),
+                  SelectableText(
+                    identity?.pubkeyHex ?? pubkey,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton.tonalIcon(
+                    icon: const Icon(Icons.logout),
+                    label: const Text('登出'),
+                    onPressed: () async {
+                      await ref.read(identityProvider.notifier).logout();
+                      if (context.mounted) context.go('/login');
+                    },
+                  ),
+                ],
+              ],
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }

@@ -1,45 +1,62 @@
-/// Renders one kind-1 text note: shortened npub, relative time, content.
+/// Renders one kind-1 text note: avatar, display name/npub, relative time, content.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/providers.dart';
 import '../../models/event.dart';
-import '../../utils/nip19.dart';
+import '../../widgets/avatar.dart';
 
-class EventCard extends StatelessWidget {
+class EventCard extends ConsumerWidget {
   const EventCard({super.key, required this.event});
   final Event event;
 
   @override
-  Widget build(BuildContext context) {
-    final npub = hexToNpub(event.pubkey);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final meta = ref.watch(metadataProvider(event.pubkey)).value;
     final theme = Theme.of(context);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Text(
-                  shortenEntity(npub),
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  _relativeTime(event.createdAt),
-                  style: theme.textTheme.labelSmall,
-                ),
-              ],
+            Padding(
+              padding: const EdgeInsets.only(top: 2, right: 10),
+              child: Avatar(pubkey: event.pubkey, radius: 16),
             ),
-            const SizedBox(height: 6),
-            SelectableText(
-              event.content,
-              style: theme.textTheme.bodyMedium,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          displayLabelFor(event.pubkey, meta),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _relativeTime(event.createdAt),
+                        style: theme.textTheme.labelSmall,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    event.content,
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ],
+              ),
             ),
           ],
         ),

@@ -6,16 +6,19 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/event.dart';
+import '../models/metadata.dart';
 import '../nostr/event_store.dart';
 import '../nostr/identity.dart';
 import '../nostr/relay_pool.dart';
 import '../services/secure_storage_service.dart';
+
 
 /// Default relays (user-specified).
 const List<String> defaultRelays = <String>[
@@ -240,6 +243,50 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
 
 final relayStatusProvider =
     StreamProvider<List<RelayState>>((ref) => ref.watch(relayPoolProvider).statusStream);
+
+// --- User metadata (NIP-01 kind 0) ----------------------------------------
+
+/// Per-pubkey metadata cache. Issues a kind-0 REQ with closeOnEose (one-shot
+/// snapshot — kind 0 is replace-by-author), cached by the family key so each
+/// pubkey is fetched at most once per session. Used by avatars + profile page.
+final metadataProvider =
+    FutureProvider.family<Metadata?, String>((ref, pubkey) async {
+  final pool = ref.watch(relayPoolProvider);
+  final completer = Completer<Metadata?>();
+  late StreamSubscription<Event> sub;
+  sub = pool.events.listen((e) {
+    if (e.kind == 0 && e.pubkey == pubkey && !completer.isCompleted) {
+      try {
+        final json = jsonDecode(e.content);
+        if (json is Map<String, dynamic>) {
+          completer.complete(Metadata.fromJson(json));
+        }
+      } catch (_) {
+        // Malformed metadata content — leave unresolved; timeout returns null.
+      }
+    }
+  });
+
+  final subId = nextSubId('meta');
+  pool.request(
+    subId,
+    <String, dynamic>{
+      'authors': [pubkey],
+      'kinds': [0],
+      'limit': 1,
+    },
+    closeOnEose: true,
+  );
+  ref.onDispose(() {
+    sub.cancel();
+    pool.closeSubscription(subId);
+  });
+
+  return completer.future.timeout(
+    const Duration(seconds: 5),
+    onTimeout: () => null,
+  );
+});
 
 /// ChangeNotifier bridge so GoRouter re-evaluates redirects on login/logout.
 class GoRouterRefreshNotifier extends ChangeNotifier {

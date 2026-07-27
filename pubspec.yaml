@@ -51,6 +51,8 @@ dependencies:
   bip340: ^0.3.1
   # OS keystore for the nsec (Android Keystore / iOS Keychain / libsecret on Linux).
   flutter_secure_storage: ^10.3.1
+  # Avatar image loading with disk cache + placeholder/error fallback (NIP-01 kind 0 picture).
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:
