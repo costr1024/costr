@@ -145,5 +145,21 @@ void main() {
       ];
       expect(Event.fromList(list).mediaAttachments, isEmpty);
     });
+
+    test('hashtags parses NIP-12 t-tags, lowercased + deduped', () {
+      final list = <dynamic>[
+        'id', 'pk', 1, 1,
+        <dynamic>[
+          <dynamic>['t', 'Nostr'],
+          <dynamic>['t', 'nostr'], // dup after lowercasing
+          <dynamic>['t', 'Bitcoin'],
+          <dynamic>['e', 'refid'], // not a t tag
+          <dynamic>['t', ''], // empty → ignored
+        ],
+        'c', 's',
+      ];
+      final ev = Event.fromList(list);
+      expect(ev.hashtags, ['nostr', 'bitcoin']);
+    });
   });
 }

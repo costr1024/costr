@@ -18,6 +18,7 @@ import '../nostr/event_store.dart';
 import '../nostr/identity.dart';
 import '../nostr/relay_pool.dart';
 import '../services/secure_storage_service.dart';
+import '../utils/language.dart';
 
 
 /// Default relays (user-specified).
@@ -155,6 +156,32 @@ class FeedModeNotifier extends Notifier<FeedMode> {
 final feedModeProvider =
     NotifierProvider<FeedModeNotifier, FeedMode>(FeedModeNotifier.new);
 
+// --- Feed filters: language + hashtag ---------------------------------------
+
+enum LanguageFilter { all, zh, en }
+
+class LanguageFilterNotifier extends Notifier<LanguageFilter> {
+  @override
+  LanguageFilter build() => LanguageFilter.all;
+  void set(LanguageFilter f) {
+    if (f != state) state = f;
+  }
+}
+
+final languageFilterProvider =
+    NotifierProvider<LanguageFilterNotifier, LanguageFilter>(
+        LanguageFilterNotifier.new);
+
+class TagFilterNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+  void set(String tag) => state = tag.toLowerCase();
+  void clear() => state = null;
+}
+
+final tagFilterProvider =
+    NotifierProvider<TagFilterNotifier, String?>(TagFilterNotifier.new);
+
 // --- Following (NIP-02 kind-3) ----------------------------------------------
 
 class FollowingNotifier extends AsyncNotifier<List<String>> {
@@ -233,10 +260,24 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   ref.watch(feedSubscriptionProvider);
   final all = ref.watch(eventStoreProvider);
   final mode = ref.watch(feedModeProvider);
-  if (mode == FeedMode.global) return all;
-  final follows = ref.watch(followingStateProvider).value ?? const <String>[];
-  final set = follows.toSet();
-  return all.where((e) => set.contains(e.pubkey)).toList();
+  final lang = ref.watch(languageFilterProvider);
+  final tag = ref.watch(tagFilterProvider);
+
+  Iterable<Event> events = mode == FeedMode.global
+      ? all
+      : all.where((e) {
+          final follows = ref.watch(followingStateProvider).value ?? const <String>[];
+          return follows.contains(e.pubkey);
+        });
+
+  if (lang != LanguageFilter.all) {
+    final want = lang == LanguageFilter.zh ? 'zh' : 'en';
+    events = events.where((e) => detectLanguage(e.content) == want);
+  }
+  if (tag != null) {
+    events = events.where((e) => e.hashtags.contains(tag));
+  }
+  return events.toList();
 });
 
 // --- Relay status -----------------------------------------------------------

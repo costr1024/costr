@@ -92,6 +92,20 @@ class Event {
   bool get isTextNote => kind == kindTextNote;
   bool get isContactList => kind == kindContactList;
 
+  /// Hashtags from NIP-12 `["t", "value"]` tags. Values are lowercased and
+  /// deduped (NIP-12 recommends lowercase). Order-preserving.
+  List<String> get hashtags {
+    final out = <String>[];
+    final seen = <String>{};
+    for (final tag in tags) {
+      if (tag.length >= 2 && tag[0] == 't' && tag[1] is String) {
+        final v = (tag[1] as String).trim().toLowerCase();
+        if (v.isNotEmpty && seen.add(v)) out.add(v);
+      }
+    }
+    return out;
+  }
+
   /// Pubkeys referenced by `p` tags (NIP-02 follows). Values only — relay
   /// markers (NIP-65) and petnames are ignored. Deduped, order-preserving.
   List<String> get pTagPubkeys {

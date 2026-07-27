@@ -18,6 +18,8 @@ class FeedPage extends ConsumerWidget {
     final events = ref.watch(currentFeedEventsProvider);
     final following = ref.watch(followingStateProvider);
     final relays = ref.watch(relayStatusProvider);
+    final lang = ref.watch(languageFilterProvider);
+    final tagFilter = ref.watch(tagFilterProvider);
 
     final followingLoading =
         mode == FeedMode.following && following.isLoading;
@@ -29,6 +31,7 @@ class FeedPage extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('costr'),
         actions: [
+          _LanguageDropdown(value: lang),
           _RelayStatusChip(relays: relays.value ?? const []),
         ],
       ),
@@ -53,6 +56,18 @@ class FeedPage extends ConsumerWidget {
               },
             ),
           ),
+          if (tagFilter != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: InputChip(
+                  label: Text('#$tagFilter'),
+                  visualDensity: VisualDensity.compact,
+                  onDeleted: () => ref.read(tagFilterProvider.notifier).clear(),
+                ),
+              ),
+            ),
           if (followingLoading) const LinearProgressIndicator(),
           Expanded(
             child: events.isEmpty
@@ -69,6 +84,40 @@ class FeedPage extends ConsumerWidget {
         icon: const Icon(Icons.edit),
         label: const Text('Compose'),
         onPressed: () => context.push('/compose'),
+      ),
+    );
+  }
+}
+
+class _LanguageDropdown extends ConsumerWidget {
+  const _LanguageDropdown({required this.value});
+  final LanguageFilter value;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: DropdownButton<LanguageFilter>(
+        value: value,
+        underline: const SizedBox.shrink(),
+        icon: const Icon(Icons.language, size: 20),
+        items: const [
+          DropdownMenuItem(
+            value: LanguageFilter.all,
+            child: Text('全部'),
+          ),
+          DropdownMenuItem(
+            value: LanguageFilter.zh,
+            child: Text('中文'),
+          ),
+          DropdownMenuItem(
+            value: LanguageFilter.en,
+            child: Text('英文'),
+          ),
+        ],
+        onChanged: (LanguageFilter? f) {
+          if (f != null) ref.read(languageFilterProvider.notifier).set(f);
+        },
       ),
     );
   }

@@ -53,6 +53,23 @@ class EventCard extends ConsumerWidget {
                   ),
                   const SizedBox(height: 6),
                   MarkdownContent(event: event),
+                  if (event.hashtags.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        for (final tag in event.hashtags)
+                          ActionChip(
+                            label: Text('#$tag'),
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () => ref
+                                .read(tagFilterProvider.notifier)
+                                .set(tag),
+                          ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
