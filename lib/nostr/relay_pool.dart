@@ -37,6 +37,7 @@ class RelayPool {
   final List<RelayConnection> _connections;
   final Map<String, Map<String, dynamic>> _activeSubs = {};
   final Set<String> _closeOnEose = {};
+  final Map<String, int> _eoseCount = {};
   final LinkedHashSet<String> _seenIds = LinkedHashSet();
   bool _mergedWired = false;
   bool _connecting = false;
@@ -106,10 +107,19 @@ class RelayPool {
       });
       c.eose.listen((String subId) {
         if (!_eose.isClosed) _eose.add(subId);
-        // On EOSE for a closeOnEose subscription, close it (bounded snapshot
-        // instead of an unbounded live firehose — critical on small hosts).
-        if (_closeOnEose.remove(subId)) {
-          closeSubscription(subId);
+        // closeOnEose subs close only after ALL connected relays have EOSE'd —
+        // closing on the first relay's EOSE loses events from slower relays
+        // (this caused the follow-list wipe: a relay without the user's kind-3
+        // EOSE'd first, the kind-3 from a slower relay was dropped, and a new
+        // kind-3 with only the new pubkey was published — clearing follows).
+        if (_closeOnEose.contains(subId)) {
+          final n = (_eoseCount[subId] ?? 0) + 1;
+          _eoseCount[subId] = n;
+          if (n >= _connections.length) {
+            _closeOnEose.remove(subId);
+            _eoseCount.remove(subId);
+            closeSubscription(subId);
+          }
         }
       });
       c.oks.listen((RelayOk ok) {
@@ -159,6 +169,7 @@ class RelayPool {
   void closeSubscription(String subId) {
     _activeSubs.remove(subId);
     _closeOnEose.remove(subId);
+    _eoseCount.remove(subId);
     for (final c in _connections) {
       if (c.isConnected) c.closeSubscription(subId);
     }

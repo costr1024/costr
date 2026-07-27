@@ -401,13 +401,20 @@ final userFollowsProvider =
 /// preserve existing entries' relay/petname), signs an updated kind-3 with the
 /// new pubkey added, publishes, and refreshes [followingStateProvider].
 /// Returns the relay verdict.
+///
+/// Safety: if the existing kind-3 can't be confirmed (timeout before all relays
+/// EOSE), ABORTS without publishing — never publishes a kind-3 with only the
+/// new pubkey, which would wipe the user's existing follows.
 Future<RelayOk> followUser(WidgetRef ref, String pubkey) async {
   final identity = ref.read(identityProvider).value;
   if (identity == null) {
     return const RelayOk('', false, '未登录');
   }
   final pool = ref.read(relayPoolProvider);
-  // Fetch the current kind-3 event (full, to preserve relay/petname).
+  // Fetch the current kind-3 event (full, to preserve relay/petname). Wait for
+  // the event OR all relays' EOSE (genuine first-follow = no kind-3 anywhere);
+  // do NOT closeOnEose (which now waits for all anyway) — manage the wait here
+  // so we can abort on timeout.
   final completer = Completer<Event?>();
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
@@ -419,8 +426,17 @@ Future<RelayOk> followUser(WidgetRef ref, String pubkey) async {
     }
   });
   final subId = nextSubId('kind3-now');
+  final connectedCount = pool.states
+      .where((s) => s.status == RelayStatus.connected)
+      .length;
+  var eoses = 0;
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    if (!completer.isCompleted) completer.complete(null);
+    eoses++;
+    // All connected relays EOSE'd without delivering the kind-3 → genuine
+    // first-follow (no existing list to preserve).
+    if (eoses >= connectedCount && !completer.isCompleted) {
+      completer.complete(null);
+    }
   });
   pool.request(
     subId,
@@ -429,13 +445,27 @@ Future<RelayOk> followUser(WidgetRef ref, String pubkey) async {
       'kinds': [Event.kindContactList],
       'limit': 1,
     },
-    closeOnEose: true,
+    closeOnEose: false,
   );
-  final current = await completer.future
-      .timeout(const Duration(seconds: 8), onTimeout: () => null);
-  await evSub.cancel();
-  await eoseSub.cancel();
-  pool.closeSubscription(subId);
+  Event? current;
+  bool certain = false;
+  try {
+    current = await completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        certain = false;
+        return null;
+      },
+    );
+    certain = true; // resolved by event or all-EOSE
+  } finally {
+    await evSub.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+  }
+  if (!certain) {
+    return const RelayOk('', false, '无法确认现有关注列表（中继未及时响应），已取消关注以防清空。请重试。');
+  }
 
   final signed = NostrActions(identity).follow(current, pubkey);
   final ok = await pool.publishAndWait(signed);

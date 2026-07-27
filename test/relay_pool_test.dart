@@ -203,8 +203,8 @@ void main() {
       await pool.dispose();
     });
 
-    test('closeOnEose closes the sub on the first EOSE from any relay',
-        () async {      final a = _FakeRelay('wss://a');
+    test('closeOnEose closes only after ALL relays EOSE', () async {
+      final a = _FakeRelay('wss://a');
       final b = _FakeRelay('wss://b');
       final pool = RelayPool([a, b]);
       await pool.connect();
@@ -214,18 +214,16 @@ void main() {
         closeOnEose: true,
       );
 
-      // First EOSE (from a) closes on every connected relay.
+      // First EOSE (from a) does NOT close — b hasn't EOSE'd yet.
       a.emitEose('costr:feed:7');
+      await Future<void>.delayed(Duration.zero);
+      expect(a.sent.where((m) => m[0] == 'CLOSE'), isEmpty);
+
+      // Once all relays EOSE, the sub closes everywhere.
+      b.emitEose('costr:feed:7');
       await Future<void>.delayed(Duration.zero);
       expect(a.sent.last, ['CLOSE', 'costr:feed:7']);
       expect(b.sent.last, ['CLOSE', 'costr:feed:7']);
-
-      // A later EOSE from b is a no-op (already closed/removed).
-      b.emitEose('costr:feed:7');
-      await Future<void>.delayed(Duration.zero);
-      final closeCount =
-          b.sent.where((m) => m[0] == 'CLOSE').length;
-      expect(closeCount, 1);
       await pool.dispose();
     });
   });
