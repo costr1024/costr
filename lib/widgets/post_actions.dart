@@ -30,6 +30,7 @@ class PostActions extends ConsumerWidget {
     final theme = Theme.of(context);
     final fg = theme.colorScheme.onSurfaceVariant;
     return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         _Action(
           icon: Icons.chat_bubble_outline,
@@ -56,7 +57,6 @@ class PostActions extends ConsumerWidget {
           color: fg,
           onTap: () => _bookmark(context, ref),
         ),
-        const Spacer(),
         _Action(
           icon: Icons.ios_share,
           color: fg,
@@ -192,8 +192,8 @@ class _Action extends StatelessWidget {
     return IconButton(
       icon: Icon(icon, size: 18),
       iconSize: 18,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      constraints: const BoxConstraints(minWidth: 36, minHeight: 32),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 28, minHeight: 32),
       color: color,
       onPressed: onTap,
     );
