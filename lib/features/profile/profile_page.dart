@@ -234,8 +234,36 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
   }
 
   Future<void> _follow() async {
+    // Show a category picker (NIP-51 kind-30000 follow sets).
+    final category = await showModalBottomSheet<String>(
+      context: context,
+      builder: (BuildContext ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('选择关注分组', style: Theme.of(ctx).textTheme.titleSmall),
+            ),
+            for (final c in const [
+              ['无分组', ''],
+              ['亲友', '亲友'],
+              ['新闻资讯', '新闻资讯'],
+              ['网友', '网友'],
+            ])
+              ListTile(
+                leading: const Icon(Icons.label_outline, size: 20),
+                title: Text(c[0]),
+                onTap: () => Navigator.pop(ctx, c[1]),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (category == null) return; // dismissed
     setState(() => _busy = true);
-    final ok = await followUser(ref, widget.pubkey);
+    final ok = await followUser(ref, widget.pubkey,
+        category: category.isEmpty ? null : category);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(ok.ok ? '已关注' : '关注失败：${ok.reason}')),

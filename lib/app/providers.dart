@@ -538,7 +538,7 @@ final searchUsersProvider =
 /// Safety: if the existing kind-3 can't be confirmed (timeout before all relays
 /// EOSE), ABORTS without publishing — never publishes a kind-3 with only the
 /// new pubkey, which would wipe the user's existing follows.
-Future<RelayOk> followUser(WidgetRef ref, String pubkey) async {
+Future<RelayOk> followUser(WidgetRef ref, String pubkey, {String? category}) async {
   final identity = ref.read(identityProvider).value;
   if (identity == null) {
     return const RelayOk('', false, '未登录');
@@ -603,7 +603,68 @@ Future<RelayOk> followUser(WidgetRef ref, String pubkey) async {
   final signed = NostrActions(identity).follow(current, pubkey);
   final ok = await pool.publishAndWait(signed);
   if (ok.ok) ref.invalidate(followingStateProvider);
+
+  // If a category is set, also add to the NIP-51 kind-30000 categorized list.
+  if (category != null && category.isNotEmpty && ok.ok) {
+    await _addToCategoryList(ref, identity, pubkey, category);
+  }
   return ok;
+}
+
+/// Fetch the current kind-30000 list for [category] (d-tag) and publish an
+/// updated one with [pubkey] added. Best-effort (category list failure doesn't
+/// fail the follow).
+Future<void> _addToCategoryList(
+    WidgetRef ref, Identity identity, String pubkey, String category) async {
+  final pool = ref.read(relayPoolProvider);
+  final completer = Completer<Event?>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.kind == 30000 && e.pubkey == identity.pubkeyHex && !completer.isCompleted) {
+      // Check d-tag matches category.
+      for (final t in e.tags) {
+        if (t.length >= 2 && t[0] == 'd' && t[1] == category) {
+          completer.complete(e);
+          break;
+        }
+      }
+    }
+  });
+  final subId = nextSubId('cat-$category');
+  final connectedCount =
+      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  var eoses = 0;
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (eoses >= connectedCount && !completer.isCompleted) {
+      completer.complete(null);
+    }
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{
+      'authors': [identity.pubkeyHex],
+      'kinds': [30000],
+      '#d': [category],
+      'limit': 1,
+    },
+    closeOnEose: false,
+  );
+  Event? current;
+  try {
+    current = await completer.future.timeout(
+      const Duration(seconds: 8),
+      onTimeout: () => null,
+    );
+  } finally {
+    await evSub.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+  }
+  final signed =
+      NostrActions(identity).followCategory(current, pubkey, category);
+  await pool.publishAndWait(signed);
 }
 
 /// Bookmark [eventId] (NIP-51 kind-10003). Fetches the current kind-10003 (to
