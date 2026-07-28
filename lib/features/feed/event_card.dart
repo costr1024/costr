@@ -22,21 +22,23 @@ class EventCard extends ConsumerWidget {
     final theme = Theme.of(context);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 2, right: 10),
-              child: GestureDetector(
-                onTap: () => context.push('/u/${event.pubkey}'),
-                child: Avatar(pubkey: event.pubkey, radius: 16),
+      child: InkWell(
+        onTap: () => context.push('/n/${event.id}'),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2, right: 10),
+                child: GestureDetector(
+                  onTap: () => context.push('/u/${event.pubkey}'),
+                  child: Avatar(pubkey: event.pubkey, radius: 16),
+                ),
               ),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
@@ -62,10 +64,7 @@ class EventCard extends ConsumerWidget {
                     ],
                   ),
                   const SizedBox(height: 6),
-                  GestureDetector(
-                    onTap: () => context.push('/n/${event.id}'),
-                    child: MarkdownContent(event: event),
-                  ),
+                  MarkdownContent(event: event),
                   if (event.hashtags.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Wrap(
@@ -84,12 +83,16 @@ class EventCard extends ConsumerWidget {
                     ),
                   ],
                   const SizedBox(height: 2),
+                  // Reaction display (NIP-25 kind-7).
+                  _ReactionChips(eventId: event.id),
+                  const SizedBox(height: 2),
                   PostActions(event: event),
                 ],
               ),
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -108,6 +111,55 @@ class EventCard extends ConsumerWidget {
     if (days < 30) return '$days天';
     return '${eventTime.year}-${eventTime.month.toString().padLeft(2, '0')}'
         '-${eventTime.day.toString().padLeft(2, '0')}';
+  }
+}
+
+/// Reaction emoji chips (NIP-25 kind-7 counts).
+class _ReactionChips extends ConsumerWidget {
+  const _ReactionChips({required this.eventId});
+  final String eventId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(reactionsProvider(eventId));
+    return async.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (Map<String, int> counts) {
+        if (counts.isEmpty) return const SizedBox.shrink();
+        final theme = Theme.of(context);
+        return Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 2,
+            children: [
+              for (final entry in counts.entries)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(entry.key,
+                          style: const TextStyle(fontSize: 13)),
+                      if (entry.value > 1) ...[
+                        const SizedBox(width: 2),
+                        Text('${entry.value}',
+                            style: theme.textTheme.labelSmall),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
   }
 }
 

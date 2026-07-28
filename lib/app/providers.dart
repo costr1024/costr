@@ -559,6 +559,91 @@ final searchUsersProvider =
   return collected;
 });
 
+/// Reactions (NIP-25 kind-7) for an event. REQ {kinds:[7], "#e":[eventId]}.
+/// Returns a map of emoji/content → count. Resolves on all-EOSE / timeout.
+final reactionsProvider =
+    FutureProvider.family<Map<String, int>, String>((ref, eventId) async {
+  final pool = ref.watch(relayPoolProvider);
+  final counts = <String, int>{};
+  final seen = <String>{};
+  final completer = Completer<void>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.kind == 7 && !seen.add(e.id)) return;
+    // Check if this reaction references eventId.
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
+        final key = e.content.isEmpty ? '+' : e.content;
+        counts[key] = (counts[key] ?? 0) + 1;
+        break;
+      }
+    }
+  });
+  final subId = nextSubId('reactions');
+  final connectedCount =
+      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  var eoses = 0;
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (eoses >= connectedCount && !completer.isCompleted) completer.complete();
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{'kinds': [7], '#e': [eventId]},
+    closeOnEose: true,
+  );
+  ref.onDispose(() {
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  await completer.future.timeout(const Duration(seconds: 10), onTimeout: () {});
+  return counts;
+});
+
+/// Replies (kind-1) to an event. REQ {kinds:[1], "#e":[eventId]}.
+/// Returns List<Event> sorted newest-first.
+final repliesProvider =
+    FutureProvider.family<List<Event>, String>((ref, eventId) async {
+  final pool = ref.watch(relayPoolProvider);
+  final collected = <Event>[];
+  final seen = <String>{};
+  final completer = Completer<void>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.isTextNote && !seen.add(e.id)) return;
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
+        collected.add(e);
+        break;
+      }
+    }
+  });
+  final subId = nextSubId('replies');
+  final connectedCount =
+      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  var eoses = 0;
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (eoses >= connectedCount && !completer.isCompleted) completer.complete();
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{'kinds': [1], '#e': [eventId]},
+    closeOnEose: true,
+  );
+  ref.onDispose(() {
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  await completer.future.timeout(const Duration(seconds: 10), onTimeout: () {});
+  collected.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return collected;
+});
+
 /// Follow [pubkey] (NIP-02). Fetches the current user's kind-3 event (to
 /// preserve existing entries' relay/petname), signs an updated kind-3 with the
 /// new pubkey added, publishes, and refreshes [followingStateProvider].

@@ -10,6 +10,7 @@ import '../../models/event.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/markdown_content.dart';
 import '../../widgets/post_actions.dart';
+import 'event_card.dart';
 
 class PostDetailPage extends ConsumerWidget {
   const PostDetailPage({super.key, required this.id});
@@ -79,16 +80,54 @@ class PostDetailPage extends ConsumerWidget {
                   const Divider(height: 24),
                   PostActions(event: event),
                   const SizedBox(height: 16),
-                  Center(
-                    child: Text('回复（即将支持）',
-                        style: Theme.of(context).textTheme.labelSmall),
-                  ),
+                  _RepliesSection(eventId: event.id),
                 ],
               ),
             ),
           );
         },
       ),
+    );
+  }
+}
+
+/// Replies section — fetches kind-1 events that reference this post via #e tag.
+class _RepliesSection extends ConsumerWidget {
+  const _RepliesSection({required this.eventId});
+  final String eventId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(repliesProvider(eventId));
+    final theme = Theme.of(context);
+    return async.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (Object e, _) => Text('回复加载失败：$e'),
+      data: (List<Event> replies) {
+        if (replies.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: Text('暂无回复', style: theme.textTheme.labelSmall),
+            ),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('回复 (${replies.length})', style: theme.textTheme.labelMedium),
+            const SizedBox(height: 8),
+            for (final reply in replies)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: EventCard(event: reply),
+              ),
+          ],
+        );
+      },
     );
   }
 }
