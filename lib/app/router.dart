@@ -13,6 +13,7 @@ import '../features/auth/login_page.dart';
 import '../features/compose/compose_page.dart';
 import '../features/feed/feed_page.dart';
 import '../features/feed/post_detail_page.dart';
+import '../features/profile/edit_profile_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/search/search_page.dart';
 import '../models/event.dart';
@@ -75,6 +76,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/search',
         builder: (BuildContext context, GoRouterState state) => const SearchPage(),
+      ),
+      GoRoute(
+        path: '/profile/edit',
+        builder: (BuildContext context, GoRouterState state) => const EditProfilePage(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (

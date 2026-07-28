@@ -23,8 +23,10 @@ import '../models/event.dart';
 import '../utils/nip19.dart';
 import 'network_video.dart';
 
-const String _bech32Data = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-final RegExp _pubkeyEntityRegex = RegExp('(nprofile1|npub1)[$_bech32Data]{6,}');
+/// Matches nostr: prefix + npub1/nprofile1 entity (consumes the nostr: prefix
+/// so it doesn't linger as orphan text before the link).
+final RegExp _pubkeyEntityRegex =
+    RegExp(r'(?:nostr:)?(nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}');
 final RegExp _mdImageRegex = RegExp(r'!\[([^\]]*)\]\(([^)\s]+)\)');
 /// Bare media URLs in content (image/video/file extensions) — stripped from
 /// text segments so they don't show as plain text; rendered via imeta extra.

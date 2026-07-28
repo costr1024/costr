@@ -191,16 +191,23 @@ class _Header extends ConsumerWidget {
               ],
               if (isSelf) ...[
                 const SizedBox(height: 16),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton.tonalIcon(
-                    icon: const Icon(Icons.logout),
-                    label: const Text('登出'),
-                    onPressed: () async {
-                      await ref.read(identityProvider.notifier).logout();
-                      if (context.mounted) context.go('/login');
-                    },
-                  ),
+                Row(
+                  children: [
+                    FilledButton.tonalIcon(
+                      icon: const Icon(Icons.edit),
+                      label: const Text('编辑资料'),
+                      onPressed: () => context.push('/profile/edit'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.tonalIcon(
+                      icon: const Icon(Icons.logout),
+                      label: const Text('登出'),
+                      onPressed: () async {
+                        await ref.read(identityProvider.notifier).logout();
+                        if (context.mounted) context.go('/login');
+                      },
+                    ),
+                  ],
                 ),
               ],
             ],

@@ -87,6 +87,12 @@ class NostrActions {
     return id.signEvent(kind: 30000, content: '', tags: tags);
   }
 
+  /// Publish updated profile metadata (NIP-01 kind 0). [contentJson] is the
+  /// stringified JSON of the metadata object.
+  Event setMetadata(String contentJson) {
+    return id.signEvent(kind: 0, content: contentJson, tags: const []);
+  }
+
   /// Quote (kind-1 referencing [quoted]). The user's [content] is followed by a
   /// `nostr:note1…` reference; an `e` mention tag + `p` tag reference the quote.
   /// [extraTags] (e.g. imeta) are appended.
