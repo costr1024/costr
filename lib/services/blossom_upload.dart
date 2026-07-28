@@ -33,11 +33,17 @@ class BlossomResult {
   String toString() => 'BlossomResult(url: $url, sha256: $sha256)';
 }
 
-/// MIME types for the file types we support (by extension). Anything unknown
+/// MIME types for the file types we support (by extension). Accepts a bare
+/// extension (".jpg"/"jpg") or a full filename ("photo.jpg"). Anything unknown
 /// falls back to application/octet-stream; the server rejects if unsupported.
 String mimeForExt(String? ext) {
-  if (ext == null) return 'application/octet-stream';
-  final e = ext.toLowerCase().replaceAll('.', '');
+  if (ext == null || ext.isEmpty) return 'application/octet-stream';
+  var e = ext.toLowerCase();
+  // If it looks like a filename, extract the last extension segment.
+  final slash = e.lastIndexOf('/');
+  if (slash >= 0) e = e.substring(slash + 1);
+  final dot = e.lastIndexOf('.');
+  if (dot >= 0) e = e.substring(dot + 1);
   const map = <String, String>{
     'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
     'gif': 'image/gif', 'webp': 'image/webp', 'bmp': 'image/bmp',

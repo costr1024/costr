@@ -275,13 +275,21 @@ class MediaAttachment {
 
   bool get isVideo {
     final m = mimeType;
-    if (m != null && m.isNotEmpty) return m.startsWith('video/');
+    if (m != null && m.isNotEmpty) {
+      if (m.startsWith('video/')) return true;
+      if (m.startsWith('image/')) return false;
+      // mime set but neither image nor video → fall through to URL check.
+    }
     return _hasExt(const {'.mp4', '.webm', '.mov', '.m4v', '.mkv'});
   }
 
   bool get isImage {
     final m = mimeType;
-    if (m != null && m.isNotEmpty) return m.startsWith('image/');
+    if (m != null && m.isNotEmpty) {
+      if (m.startsWith('image/')) return true;
+      if (m.startsWith('video/')) return false;
+      // mime set but neither image nor video → fall through to URL check.
+    }
     return _hasExt(const {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'});
   }
 

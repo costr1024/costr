@@ -87,7 +87,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       if (f.size > _maxImageBytes) { _snack('图片超过 10MB: ${f.name}'); continue; }
       final bytes = _bytesOf(f);
       if (bytes == null) continue;
-      final mime = mimeForExt(f.extension);
+      final mime = mimeForExt(f.extension ?? f.name);
       final res = await blossomUpload(identity, bytes, mimetype: mime, note: 'costr image');
       if (!mounted) return;
       if (res != null) {
@@ -113,7 +113,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     if (f.size > _maxVideoBytes) { _snack('视频超过 100MB'); return; }
     final bytes = _bytesOf(f);
     if (bytes == null) return;
-    final mime = mimeForExt(f.extension);
+    final mime = mimeForExt(f.extension ?? f.name);
     setState(() => _uploading = true);
     final res = await blossomUpload(identity, bytes, mimetype: mime, note: 'costr video');
     if (!mounted) return;
@@ -137,7 +137,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     if (f.size > _maxFileBytes) { _snack('附件超过 100MB'); return; }
     final bytes = _bytesOf(f);
     if (bytes == null) return;
-    final mime = mimeForExt(f.extension);
+    final mime = mimeForExt(f.extension ?? f.name);
     setState(() => _uploading = true);
     final res = await blossomUpload(identity, bytes, mimetype: mime, note: 'costr file ${f.name}');
     if (!mounted) return;
