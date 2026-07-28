@@ -497,9 +497,30 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
     });
   }
 
+  List<String> _filterGroup(List<String> pubkeys, Map<String, Metadata?> metaCache) {
+    if (_query.isEmpty) return pubkeys;
+    final q = _query.toLowerCase();
+    String? npubHex;
+    if (q.startsWith('npub1')) {
+      try { npubHex = npubToHex(_query).toLowerCase(); } catch (_) {}
+    }
+    return pubkeys.where((pk) {
+      if (pk.toLowerCase().contains(q)) return true;
+      if (npubHex != null && pk.toLowerCase().contains(npubHex)) return true;
+      final m = metaCache[pk];
+      if (m == null) return false;
+      if ((m.name ?? '').toLowerCase().contains(q)) return true;
+      if ((m.displayName ?? '').toLowerCase().contains(q)) return true;
+      if ((m.nip05 ?? '').toLowerCase().contains(q)) return true;
+      if ((m.about ?? '').toLowerCase().contains(q)) return true;
+      return false;
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final async = ref.watch(userFollowsProvider(widget.pubkey));
+    final async = ref.watch(userGroupedFollowsProvider(widget.pubkey));
+    final theme = Theme.of(context);
     return Column(
       children: [
         _SearchBar(controller: _controller, hint: '过滤已关注…', onChanged: _onChanged),
@@ -507,40 +528,42 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
           child: async.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (Object e, _) => Center(child: Text('加载失败：$e')),
-            data: (List<String> follows) {
-              // Watch metadata per pubkey → filter by name/nip05/about/pubkey.
+            data: (List<FollowGroup> groups) {
+              if (groups.isEmpty) return const Center(child: Text('暂无关注'));
+              // Build a flat metadata cache for all pubkeys across groups.
+              final allPks = <String>{};
+              for (final g in groups) allPks.addAll(g.pubkeys);
               final metaCache = <String, Metadata?>{};
-              for (final pk in follows) {
+              for (final pk in allPks) {
                 metaCache[pk] = ref.watch(metadataProvider(pk)).value;
               }
-              var list = follows;
-              if (_query.isNotEmpty) {
-                final q = _query.toLowerCase();
-                String? npubHex;
-                if (q.startsWith('npub1')) {
-                  try { npubHex = npubToHex(_query).toLowerCase(); } catch (_) {}
+              // Build filtered slivers.
+              final sections = <Widget>[];
+              for (final g in groups) {
+                final filtered = _filterGroup(g.pubkeys, metaCache);
+                if (filtered.isEmpty) continue;
+                sections.add(
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    child: Text(
+                      '${g.name} (${filtered.length})',
+                      style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                );
+                for (final pk in filtered) {
+                  sections.add(_FollowRow(
+                    pubkey: pk,
+                    followsMe: false,
+                    onTap: () => context.push('/u/$pk'),
+                  ));
                 }
-                list = follows.where((pk) {
-                  if (pk.toLowerCase().contains(q)) return true;
-                  if (npubHex != null && pk.toLowerCase().contains(npubHex)) return true;
-                  final m = metaCache[pk];
-                  if (m == null) return false;
-                  if ((m.name ?? '').toLowerCase().contains(q)) return true;
-                  if ((m.displayName ?? '').toLowerCase().contains(q)) return true;
-                  if ((m.nip05 ?? '').toLowerCase().contains(q)) return true;
-                  if ((m.about ?? '').toLowerCase().contains(q)) return true;
-                  return false;
-                }).toList();
               }
-              if (list.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无关注' : '无匹配'));
-              return ListView.builder(
-                itemCount: list.length,
-                itemBuilder: (BuildContext context, int i) => _FollowRow(
-                  pubkey: list[i],
-                  followsMe: false,
-                  onTap: () => context.push('/u/${list[i]}'),
-                ),
-              );
+              if (sections.isEmpty) {
+                return Center(child: Text(_query.isEmpty ? '暂无关注' : '无匹配'));
+              }
+              return ListView(children: sections);
             },
           ),
         ),

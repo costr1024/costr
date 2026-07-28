@@ -445,6 +445,111 @@ final userFollowersProvider =
 
 // --- Search (NIP-50, via nostr.wine) --------------------------------------
 
+/// A follow group: name + the pubkeys in it.
+class FollowGroup {
+  const FollowGroup(this.name, this.pubkeys);
+  final String name;
+  final List<String> pubkeys;
+}
+
+/// The logged-in user's follows grouped by NIP-51 kind-30000 categories.
+/// First entry is 默认分组 (follows not in any custom group). Then one entry
+/// per custom group (d-tag name) with the pubkeys in that group.
+/// pubkeys in custom groups are also kept in 默认分组 only if not in any group.
+final userGroupedFollowsProvider =
+    FutureProvider.family<List<FollowGroup>, String>(
+        (ref, pubkey) async {
+  final pool = ref.watch(relayPoolProvider);
+
+  // 1. Fetch kind-3 (master follow list) p-tags.
+  final kind3Completer = Completer<List<String>>();
+  late StreamSubscription<Event> evSub1;
+  late StreamSubscription<String> eoseSub1;
+  evSub1 = pool.events.listen((e) {
+    if (e.isContactList && e.pubkey == pubkey && !kind3Completer.isCompleted) {
+      kind3Completer.complete(e.pTagPubkeys);
+    }
+  });
+  final sub1 = nextSubId('grouped-k3');
+  final conn1 = pool.states.where((s) => s.status == RelayStatus.connected).length;
+  var e1 = 0;
+  eoseSub1 = pool.eoseStream.where((s) => s == sub1).listen((_) {
+    e1++;
+    if (e1 >= conn1 && !kind3Completer.isCompleted) {
+      kind3Completer.complete(const <String>[]);
+    }
+  });
+  pool.request(sub1, {
+    'authors': [pubkey], 'kinds': [Event.kindContactList], 'limit': 1,
+  }, closeOnEose: true);
+  ref.onDispose(() { evSub1.cancel(); eoseSub1.cancel(); pool.closeSubscription(sub1); });
+
+  // 2. Fetch all kind-30000 events (follow sets).
+  final k30000Events = <Event>[];
+  final k30000Completer = Completer<void>();
+  late StreamSubscription<Event> evSub2;
+  late StreamSubscription<String> eoseSub2;
+  evSub2 = pool.events.listen((e) {
+    if (e.kind == 30000 && e.pubkey == pubkey) k30000Events.add(e);
+  });
+  final sub2 = nextSubId('grouped-k30k');
+  var e2 = 0;
+  eoseSub2 = pool.eoseStream.where((s) => s == sub2).listen((_) {
+    e2++;
+    if (e2 >= conn1 && !k30000Completer.isCompleted) k30000Completer.complete();
+  });
+  pool.request(sub2, {
+    'authors': [pubkey], 'kinds': [30000],
+  }, closeOnEose: true);
+  ref.onDispose(() { evSub2.cancel(); eoseSub2.cancel(); pool.closeSubscription(sub2); });
+
+  // Wait for both.
+  final follows = await kind3Completer.future
+      .timeout(const Duration(seconds: 10), onTimeout: () => const <String>[]);
+  await k30000Completer.future
+      .timeout(const Duration(seconds: 10), onTimeout: () {});
+
+  // 3. Build group → Set<pubkey> from kind-30000 events.
+  final groupNames = <String>[];
+  final groupPubkeys = <String, Set<String>>{};
+  for (final e in k30000Events) {
+    String? name;
+    final pks = <String>{};
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'd' && t[1] is String) name = t[1] as String;
+      if (t.length >= 2 && t[0] == 'p' && t[1] is String) pks.add(t[1] as String);
+    }
+    if (name != null && name.isNotEmpty) {
+      if (!groupNames.contains(name)) groupNames.add(name);
+      groupPubkeys.putIfAbsent(name, () => <String>{}).addAll(pks);
+    }
+  }
+
+  // 4. Group the follows.
+  final allGrouped = <String, bool>{};
+  final result = <FollowGroup>[];
+  // Default group: follows not in any custom group.
+  final defaultGroup = <String>[];
+  for (final pk in follows) {
+    var inAnyGroup = false;
+    for (final name in groupNames) {
+      if (groupPubkeys[name]!.contains(pk)) {
+        inAnyGroup = true;
+        break;
+      }
+    }
+    if (!inAnyGroup) defaultGroup.add(pk);
+    allGrouped[pk] = inAnyGroup;
+  }
+  result.add(FollowGroup('默认分组', defaultGroup));
+  // Custom groups: follows that are in this group.
+  for (final name in groupNames) {
+    final inGroup = follows.where((pk) => groupPubkeys[name]!.contains(pk)).toList();
+    if (inGroup.isNotEmpty) result.add(FollowGroup(name, inGroup));
+  }
+  return result;
+});
+
 /// The logged-in user's existing follow-group names (NIP-51 kind-30000 `d`
 /// tags). Used by the follow-group picker to show existing + allow new.
 final userGroupNamesProvider = FutureProvider.family<List<String>, String>(
