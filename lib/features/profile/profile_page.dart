@@ -40,21 +40,29 @@ class ProfilePage extends ConsumerWidget {
   }
 }
 
-class _ProfileBody extends ConsumerWidget {
+class _ProfileBody extends ConsumerStatefulWidget {
   const _ProfileBody({required this.pubkey, required this.isSelf, this.identity});
   final String pubkey;
   final bool isSelf;
   final Identity? identity;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final meta = ref.watch(metadataProvider(pubkey)).value;
+  ConsumerState<_ProfileBody> createState() => _ProfileBodyState();
+}
+
+class _ProfileBodyState extends ConsumerState<_ProfileBody> {
+  String _searchQuery = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final meta = ref.watch(metadataProvider(widget.pubkey)).value;
     final theme = Theme.of(context);
 
     return NestedScrollView(
       headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
         return <Widget>[
-          SliverToBoxAdapter(child: _Header(pubkey: pubkey, identity: identity, meta: meta, isSelf: isSelf)),
+          SliverToBoxAdapter(
+              child: _Header(pubkey: widget.pubkey, identity: widget.identity, meta: meta, isSelf: widget.isSelf)),
           SliverPersistentHeader(
             pinned: true,
             delegate: _StickyTabBarDelegate(
@@ -68,12 +76,31 @@ class _ProfileBody extends ConsumerWidget {
           ),
         ];
       },
-      body: TabBarView(
+      body: Column(
         children: [
-          _PostsTab(pubkey: pubkey),
-          _RepliesTab(pubkey: pubkey),
-          _FollowsTab(pubkey: pubkey),
-          _FollowersTab(pubkey: pubkey, isSelf: isSelf),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: TextField(
+              controller: TextEditingController(text: _searchQuery),
+              decoration: const InputDecoration(
+                hintText: '搜索该用户的帖子…',
+                prefixIcon: Icon(Icons.search, size: 20),
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (v) => setState(() => _searchQuery = v.trim()),
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _PostsTab(pubkey: widget.pubkey, query: _searchQuery),
+                _RepliesTab(pubkey: widget.pubkey, query: _searchQuery),
+                _FollowsTab(pubkey: widget.pubkey),
+                _FollowersTab(pubkey: widget.pubkey, isSelf: widget.isSelf),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -238,8 +265,9 @@ class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {  _StickyTab
 }
 
 class _PostsTab extends ConsumerWidget {
-  const _PostsTab({required this.pubkey});
+  const _PostsTab({required this.pubkey, this.query = ''});
   final String pubkey;
+  final String query;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -248,8 +276,12 @@ class _PostsTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (Object e, _) => Center(child: Text('加载失败：$e')),
       data: (List<Event> all) {
-        final posts = all.where((e) => !e.isReply).toList();
-        if (posts.isEmpty) return const Center(child: Text('暂无帖子'));
+        var posts = all.where((e) => !e.isReply).toList();
+        if (query.isNotEmpty) {
+          final q = query.toLowerCase();
+          posts = posts.where((e) => e.content.toLowerCase().contains(q)).toList();
+        }
+        if (posts.isEmpty) return Center(child: Text(query.isEmpty ? '暂无帖子' : '无匹配帖子'));
         return ListView.builder(
           itemCount: posts.length,
           itemBuilder: (BuildContext context, int i) =>
@@ -261,8 +293,9 @@ class _PostsTab extends ConsumerWidget {
 }
 
 class _RepliesTab extends ConsumerWidget {
-  const _RepliesTab({required this.pubkey});
+  const _RepliesTab({required this.pubkey, this.query = ''});
   final String pubkey;
+  final String query;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -271,8 +304,12 @@ class _RepliesTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (Object e, _) => Center(child: Text('加载失败：$e')),
       data: (List<Event> all) {
-        final replies = all.where((e) => e.isReply).toList();
-        if (replies.isEmpty) return const Center(child: Text('暂无回帖'));
+        var replies = all.where((e) => e.isReply).toList();
+        if (query.isNotEmpty) {
+          final q = query.toLowerCase();
+          replies = replies.where((e) => e.content.toLowerCase().contains(q)).toList();
+        }
+        if (replies.isEmpty) return Center(child: Text(query.isEmpty ? '暂无回帖' : '无匹配回帖'));
         return ListView.builder(
           itemCount: replies.length,
           itemBuilder: (BuildContext context, int i) =>

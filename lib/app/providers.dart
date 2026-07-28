@@ -25,12 +25,13 @@ import '../utils/language.dart';
 
 /// Default relays. bostr requires NIP-42 auth to write (read-only for us);
 /// ditto/damus/nos.lol accept writes and are broadly queried, so posts reach
-/// other clients. All four are read for feed diversity.
+/// other clients. nostr.wine supports NIP-50 full-text search (posts + users).
 const List<String> defaultRelays = <String>[
   'wss://relay.damus.io/',
   'wss://nos.lol/',
   'wss://relay.ditto.pub/',
   'wss://relay.bostr.online/',
+  'wss://nostr.wine/',
 ];
 
 // Monotonic subId counter, namespaced for relay-log readability.
@@ -439,6 +440,93 @@ final userFollowersProvider =
     const Duration(seconds: 12),
     onTimeout: () {},
   );
+  return collected;
+});
+
+// --- Search (NIP-50, via nostr.wine) --------------------------------------
+
+/// A user found by global search (pubkey + parsed kind-0 metadata).
+class UserResult {
+  const UserResult(this.pubkey, this.metadata);
+  final String pubkey;
+  final Metadata? metadata;
+}
+
+/// Global post search (NIP-50 `search` filter, kind 1). Resolves on the first
+/// relay's EOSE (nostr.wine answers; relays without NIP-50 hang on a search
+/// REQ, so we don't wait for all) or an 8s timeout.
+final searchPostsProvider =
+    FutureProvider.family<List<Event>, String>((ref, query) async {
+  final q = query.trim();
+  if (q.isEmpty) return const <Event>[];
+  final pool = ref.watch(relayPoolProvider);
+  final collected = <Event>[];
+  final seen = <String>{};
+  final completer = Completer<void>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.isTextNote && seen.add(e.id)) collected.add(e);
+  });
+  final subId = nextSubId('search');
+  eoseSub = pool.eoseStream
+      .where((s) => s == subId)
+      .listen((_) {
+    if (!completer.isCompleted) completer.complete();
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{'search': q, 'kinds': [1], 'limit': 100},
+    closeOnEose: false,
+  );
+  ref.onDispose(() {
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  await completer.future.timeout(const Duration(seconds: 8), onTimeout: () {});
+  collected.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return collected;
+});
+
+/// Global user search (NIP-50 `search` filter, kind 0 metadata).
+final searchUsersProvider =
+    FutureProvider.family<List<UserResult>, String>((ref, query) async {
+  final q = query.trim();
+  if (q.isEmpty) return const <UserResult>[];
+  final pool = ref.watch(relayPoolProvider);
+  final collected = <UserResult>[];
+  final seen = <String>{};
+  final completer = Completer<void>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.kind == 0 && seen.add(e.pubkey)) {
+      Metadata? meta;
+      try {
+        final json = jsonDecode(e.content);
+        if (json is Map<String, dynamic>) meta = Metadata.fromJson(json);
+      } catch (_) {}
+      collected.add(UserResult(e.pubkey, meta));
+    }
+  });
+  final subId = nextSubId('searchusers');
+  eoseSub = pool.eoseStream
+      .where((s) => s == subId)
+      .listen((_) {
+    if (!completer.isCompleted) completer.complete();
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{'search': q, 'kinds': [0], 'limit': 50},
+    closeOnEose: false,
+  );
+  ref.onDispose(() {
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  await completer.future.timeout(const Duration(seconds: 8), onTimeout: () {});
   return collected;
 });
 

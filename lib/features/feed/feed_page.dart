@@ -66,6 +66,10 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       appBar: AppBar(
         title: const Text('costr'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            onPressed: () => context.push('/search'),
+          ),
           _LanguageDropdown(value: lang),
           _RelayStatusChip(relays: relays.value ?? const []),
         ],
