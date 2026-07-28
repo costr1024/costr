@@ -31,7 +31,7 @@ class ProfilePage extends ConsumerWidget {
           final isSelf = pubkey == null || pubkey == identity?.pubkeyHex;
           if (pk == null) return const Center(child: Text('未登录'));
           return DefaultTabController(
-            length: 3,
+            length: 4,
             child: _ProfileBody(pubkey: pk, isSelf: isSelf, identity: identity),
           );
         },
@@ -61,7 +61,7 @@ class _ProfileBody extends ConsumerWidget {
               TabBar(
                 tabAlignment: TabAlignment.start,
                 isScrollable: true,
-                tabs: const [Tab(text: '帖子'), Tab(text: '回帖'), Tab(text: '关注')],
+                tabs: const [Tab(text: '帖子'), Tab(text: '回帖'), Tab(text: '关注'), Tab(text: '关注者')],
               ),
               color: theme.colorScheme.surface,
             ),
@@ -73,6 +73,7 @@ class _ProfileBody extends ConsumerWidget {
           _PostsTab(pubkey: pubkey),
           _RepliesTab(pubkey: pubkey),
           _FollowsTab(pubkey: pubkey),
+          _FollowersTab(pubkey: pubkey, isSelf: isSelf),
         ],
       ),
     );
@@ -124,7 +125,10 @@ class _Header extends ConsumerWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  if (!isSelf) _FollowButton(pubkey: pubkey),
+                  // Always show the follow button (even on own profile) so the
+                  // user can self-follow — their own posts then appear in the
+                  // 关注 feed (which uses the kind-3 p-tags as authors).
+                  _FollowButton(pubkey: pubkey),
                 ],
               ),
               if (meta?.about != null && meta!.about!.isNotEmpty) ...[
@@ -174,8 +178,12 @@ class _Header extends ConsumerWidget {
 /// already follows them (per followingStateProvider); tap publishes an updated
 /// kind-3 via [followUser].
 class _FollowButton extends ConsumerStatefulWidget {
-  const _FollowButton({required this.pubkey});
+  const _FollowButton({required this.pubkey, this.followsMe = false});
   final String pubkey;
+  /// True when this pubkey follows the logged-in user (→ show "回关" until
+  /// mutual). Set by callers that know it (e.g. the logged-in user's followers
+  /// tab). Default false → plain "关注".
+  final bool followsMe;
 
   @override
   ConsumerState<_FollowButton> createState() => _FollowButtonState();
@@ -188,9 +196,12 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
   Widget build(BuildContext context) {
     final follows = ref.watch(followingStateProvider).value ?? const <String>[];
     final followed = follows.contains(widget.pubkey);
+    final label = followed
+        ? '已关注'
+        : (widget.followsMe ? '回关' : '关注');
     return FilledButton.tonalIcon(
       icon: Icon(followed ? Icons.check : Icons.person_add_outlined, size: 18),
-      label: Text(followed ? '已关注' : '关注'),
+      label: Text(label),
       onPressed: _busy ? null : (followed ? null : _follow),
     );
   }
@@ -288,6 +299,7 @@ class _FollowsTab extends ConsumerWidget {
           itemCount: follows.length,
           itemBuilder: (BuildContext context, int i) => _FollowRow(
             pubkey: follows[i],
+            followsMe: false,
             onTap: () => context.push('/u/${follows[i]}'),
           ),
         );
@@ -296,15 +308,43 @@ class _FollowsTab extends ConsumerWidget {
   }
 }
 
+class _FollowersTab extends ConsumerWidget {
+  const _FollowersTab({required this.pubkey, required this.isSelf});
+  final String pubkey;
+  final bool isSelf;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(userFollowersProvider(pubkey));
+    return async.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (Object e, _) => Center(child: Text('加载失败：$e')),
+      data: (List<String> followers) {
+        if (followers.isEmpty) return const Center(child: Text('暂无关注者'));
+        // If the profile being viewed is the logged-in user (isSelf), every
+        // row is someone who follows me → "回关" until mutual.
+        return ListView.builder(
+          itemCount: followers.length,
+          itemBuilder: (BuildContext context, int i) => _FollowRow(
+            pubkey: followers[i],
+            followsMe: isSelf,
+            onTap: () => context.push('/u/${followers[i]}'),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _FollowRow extends ConsumerWidget {
-  const _FollowRow({required this.pubkey, required this.onTap});
+  const _FollowRow({required this.pubkey, required this.onTap, this.followsMe = false});
   final String pubkey;
   final VoidCallback onTap;
+  final bool followsMe;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final meta = ref.watch(metadataProvider(pubkey)).value;
-    final theme = Theme.of(context);
     return ListTile(
       leading: Avatar(pubkey: pubkey, radius: 18),
       title: Text(
@@ -312,13 +352,8 @@ class _FollowRow extends ConsumerWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
+      trailing: _FollowButton(pubkey: pubkey, followsMe: followsMe),
       onTap: onTap,
-      trailing: meta?.bestName == null
-          ? Text(
-              pubkey.length > 10 ? '${pubkey.substring(0, 8)}…' : pubkey,
-              style: theme.textTheme.labelSmall,
-            )
-          : null,
     );
   }
 }

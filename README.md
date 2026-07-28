@@ -26,7 +26,8 @@ Android、iOS、Windows、macOS、Linux 五端。
   - **reaction**（NIP-25 + NIP-30）：表情选择器，签 kind-7（`e`/`p`/`k` tag；unicode emoji 或 `:shortcode:` 自定义表情 + `emoji` tag）。自定义表情的 URL 由 `NostrActions.reaction(customShortcode/customUrl)` 支持。
   - **引用**（quote）：push Compose 带 `quoteOf`，签 kind-1，正文带 `nostr:note1` 引用 + `e` mention tag。
   - **分享**：复制 `https://njump.me/<note1>`（参考 Amethyst）。
-- **关注**（NIP-02）：他人主页头像旁"关注"按钮。拉取当前用户完整 kind-3（保留 relay/petname）→ `NostrActions.follow` 加新 pubkey → 签 kind-3 全量发布 → 刷新关注列表。已关注则显示"已关注"。**安全护栏**：拉 kind-3 不 closeOnEose、等事件或所有中继 EOSE；超时未确认则**中止不发布**（绝不发只含新 pubkey 的 kind-3 清空已有关注）。RelayPool 的 closeOnEose 也改成等**所有**已连中继 EOSE 才关（之前首个中继 EOSE 就关，多中继竞态会丢慢中继的事件）。
+- **关注**（NIP-02 kind 3 = 主关注列表，最新标准未废弃）：他人主页头像旁"关注"按钮。拉取当前用户完整 kind-3（保留 relay/petname）→ `NostrActions.follow` 加新 pubkey → 签 kind-3 全量发布 → 刷新关注列表。已关注则显示"已关注"。**安全护栏**：拉 kind-3 不 closeOnEose、等事件或所有中继 EOSE；超时未确认则**中止不发布**（绝不发只含新 pubkey 的 kind-3 清空已有关注）。RelayPool 的 closeOnEose 改成等**所有**已连中继 EOSE 才关。**支持关注自己**（own profile 也显示关注按钮——关注自己后自己的帖会出现在"关注"feed，因关注流用 kind-3 p-tags 作 authors）。
+- **关注者列表 + 列表内关注 + 回关**：个人主页新增"关注者"tab（NIP-12 参数化查询 `{kinds:[3], "#p":[pubkey]}` → 返回引用该 pubkey 的 kind-3，作者即 follower）。关注/关注者列表每行带关注按钮；在**自己的"关注者"tab**里，对方关注了我 → 按钮显示"回关"（未互关）/"已关注"（已互关）；其他列表显示"关注"/"已关注"。
 - **收藏**（NIP-51 kind-10003 + NIP-44）：每条帖子收藏动作，弹"公开书签 / 私人书签"选择。**公开**：`e` tag 加进事件 `tags`（明文，他人可见）；**私人**：`e` tag 加进 `.content`——用 **NIP-44 v2 加密给自己**（secp256k1 ECDH + HKDF + ChaCha20 RFC7539 + HMAC-SHA256，纯 Dart 自实现，通过官方向量验证）。保留现有公开 tag + 私人条目。同样的中止护栏（拉取不确定时不发布，绝不清空书签）。
 - **点帖进详情页**：点帖子正文 → `/n/:id` 详情页（单帖全屏 + 交互栏 + 回复占位）。
 - **下拉刷新 + 加载更多**：下拉刷新重新拉取当前流；滚到底自动发 `until: 最旧时间戳` 的 REQ 追加更早的事件。

@@ -397,6 +397,51 @@ final userFollowsProvider =
   );
 });
 
+/// A user's followers (NIP-12: REQ kind-3 events whose `p` tags reference the
+/// user — the AUTHORS of those contact lists are the followers). Resolves on
+/// all-relays EOSE / timeout.
+final userFollowersProvider =
+    FutureProvider.family<List<String>, String>((ref, pubkey) async {
+  final pool = ref.watch(relayPoolProvider);
+  final collected = <String>[];
+  final seen = <String>{};
+  final completer = Completer<void>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.isContactList && seen.add(e.pubkey)) {
+      collected.add(e.pubkey);
+    }
+  });
+  final subId = nextSubId('followers');
+  final connectedCount =
+      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  var eoses = 0;
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (eoses >= connectedCount && !completer.isCompleted) completer.complete();
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{
+      'kinds': [Event.kindContactList],
+      '#p': [pubkey],
+      'limit': 500,
+    },
+    closeOnEose: true,
+  );
+  ref.onDispose(() {
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  await completer.future.timeout(
+    const Duration(seconds: 12),
+    onTimeout: () {},
+  );
+  return collected;
+});
+
 /// Follow [pubkey] (NIP-02). Fetches the current user's kind-3 event (to
 /// preserve existing entries' relay/petname), signs an updated kind-3 with the
 /// new pubkey added, publishes, and refreshes [followingStateProvider].
