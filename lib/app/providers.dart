@@ -452,9 +452,10 @@ class UserResult {
   final Metadata? metadata;
 }
 
-/// Global post search (NIP-50 `search` filter, kind 1). Resolves on the first
-/// relay's EOSE (nostr.wine answers; relays without NIP-50 hang on a search
-/// REQ, so we don't wait for all) or an 8s timeout.
+/// Global post search (NIP-50 `search` filter, kind 1). Collects results for a
+/// fixed 6s window (non-search relays may EOSE-empty quickly, so we don't
+/// resolve on first EOSE — that would miss nostr.wine's results arriving
+/// after a fast empty EOSE).
 final searchPostsProvider =
     FutureProvider.family<List<Event>, String>((ref, query) async {
   final q = query.trim();
@@ -462,18 +463,11 @@ final searchPostsProvider =
   final pool = ref.watch(relayPoolProvider);
   final collected = <Event>[];
   final seen = <String>{};
-  final completer = Completer<void>();
   late StreamSubscription<Event> evSub;
-  late StreamSubscription<String> eoseSub;
   evSub = pool.events.listen((e) {
     if (e.isTextNote && seen.add(e.id)) collected.add(e);
   });
   final subId = nextSubId('search');
-  eoseSub = pool.eoseStream
-      .where((s) => s == subId)
-      .listen((_) {
-    if (!completer.isCompleted) completer.complete();
-  });
   pool.request(
     subId,
     <String, dynamic>{'search': q, 'kinds': [1], 'limit': 100},
@@ -481,10 +475,11 @@ final searchPostsProvider =
   );
   ref.onDispose(() {
     evSub.cancel();
-    eoseSub.cancel();
     pool.closeSubscription(subId);
   });
-  await completer.future.timeout(const Duration(seconds: 8), onTimeout: () {});
+  // Fixed 6s collect window — don't resolve on first EOSE (a non-search relay
+  // may EOSE-empty before nostr.wine delivers results).
+  await Future<void>.delayed(const Duration(seconds: 6));
   collected.sort((a, b) => b.createdAt.compareTo(a.createdAt));
   return collected;
 });
@@ -497,9 +492,7 @@ final searchUsersProvider =
   final pool = ref.watch(relayPoolProvider);
   final collected = <UserResult>[];
   final seen = <String>{};
-  final completer = Completer<void>();
   late StreamSubscription<Event> evSub;
-  late StreamSubscription<String> eoseSub;
   evSub = pool.events.listen((e) {
     if (e.kind == 0 && seen.add(e.pubkey)) {
       Metadata? meta;
@@ -511,11 +504,6 @@ final searchUsersProvider =
     }
   });
   final subId = nextSubId('searchusers');
-  eoseSub = pool.eoseStream
-      .where((s) => s == subId)
-      .listen((_) {
-    if (!completer.isCompleted) completer.complete();
-  });
   pool.request(
     subId,
     <String, dynamic>{'search': q, 'kinds': [0], 'limit': 50},
@@ -523,10 +511,9 @@ final searchUsersProvider =
   );
   ref.onDispose(() {
     evSub.cancel();
-    eoseSub.cancel();
     pool.closeSubscription(subId);
   });
-  await completer.future.timeout(const Duration(seconds: 8), onTimeout: () {});
+  await Future<void>.delayed(const Duration(seconds: 6));
   return collected;
 });
 

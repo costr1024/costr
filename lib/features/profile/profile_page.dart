@@ -1,5 +1,7 @@
-/// Profile page — header (banner/avatar/metadata) + 帖子/回帖/关注 tabs.
+/// Profile page — header (banner/avatar/metadata) + 帖子/回帖/关注/关注者 tabs.
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -40,29 +42,22 @@ class ProfilePage extends ConsumerWidget {
   }
 }
 
-class _ProfileBody extends ConsumerStatefulWidget {
+class _ProfileBody extends ConsumerWidget {
   const _ProfileBody({required this.pubkey, required this.isSelf, this.identity});
   final String pubkey;
   final bool isSelf;
   final Identity? identity;
 
   @override
-  ConsumerState<_ProfileBody> createState() => _ProfileBodyState();
-}
-
-class _ProfileBodyState extends ConsumerState<_ProfileBody> {
-  String _searchQuery = '';
-
-  @override
-  Widget build(BuildContext context) {
-    final meta = ref.watch(metadataProvider(widget.pubkey)).value;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final meta = ref.watch(metadataProvider(pubkey)).value;
     final theme = Theme.of(context);
 
     return NestedScrollView(
       headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
         return <Widget>[
           SliverToBoxAdapter(
-              child: _Header(pubkey: widget.pubkey, identity: widget.identity, meta: meta, isSelf: widget.isSelf)),
+              child: _Header(pubkey: pubkey, identity: identity, meta: meta, isSelf: isSelf)),
           SliverPersistentHeader(
             pinned: true,
             delegate: _StickyTabBarDelegate(
@@ -76,31 +71,12 @@ class _ProfileBodyState extends ConsumerState<_ProfileBody> {
           ),
         ];
       },
-      body: Column(
+      body: TabBarView(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: TextField(
-              controller: TextEditingController(text: _searchQuery),
-              decoration: const InputDecoration(
-                hintText: '搜索该用户的帖子…',
-                prefixIcon: Icon(Icons.search, size: 20),
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (v) => setState(() => _searchQuery = v.trim()),
-            ),
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _PostsTab(pubkey: widget.pubkey, query: _searchQuery),
-                _RepliesTab(pubkey: widget.pubkey, query: _searchQuery),
-                _FollowsTab(pubkey: widget.pubkey),
-                _FollowersTab(pubkey: widget.pubkey, isSelf: widget.isSelf),
-              ],
-            ),
-          ),
+          _PostsTab(pubkey: pubkey),
+          _RepliesTab(pubkey: pubkey),
+          _FollowsTab(pubkey: pubkey),
+          _FollowersTab(pubkey: pubkey, isSelf: isSelf),
         ],
       ),
     );
@@ -292,111 +268,261 @@ class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {  _StickyTab
       tabBar != old.tabBar || color != old.color;
 }
 
-class _PostsTab extends ConsumerWidget {
-  const _PostsTab({required this.pubkey, this.query = ''});
+class _PostsTab extends ConsumerStatefulWidget {
+  const _PostsTab({required this.pubkey});
   final String pubkey;
-  final String query;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(userPostsProvider(pubkey));
-    return async.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (Object e, _) => Center(child: Text('加载失败：$e')),
-      data: (List<Event> all) {
-        var posts = all.where((e) => !e.isReply).toList();
-        if (query.isNotEmpty) {
-          final q = query.toLowerCase();
-          posts = posts.where((e) => e.content.toLowerCase().contains(q)).toList();
-        }
-        if (posts.isEmpty) return Center(child: Text(query.isEmpty ? '暂无帖子' : '无匹配帖子'));
-        return ListView.builder(
-          itemCount: posts.length,
-          itemBuilder: (BuildContext context, int i) =>
-              UserPostItem(event: posts[i]),
-        );
-      },
+  ConsumerState<_PostsTab> createState() => _PostsTabState();
+}
+
+class _PostsTabState extends ConsumerState<_PostsTab> {
+  final _controller = TextEditingController();
+  String _query = '';
+  Timer? _debounce;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onChanged(String v) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _query = v.trim());
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(userPostsProvider(widget.pubkey));
+    return Column(
+      children: [
+        _SearchBar(controller: _controller, hint: '搜索该用户的帖子…', onChanged: _onChanged),
+        Expanded(
+          child: async.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (Object e, _) => Center(child: Text('加载失败：$e')),
+            data: (List<Event> all) {
+              var posts = all.where((e) => !e.isReply).toList();
+              if (_query.isNotEmpty) {
+                final q = _query.toLowerCase();
+                posts = posts.where((e) => e.content.toLowerCase().contains(q)).toList();
+              }
+              if (posts.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无帖子' : '无匹配帖子'));
+              return ListView.builder(
+                itemCount: posts.length,
+                itemBuilder: (BuildContext context, int i) => UserPostItem(event: posts[i]),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _RepliesTab extends ConsumerWidget {
-  const _RepliesTab({required this.pubkey, this.query = ''});
+class _RepliesTab extends ConsumerStatefulWidget {
+  const _RepliesTab({required this.pubkey});
   final String pubkey;
-  final String query;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(userPostsProvider(pubkey));
-    return async.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (Object e, _) => Center(child: Text('加载失败：$e')),
-      data: (List<Event> all) {
-        var replies = all.where((e) => e.isReply).toList();
-        if (query.isNotEmpty) {
-          final q = query.toLowerCase();
-          replies = replies.where((e) => e.content.toLowerCase().contains(q)).toList();
-        }
-        if (replies.isEmpty) return Center(child: Text(query.isEmpty ? '暂无回帖' : '无匹配回帖'));
-        return ListView.builder(
-          itemCount: replies.length,
-          itemBuilder: (BuildContext context, int i) =>
-              UserPostItem(event: replies[i]),
-        );
-      },
+  ConsumerState<_RepliesTab> createState() => _RepliesTabState();
+}
+
+class _RepliesTabState extends ConsumerState<_RepliesTab> {
+  final _controller = TextEditingController();
+  String _query = '';
+  Timer? _debounce;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onChanged(String v) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _query = v.trim());
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(userPostsProvider(widget.pubkey));
+    return Column(
+      children: [
+        _SearchBar(controller: _controller, hint: '搜索该用户的回帖…', onChanged: _onChanged),
+        Expanded(
+          child: async.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (Object e, _) => Center(child: Text('加载失败：$e')),
+            data: (List<Event> all) {
+              var replies = all.where((e) => e.isReply).toList();
+              if (_query.isNotEmpty) {
+                final q = _query.toLowerCase();
+                replies = replies.where((e) => e.content.toLowerCase().contains(q)).toList();
+              }
+              if (replies.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无回帖' : '无匹配回帖'));
+              return ListView.builder(
+                itemCount: replies.length,
+                itemBuilder: (BuildContext context, int i) => UserPostItem(event: replies[i]),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _FollowsTab extends ConsumerWidget {
+class _FollowsTab extends ConsumerStatefulWidget {
   const _FollowsTab({required this.pubkey});
   final String pubkey;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(userFollowsProvider(pubkey));
-    return async.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (Object e, _) => Center(child: Text('加载失败：$e')),
-      data: (List<String> follows) {
-        if (follows.isEmpty) return const Center(child: Text('暂无关注'));
-        return ListView.builder(
-          itemCount: follows.length,
-          itemBuilder: (BuildContext context, int i) => _FollowRow(
-            pubkey: follows[i],
-            followsMe: false,
-            onTap: () => context.push('/u/${follows[i]}'),
+  ConsumerState<_FollowsTab> createState() => _FollowsTabState();
+}
+
+class _FollowsTabState extends ConsumerState<_FollowsTab> {
+  final _controller = TextEditingController();
+  String _query = '';
+  Timer? _debounce;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onChanged(String v) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _query = v.trim());
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(userFollowsProvider(widget.pubkey));
+    return Column(
+      children: [
+        _SearchBar(controller: _controller, hint: '过滤已关注…', onChanged: _onChanged),
+        Expanded(
+          child: async.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (Object e, _) => Center(child: Text('加载失败：$e')),
+            data: (List<String> follows) {
+              var list = follows;
+              if (_query.isNotEmpty) {
+                final q = _query.toLowerCase();
+                list = follows.where((pk) => pk.toLowerCase().contains(q)).toList();
+              }
+              if (list.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无关注' : '无匹配'));
+              return ListView.builder(
+                itemCount: list.length,
+                itemBuilder: (BuildContext context, int i) => _FollowRow(
+                  pubkey: list[i],
+                  followsMe: false,
+                  onTap: () => context.push('/u/${list[i]}'),
+                ),
+              );
+            },
           ),
-        );
-      },
+        ),
+      ],
     );
   }
 }
 
-class _FollowersTab extends ConsumerWidget {
+class _FollowersTab extends ConsumerStatefulWidget {
   const _FollowersTab({required this.pubkey, required this.isSelf});
   final String pubkey;
   final bool isSelf;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(userFollowersProvider(pubkey));
-    return async.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (Object e, _) => Center(child: Text('加载失败：$e')),
-      data: (List<String> followers) {
-        if (followers.isEmpty) return const Center(child: Text('暂无关注者'));
-        // If the profile being viewed is the logged-in user (isSelf), every
-        // row is someone who follows me → "回关" until mutual.
-        return ListView.builder(
-          itemCount: followers.length,
-          itemBuilder: (BuildContext context, int i) => _FollowRow(
-            pubkey: followers[i],
-            followsMe: isSelf,
-            onTap: () => context.push('/u/${followers[i]}'),
+  ConsumerState<_FollowersTab> createState() => _FollowersTabState();
+}
+
+class _FollowersTabState extends ConsumerState<_FollowersTab> {
+  final _controller = TextEditingController();
+  String _query = '';
+  Timer? _debounce;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onChanged(String v) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _query = v.trim());
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(userFollowersProvider(widget.pubkey));
+    return Column(
+      children: [
+        _SearchBar(controller: _controller, hint: '过滤关注者…', onChanged: _onChanged),
+        Expanded(
+          child: async.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (Object e, _) => Center(child: Text('加载失败：$e')),
+            data: (List<String> followers) {
+              var list = followers;
+              if (_query.isNotEmpty) {
+                final q = _query.toLowerCase();
+                list = followers.where((pk) => pk.toLowerCase().contains(q)).toList();
+              }
+              if (list.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无关注者' : '无匹配'));
+              return ListView.builder(
+                itemCount: list.length,
+                itemBuilder: (BuildContext context, int i) => _FollowRow(
+                  pubkey: list[i],
+                  followsMe: widget.isSelf,
+                  onTap: () => context.push('/u/${list[i]}'),
+                ),
+              );
+            },
           ),
-        );
-      },
+        ),
+      ],
+    );
+  }
+}
+
+/// Reusable search bar with a persistent controller (no cursor reset on rebuild).
+class _SearchBar extends StatelessWidget {
+  const _SearchBar({required this.controller, required this.hint, required this.onChanged});
+  final TextEditingController controller;
+  final String hint;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: TextField(
+        controller: controller,
+        decoration: InputDecoration(
+          hintText: hint,
+          prefixIcon: const Icon(Icons.search, size: 20),
+          isDense: true,
+          border: const OutlineInputBorder(),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        ),
+        onChanged: onChanged,
+      ),
     );
   }
 }
