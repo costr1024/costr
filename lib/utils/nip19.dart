@@ -66,6 +66,13 @@ String? entityToPubkeyHex(String entity) {
   return null;
 }
 
+/// Encode a 32-byte pubkey hex as `nprofile1...` (NIP-19, TLV type 0x00).
+String hexToNprofile(String pubkeyHex) {
+  final pubkeyBytes = _hexToBytes(pubkeyHex);
+  final tlv = <int>[0x00, 0x20, ...pubkeyBytes];
+  return encodeBech32('nprofile', tlv);
+}
+
 /// Shorten an `npub1...`/`nsec1...` for display: first 8 + … + last 4.
 String shortenEntity(String entity) {
   if (entity.length <= 16) return entity;

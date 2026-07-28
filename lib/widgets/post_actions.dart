@@ -189,13 +189,14 @@ class _Action extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      icon: Icon(icon, size: 18),
-      iconSize: 18,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 28, minHeight: 32),
-      color: color,
-      onPressed: onTap,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: SizedBox(
+        width: 24,
+        height: 32,
+        child: Icon(icon, size: 18, color: color),
+      ),
     );
   }
 }

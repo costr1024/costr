@@ -66,14 +66,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     return '有什么新鲜事？';
   }
 
-  /// Append a URL to the editor text (markdown image for images/videos, link
-  /// for files). Called as each upload completes.
+  /// Append a URL to the editor text as a bare URL (one per line, maximum
+  /// cross-client compat). Called as each upload completes.
   void _appendToEditor(_Attachment a) {
-    final md = (a.kind == 'image' || a.kind == 'video')
-        ? '![](${a.url})'
-        : '[${a.name}](${a.url})';
+    final url = a.url;
     final cur = _controller.text;
-    _controller.text = cur.isEmpty ? md : '$cur\n$md';
+    _controller.text = cur.isEmpty ? url : '$cur\n$url';
     _controller.selection = TextSelection.fromPosition(
         TextPosition(offset: _controller.text.length));
   }

@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -144,18 +145,19 @@ class _Header extends ConsumerWidget {
                 Text(meta!.website!, style: theme.textTheme.bodySmall),
               ],
               const SizedBox(height: 12),
-              Text('npub', style: theme.textTheme.labelSmall),
-              SelectableText(
-                identity?.npub ?? '',
-                style: theme.textTheme.bodyMedium,
-              ),
-              if (isSelf) ...[
-                const SizedBox(height: 12),
-                Text('pubkey (hex)', style: theme.textTheme.labelSmall),
-                SelectableText(
-                  identity?.pubkeyHex ?? pubkey,
-                  style: theme.textTheme.bodySmall,
+              // NIP-05 verified badge (if present).
+              if (meta?.nip05 != null && meta!.nip05!.isNotEmpty)
+                Row(
+                  children: [
+                    Icon(Icons.verified, size: 16, color: theme.colorScheme.primary),
+                    const SizedBox(width: 4),
+                    Text(meta!.nip05!, style: theme.textTheme.bodySmall),
+                  ],
                 ),
+              const SizedBox(height: 8),
+              // nprofile abbreviation (copyable) — replaces npub/hex display.
+              _CopyableNprofile(pubkey: pubkey),
+              if (isSelf) ...[
                 const SizedBox(height: 16),
                 Align(
                   alignment: Alignment.centerLeft,
@@ -598,6 +600,42 @@ class _SearchBar extends StatelessWidget {
           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         ),
         onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+/// Shows the pubkey as a shortened `nprofile1...` abbreviation with a copy
+/// button. Tapping copies the full nprofile to the clipboard.
+class _CopyableNprofile extends StatelessWidget {
+  const _CopyableNprofile({required this.pubkey});
+  final String pubkey;
+
+  @override
+  Widget build(BuildContext context) {
+    final nprofile = hexToNprofile(pubkey);
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTap: () async {
+        await Clipboard.setData(ClipboardData(text: nprofile));
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('已复制 nprofile'), duration: Duration(seconds: 1)),
+          );
+        }
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            shortenEntity(nprofile),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Icon(Icons.copy, size: 14, color: theme.colorScheme.onSurfaceVariant),
+        ],
       ),
     );
   }

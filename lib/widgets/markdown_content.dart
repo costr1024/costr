@@ -25,6 +25,10 @@ import 'network_video.dart';
 const String _bech32Data = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 final RegExp _pubkeyEntityRegex = RegExp('(nprofile1|npub1)[$_bech32Data]{6,}');
 final RegExp _mdImageRegex = RegExp(r'!\[([^\]]*)\]\(([^)\s]+)\)');
+/// Bare media URLs in content (image/video/file extensions) — stripped from
+/// text segments so they don't show as plain text; rendered via imeta extra.
+final RegExp _bareMediaUrl = RegExp(
+    r'https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|pdf|zip|txt|md|mp3|wav|ogg)');
 
 /// Posts with content longer than this many chars collapse to [_kCollapsedMaxHeight]
 /// until expanded.
@@ -77,9 +81,12 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     final children = <Widget>[];
     for (final seg in segments) {
       if (seg is TextSeg) {
+        // Strip bare media URLs from text (they're rendered via imeta extra).
+        final cleaned = seg.text.replaceAll(_bareMediaUrl, '').trim();
+        if (cleaned.isEmpty) continue;
         children.add(
           MarkdownBody(
-            data: seg.text,
+            data: cleaned,
             extensionSet: ExtensionSet.gitHubFlavored,
             sizedImageBuilder: (MarkdownImageConfig _) => const SizedBox.shrink(),
             onTapLink: (String text, String? href, String? title) {
@@ -99,8 +106,12 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       }
     }
 
-    // 3. Append NIP-92 imeta media not already embedded in content.
-    final extra = event.mediaAttachments.where((m) => !event.content.contains(m.url)).toList();
+    // 3. Append NIP-92 imeta media. Only filter out URLs that appear as
+    // markdown images ](url) in the content — bare URLs in content are
+    // stripped from text (above) and need imeta extra to render the image.
+    final extra = event.mediaAttachments
+        .where((m) => !event.content.contains('](${m.url})'))
+        .toList();
     final extraImages = extra.where((m) => m.isImage).map((m) => m.url).toList();
     final extraVideos = extra.where((m) => m.isVideo).toList();
     if (extraImages.isNotEmpty) {
