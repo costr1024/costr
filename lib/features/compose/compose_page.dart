@@ -66,45 +66,53 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     return '有什么新鲜事？';
   }
 
+  /// Append a URL to the editor text (markdown image for images/videos, link
+  /// for files). Called as each upload completes.
+  void _appendToEditor(_Attachment a) {
+    final md = (a.kind == 'image' || a.kind == 'video')
+        ? '![](${a.url})'
+        : '[${a.name}](${a.url})';
+    final cur = _controller.text;
+    _controller.text = cur.isEmpty ? md : '$cur\n$md';
+    _controller.selection = TextSelection.fromPosition(
+        TextPosition(offset: _controller.text.length));
+  }
+
   Future<void> _pickImages() async {
-    if (_hasVideo) {
-      _snack('已添加视频，不能与图片混合');
-      return;
-    }
+    if (_hasVideo) { _snack('已添加视频，不能与图片混合'); return; }
     final identity = ref.read(identityProvider).value;
     if (identity == null) return;
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: true,
-      withData: true,
-    );
+      type: FileType.image, allowMultiple: true, withData: true);
     if (result == null || result.files.isEmpty) return;
+    final remaining = _maxImages - _attachments.where((a) => a.kind == 'image').length;
+    if (remaining <= 0) { _snack('最多 $_maxImages 张图片'); return; }
+    final files = result.files.take(remaining).where((f) {
+      if (f.size > _maxImageBytes) { _snack('图片超过 10MB: ${f.name}'); return false; }
+      return true;
+    }).toList();
+    if (files.isEmpty) return;
     setState(() => _uploading = true);
-    for (final f in result.files) {
-      if (_attachments.where((a) => a.kind == 'image').length >= _maxImages) {
-        _snack('最多 $_maxImages 张图片'); break;
-      }
-      if (f.size > _maxImageBytes) { _snack('图片超过 10MB: ${f.name}'); continue; }
+    // Concurrent upload.
+    final results = await Future.wait(files.map((f) async {
       final bytes = _bytesOf(f);
-      if (bytes == null) continue;
+      if (bytes == null) return null;
       final mime = mimeForExt(f.extension ?? f.name);
       final res = await blossomUpload(identity, bytes, mimetype: mime, note: 'costr image');
-      if (!mounted) return;
-      if (res != null) {
-        setState(() => _attachments.add(_Attachment(url: res.url, sha256: res.sha256, mime: mime, name: f.name, kind: 'image')));
-      } else {
-        _snack('上传失败: ${f.name}');
-      }
+      return res == null ? null : (f, mime, res);
+    }));
+    if (!mounted) return;
+    for (final r in results) {
+      if (r == null) continue;
+      final att = _Attachment(url: r.$3.url, sha256: r.$3.sha256, mime: r.$2, name: r.$1.name, kind: 'image');
+      setState(() { _attachments.add(att); _appendToEditor(att); });
     }
     if (mounted) setState(() => _uploading = false);
   }
 
   Future<void> _pickVideo() async {
-    if (_hasImages) {
-      _snack('已添加图片，不能与视频混合');
-      return;
-    }
-    if (_hasVideo) return; // only one video
+    if (_hasImages) { _snack('已添加图片，不能与视频混合'); return; }
+    if (_hasVideo) return;
     final identity = ref.read(identityProvider).value;
     if (identity == null) return;
     final result = await FilePicker.platform.pickFiles(type: FileType.video, withData: true);
@@ -119,7 +127,8 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     if (!mounted) return;
     setState(() => _uploading = false);
     if (res != null) {
-      setState(() => _attachments.add(_Attachment(url: res.url, sha256: res.sha256, mime: mime, name: f.name, kind: 'video')));
+      final att = _Attachment(url: res.url, sha256: res.sha256, mime: mime, name: f.name, kind: 'video');
+      setState(() { _attachments.add(att); _appendToEditor(att); });
     } else {
       _snack('视频上传失败');
     }
@@ -143,7 +152,8 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     if (!mounted) return;
     setState(() => _uploading = false);
     if (res != null) {
-      setState(() => _attachments.add(_Attachment(url: res.url, sha256: res.sha256, mime: mime, name: f.name, kind: 'file')));
+      final att = _Attachment(url: res.url, sha256: res.sha256, mime: mime, name: f.name, kind: 'file');
+      setState(() { _attachments.add(att); _appendToEditor(att); });
     } else {
       _snack('附件上传失败: ${f.name}');
     }
@@ -160,39 +170,24 @@ class _ComposePageState extends ConsumerState<ComposePage> {
           ['imeta', 'url ${a.url}', 'm ${a.mime}', 'x ${a.sha256}'],
       ];
 
-  /// Build the content with attachment URLs embedded (each image/video as
-  /// `![](url)` on its own line, files as `[name](url)`). Other Nostr clients
-  /// parse the content for these URLs; imeta tags provide extra metadata.
-  String _buildContent(String text) {
-    final parts = <String>[];
-    if (text.isNotEmpty) parts.add(text);
-    for (final a in _attachments) {
-      if (a.kind == 'image' || a.kind == 'video') {
-        parts.add('![](${a.url})');
-      } else {
-        parts.add('[${a.name}](${a.url})');
-      }
-    }
-    return parts.join('\n\n');
-  }
-
   Future<void> _send() async {
     final text = _controller.text.trim();
     final identity = ref.read(identityProvider).value;
     if (identity == null) { _snack('未登录'); return; }
-    if (text.isEmpty && widget.quoteOf == null && _attachments.isEmpty) {
+    if (text.isEmpty && widget.quoteOf == null) {
       _snack('内容不能为空'); return;
     }
     setState(() => _sending = true);
     try {
       final actions = NostrActions(identity);
       final imeta = _imetaTags();
-      final content = _buildContent(text);
+      // Content already has attachment URLs (appended by _appendToEditor on
+      // upload completion) — don't append again.
       final signed = widget.replyTo != null
-          ? actions.reply(widget.replyTo!, content, extraTags: imeta)
+          ? actions.reply(widget.replyTo!, text, extraTags: imeta)
           : widget.quoteOf != null
-              ? actions.quote(widget.quoteOf!, content, extraTags: imeta)
-              : identity.signEvent(kind: 1, content: content, tags: imeta);
+              ? actions.quote(widget.quoteOf!, text, extraTags: imeta)
+              : identity.signEvent(kind: 1, content: text, tags: imeta);
       final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;
       _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}');
