@@ -110,7 +110,17 @@ class _Header extends ConsumerWidget {
             ),
           )
         else
-          Container(height: 8, color: theme.colorScheme.surfaceContainerHighest),
+          Container(
+            height: 150,
+            width: double.infinity,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF6750A4), Color(0xFF7B1FA2), Color(0xFF512DA8)],
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.all(16),
           child: Column(

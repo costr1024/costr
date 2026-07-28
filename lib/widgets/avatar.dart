@@ -23,12 +23,7 @@ class Avatar extends ConsumerWidget {
     final initial = (meta?.bestName ?? '').isNotEmpty
         ? meta!.bestName![0].toUpperCase()
         : '?';
-    final fallback = _InitialCircle(
-      initial: initial,
-      radius: radius,
-      color: Theme.of(context).colorScheme.primaryContainer,
-      fg: Theme.of(context).colorScheme.onPrimaryContainer,
-    );
+    final fallback = _InitialCircle(initial: initial, radius: radius);
 
     if (url == null || url.trim().isEmpty) return fallback;
 
@@ -45,29 +40,35 @@ class Avatar extends ConsumerWidget {
   }
 }
 
+/// Default avatar: a gradient circle with the first letter. Has visual
+/// distinction from the surface (not transparent/white). Also used when
+/// the picture URL is missing or fails to load.
 class _InitialCircle extends StatelessWidget {
-  const _InitialCircle({
-    required this.initial,
-    required this.radius,
-    required this.color,
-    required this.fg,
-  });
+  const _InitialCircle({required this.initial, required this.radius});
   final String initial;
   final double radius;
-  final Color color;
-  final Color fg;
 
   @override
   Widget build(BuildContext context) {
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: color,
-      child: Text(
-        initial,
-        style: TextStyle(
-          color: fg,
-          fontWeight: FontWeight.w600,
-          fontSize: radius,
+    return Container(
+      width: radius * 2,
+      height: radius * 2,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF6750A4), Color(0xFF9C27B0)],
+        ),
+      ),
+      child: Center(
+        child: Text(
+          initial,
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: radius * 0.9,
+          ),
         ),
       ),
     );
