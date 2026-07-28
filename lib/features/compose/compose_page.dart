@@ -160,6 +160,22 @@ class _ComposePageState extends ConsumerState<ComposePage> {
           ['imeta', 'url ${a.url}', 'm ${a.mime}', 'x ${a.sha256}'],
       ];
 
+  /// Build the content with attachment URLs embedded (each image/video as
+  /// `![](url)` on its own line, files as `[name](url)`). Other Nostr clients
+  /// parse the content for these URLs; imeta tags provide extra metadata.
+  String _buildContent(String text) {
+    final parts = <String>[];
+    if (text.isNotEmpty) parts.add(text);
+    for (final a in _attachments) {
+      if (a.kind == 'image' || a.kind == 'video') {
+        parts.add('![](${a.url})');
+      } else {
+        parts.add('[${a.name}](${a.url})');
+      }
+    }
+    return parts.join('\n\n');
+  }
+
   Future<void> _send() async {
     final text = _controller.text.trim();
     final identity = ref.read(identityProvider).value;
@@ -171,11 +187,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     try {
       final actions = NostrActions(identity);
       final imeta = _imetaTags();
+      final content = _buildContent(text);
       final signed = widget.replyTo != null
-          ? actions.reply(widget.replyTo!, text, extraTags: imeta)
+          ? actions.reply(widget.replyTo!, content, extraTags: imeta)
           : widget.quoteOf != null
-              ? actions.quote(widget.quoteOf!, text, extraTags: imeta)
-              : identity.signEvent(kind: 1, content: text, tags: imeta);
+              ? actions.quote(widget.quoteOf!, content, extraTags: imeta)
+              : identity.signEvent(kind: 1, content: content, tags: imeta);
       final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;
       _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}');
