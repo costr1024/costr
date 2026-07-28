@@ -100,8 +100,9 @@ class _Header extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (meta?.banner != null && meta!.banner!.isNotEmpty)
-          AspectRatio(
-            aspectRatio: 3 / 1,
+          SizedBox(
+            height: 150,
+            width: double.infinity,
             child: Image.network(
               meta!.banner!,
               fit: BoxFit.cover,
@@ -155,10 +156,34 @@ class _Header extends ConsumerWidget {
                   ],
                 ),
               ],
-              // Row 4: about (个人简介).
+              // Lightning address (lud16/lud06) — between NIP-05 and about.
+              if ((meta?.lud16 != null && meta!.lud16!.isNotEmpty) ||
+                  (meta?.lud06 != null && meta!.lud06!.isNotEmpty)) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(Icons.bolt, size: 16, color: theme.colorScheme.primary),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        meta?.lud16 ?? meta?.lud06 ?? '',
+                        style: theme.textTheme.bodySmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              // Row 4: about (个人简介, capped to prevent header overflow).
               if (meta?.about != null && meta!.about!.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text(meta!.about!, style: theme.textTheme.bodyMedium),
+                Text(
+                  meta!.about!,
+                  style: theme.textTheme.bodyMedium,
+                  maxLines: 8,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ],
               if (meta?.website != null && meta!.website!.isNotEmpty) ...[
                 const SizedBox(height: 8),

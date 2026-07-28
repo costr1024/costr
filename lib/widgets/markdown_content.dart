@@ -16,6 +16,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:markdown/markdown.dart' hide Text;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app/providers.dart';
 import '../models/event.dart';
@@ -90,10 +91,13 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
             extensionSet: ExtensionSet.gitHubFlavored,
             sizedImageBuilder: (MarkdownImageConfig _) => const SizedBox.shrink(),
             onTapLink: (String text, String? href, String? title) {
-              if (href != null && href.startsWith('nostr:')) {
+              if (href == null) return;
+              if (href.startsWith('nostr:')) {
                 final entity = href.substring('nostr:'.length);
                 final pk = entityToPubkeyHex(entity);
                 if (pk != null) context.push('/u/$pk');
+              } else if (href.startsWith('http')) {
+                launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
               }
             },
             styleSheet: MarkdownStyleSheet.fromTheme(theme),
