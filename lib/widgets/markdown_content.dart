@@ -231,20 +231,30 @@ class _FileChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.insert_drive_file_outlined,
-              size: 18, color: theme.colorScheme.primary),
-          const SizedBox(width: 6),
-          Text(name, style: theme.textTheme.labelSmall),
-        ],
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 240),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.insert_drive_file_outlined,
+                size: 18, color: theme.colorScheme.primary),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                name,
+                style: theme.textTheme.labelSmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

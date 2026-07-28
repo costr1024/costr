@@ -120,6 +120,7 @@ class _Header extends ConsumerWidget {
                 child: Avatar(pubkey: pubkey, radius: 40),
               ),
               const SizedBox(height: 4),
+              // Row 1: nickname + follow button.
               Row(
                 children: [
                   Flexible(
@@ -130,12 +131,31 @@ class _Header extends ConsumerWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  // Always show the follow button (even on own profile) so the
-                  // user can self-follow — their own posts then appear in the
-                  // 关注 feed (which uses the kind-3 p-tags as authors).
                   _FollowButton(pubkey: pubkey),
                 ],
               ),
+              const SizedBox(height: 4),
+              // Row 2: nprofile abbreviation (copyable).
+              _CopyableNprofile(pubkey: pubkey),
+              // Row 3: NIP-05 (wraps if long).
+              if (meta?.nip05 != null && meta!.nip05!.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(Icons.verified, size: 16, color: theme.colorScheme.primary),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        meta!.nip05!,
+                        style: theme.textTheme.bodySmall,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              // Row 4: about (个人简介).
               if (meta?.about != null && meta!.about!.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(meta!.about!, style: theme.textTheme.bodyMedium),
@@ -144,19 +164,6 @@ class _Header extends ConsumerWidget {
                 const SizedBox(height: 8),
                 Text(meta!.website!, style: theme.textTheme.bodySmall),
               ],
-              const SizedBox(height: 12),
-              // NIP-05 verified badge (if present).
-              if (meta?.nip05 != null && meta!.nip05!.isNotEmpty)
-                Row(
-                  children: [
-                    Icon(Icons.verified, size: 16, color: theme.colorScheme.primary),
-                    const SizedBox(width: 4),
-                    Text(meta!.nip05!, style: theme.textTheme.bodySmall),
-                  ],
-                ),
-              const SizedBox(height: 8),
-              // nprofile abbreviation (copyable) — replaces npub/hex display.
-              _CopyableNprofile(pubkey: pubkey),
               if (isSelf) ...[
                 const SizedBox(height: 16),
                 Align(
