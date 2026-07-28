@@ -445,6 +445,48 @@ final userFollowersProvider =
 
 // --- Search (NIP-50, via nostr.wine) --------------------------------------
 
+/// The logged-in user's existing follow-group names (NIP-51 kind-30000 `d`
+/// tags). Used by the follow-group picker to show existing + allow new.
+final userGroupNamesProvider = FutureProvider.family<List<String>, String>(
+    (ref, pubkey) async {
+  final pool = ref.watch(relayPoolProvider);
+  final collected = <String>[];
+  final seen = <String>{};
+  final completer = Completer<void>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.events.listen((e) {
+    if (e.kind == 30000 && e.pubkey == pubkey) {
+      for (final t in e.tags) {
+        if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
+          final name = t[1] as String;
+          if (name.isNotEmpty && seen.add(name)) collected.add(name);
+        }
+      }
+    }
+  });
+  final subId = nextSubId('groups');
+  final connectedCount =
+      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  var eoses = 0;
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (eoses >= connectedCount && !completer.isCompleted) completer.complete();
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{'authors': [pubkey], 'kinds': [30000]},
+    closeOnEose: true,
+  );
+  ref.onDispose(() {
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  await completer.future.timeout(const Duration(seconds: 10), onTimeout: () {});
+  return collected;
+});
+
 /// A user found by global search (pubkey + parsed kind-0 metadata).
 class UserResult {
   const UserResult(this.pubkey, this.metadata);

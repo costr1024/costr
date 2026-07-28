@@ -11,6 +11,7 @@ import '../../app/providers.dart';
 import '../../models/event.dart';
 import '../../models/metadata.dart';
 import '../../nostr/identity.dart';
+import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 import 'user_post_item.dart';
 
@@ -210,7 +211,12 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
   }
 
   Future<void> _follow() async {
-    // Show a category picker (NIP-51 kind-30000 follow sets).
+    // Fetch the logged-in user's existing custom group names.
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return;
+    final groups = ref.read(userGroupNamesProvider(identity.pubkeyHex)).value ?? const <String>[];
+
+    // Show a category picker: 默认分组 + existing custom groups + 新建分组.
     final category = await showModalBottomSheet<String>(
       context: context,
       builder: (BuildContext ctx) => SafeArea(
@@ -221,17 +227,28 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
               padding: const EdgeInsets.all(16),
               child: Text('选择关注分组', style: Theme.of(ctx).textTheme.titleSmall),
             ),
-            for (final c in const [
-              ['无分组', ''],
-              ['亲友', '亲友'],
-              ['新闻资讯', '新闻资讯'],
-              ['网友', '网友'],
-            ])
+            ListTile(
+              leading: const Icon(Icons.label_off_outlined, size: 20),
+              title: const Text('默认分组'),
+              onTap: () => Navigator.pop(ctx, ''),
+            ),
+            for (final g in groups)
               ListTile(
                 leading: const Icon(Icons.label_outline, size: 20),
-                title: Text(c[0]),
-                onTap: () => Navigator.pop(ctx, c[1]),
+                title: Text(g),
+                onTap: () => Navigator.pop(ctx, g),
               ),
+            ListTile(
+              leading: const Icon(Icons.add, size: 20),
+              title: const Text('新建分组…'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final name = await _showNewGroupDialog(ctx);
+                if (name != null && name.isNotEmpty) {
+                  if (ctx.mounted) Navigator.pop(ctx, name);
+                }
+              },
+            ),
           ],
         ),
       ),
@@ -245,6 +262,28 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
       SnackBar(content: Text(ok.ok ? '已关注' : '关注失败：${ok.reason}')),
     );
     if (mounted) setState(() => _busy = false);
+  }
+
+  Future<String?> _showNewGroupDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: const Text('新建分组'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '分组名称'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -418,10 +457,29 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (Object e, _) => Center(child: Text('加载失败：$e')),
             data: (List<String> follows) {
+              // Watch metadata per pubkey → filter by name/nip05/about/pubkey.
+              final metaCache = <String, Metadata?>{};
+              for (final pk in follows) {
+                metaCache[pk] = ref.watch(metadataProvider(pk)).value;
+              }
               var list = follows;
               if (_query.isNotEmpty) {
                 final q = _query.toLowerCase();
-                list = follows.where((pk) => pk.toLowerCase().contains(q)).toList();
+                String? npubHex;
+                if (q.startsWith('npub1')) {
+                  try { npubHex = npubToHex(_query).toLowerCase(); } catch (_) {}
+                }
+                list = follows.where((pk) {
+                  if (pk.toLowerCase().contains(q)) return true;
+                  if (npubHex != null && pk.toLowerCase().contains(npubHex)) return true;
+                  final m = metaCache[pk];
+                  if (m == null) return false;
+                  if ((m.name ?? '').toLowerCase().contains(q)) return true;
+                  if ((m.displayName ?? '').toLowerCase().contains(q)) return true;
+                  if ((m.nip05 ?? '').toLowerCase().contains(q)) return true;
+                  if ((m.about ?? '').toLowerCase().contains(q)) return true;
+                  return false;
+                }).toList();
               }
               if (list.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无关注' : '无匹配'));
               return ListView.builder(
@@ -479,10 +537,28 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (Object e, _) => Center(child: Text('加载失败：$e')),
             data: (List<String> followers) {
+              final metaCache = <String, Metadata?>{};
+              for (final pk in followers) {
+                metaCache[pk] = ref.watch(metadataProvider(pk)).value;
+              }
               var list = followers;
               if (_query.isNotEmpty) {
                 final q = _query.toLowerCase();
-                list = followers.where((pk) => pk.toLowerCase().contains(q)).toList();
+                String? npubHex;
+                if (q.startsWith('npub1')) {
+                  try { npubHex = npubToHex(_query).toLowerCase(); } catch (_) {}
+                }
+                list = followers.where((pk) {
+                  if (pk.toLowerCase().contains(q)) return true;
+                  if (npubHex != null && pk.toLowerCase().contains(npubHex)) return true;
+                  final m = metaCache[pk];
+                  if (m == null) return false;
+                  if ((m.name ?? '').toLowerCase().contains(q)) return true;
+                  if ((m.displayName ?? '').toLowerCase().contains(q)) return true;
+                  if ((m.nip05 ?? '').toLowerCase().contains(q)) return true;
+                  if ((m.about ?? '').toLowerCase().contains(q)) return true;
+                  return false;
+                }).toList();
               }
               if (list.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无关注者' : '无匹配'));
               return ListView.builder(
