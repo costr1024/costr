@@ -5,8 +5,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:markdown/markdown.dart' hide Text;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/providers.dart';
 import '../../models/event.dart';
@@ -185,15 +188,12 @@ class _Header extends ConsumerWidget {
                   ],
                 ),
               ],
-              // Row 4: about (个人简介, capped to prevent header overflow).
+              // Row 4: about (个人简介, rendered as linkified markdown with
+              // expand/collapse. #hashtag → tappable to tag feed; npub/nprofile
+              // → resolved username + tappable to profile; http → browser.)
               if (meta?.about != null && meta!.about!.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text(
-                  meta!.about!,
-                  style: theme.textTheme.bodyMedium,
-                  maxLines: 8,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                _AboutText(text: meta!.about!),
               ],
               if (meta?.website != null && meta!.website!.isNotEmpty) ...[
                 const SizedBox(height: 8),
@@ -708,6 +708,118 @@ class _FollowRow extends ConsumerWidget {
       ),
       trailing: _FollowButton(pubkey: pubkey, followsMe: followsMe),
       onTap: onTap,
+    );
+  }
+}
+
+/// Renders the profile about text as linkified markdown with expand/collapse.
+/// - npub1/nprofile1 mentions → resolved username, tappable to profile.
+/// - #hashtag → tappable, sets tag filter + goes to feed.
+/// - http(s) links → opens in default browser.
+/// - Long text (> 300 chars) collapses with 展开/收起.
+class _AboutText extends ConsumerStatefulWidget {
+  const _AboutText({required this.text});
+  final String text;
+
+  @override
+  ConsumerState<_AboutText> createState() => _AboutTextState();
+}
+
+class _AboutTextState extends ConsumerState<_AboutText> {
+  bool _expanded = false;
+  static const int _collapseThreshold = 300;
+  static const double _collapsedHeight = 200;
+
+  static final RegExp _entityRegex =
+      RegExp(r'(?:nostr:)?(nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}');
+  static final RegExp _hashtagRegex = RegExp(r'(?<![\w/:.])#([\p{L}\p{N}_]+)', unicode: true);
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. Linkify npub/nprofile mentions.
+    final pubkeysByEntity = <String, String?>{};
+    for (final m in _entityRegex.allMatches(widget.text)) {
+      final entity = m.group(0)!;
+      pubkeysByEntity.putIfAbsent(entity, () => entityToPubkeyHex(entity));
+    }
+    final nameByPubkey = <String, String>{};
+    for (final pk in pubkeysByEntity.values) {
+      if (pk == null) continue;
+      final meta = ref.watch(metadataProvider(pk)).value;
+      final name = meta?.bestName;
+      if (name != null && name.isNotEmpty) nameByPubkey[pk] = name;
+    }
+    var processed = widget.text.replaceAllMapped(_entityRegex, (Match m) {
+      final entity = m.group(0)!;
+      final pk = pubkeysByEntity[entity];
+      final label = (pk != null ? nameByPubkey[pk] : null) ?? shortenEntity(entity);
+      return '[@$label](nostr:$entity)';
+    });
+    // 2. Linkify #hashtag → [#tag](costr:tag:tag)
+    processed = processed.replaceAllMapped(_hashtagRegex, (Match m) {
+      final tag = m.group(1)!.toLowerCase();
+      return '[#${m.group(1)}](costr:tag:$tag)';
+    });
+
+    final theme = Theme.of(context);
+    final isLong = widget.text.length > _collapseThreshold;
+
+    Widget body = MarkdownBody(
+      data: processed,
+      extensionSet: ExtensionSet.gitHubFlavored,
+      onTapLink: (String text, String? href, String? title) {
+        if (href == null) return;
+        if (href.startsWith('nostr:')) {
+          final entity = href.substring('nostr:'.length);
+          final pk = entityToPubkeyHex(entity);
+          if (pk != null) context.push('/u/$pk');
+        } else if (href.startsWith('costr:tag:')) {
+          final tag = href.substring('costr:tag:'.length);
+          ref.read(tagFilterProvider.notifier).set(tag);
+          context.go('/feed');
+        } else if (href.startsWith('http')) {
+          launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
+        }
+      },
+      styleSheet: MarkdownStyleSheet.fromTheme(theme),
+    );
+
+    if (!isLong || _expanded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          body,
+          if (isLong) Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(onPressed: () => setState(() => _expanded = false), child: const Text('收起')),
+          ),
+        ],
+      );
+    }
+    return Stack(
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: _collapsedHeight),
+          child: ClipRect(child: SingleChildScrollView(
+            physics: const NeverScrollableScrollPhysics(),
+            child: body,
+          )),
+        ),
+        Positioned(
+          left: 0, right: 0, bottom: 0,
+          child: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(top: 18),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                colors: [theme.colorScheme.surface.withValues(alpha: 0), theme.colorScheme.surface],
+              ),
+            ),
+            child: TextButton(onPressed: () => setState(() => _expanded = true), child: const Text('展开')),
+          ),
+        ),
+      ],
     );
   }
 }
