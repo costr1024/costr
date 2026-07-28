@@ -1,0 +1,124 @@
+/// Blossom media upload (BUD-02 + BUD-11).
+///
+/// Upload flow:
+/// 1. SHA-256 the file bytes.
+/// 2. Sign a kind-24242 auth event: tags ["t","upload"], ["x",sha256],
+///    ["expiration",ts], ["size",bytes], ["m",mimetype]; content = human note.
+/// 3. PUT /upload to a Blossom server with raw bytes + header
+///    `Authorization: Nostr <base64url-no-padding of JSON event>`.
+/// 4. Response JSON: {url, sha256, size, type, uploaded}.
+///
+/// Tries servers in order; on failure (network error / non-2xx) retries the next.
+library;
+
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart' as crypto;
+import 'package:http/http.dart' as http;
+
+import '../models/event.dart';
+import '../nostr/identity.dart';
+
+/// Default Blossom servers (user-specified), tried in order.
+const List<String> blossomServers = <String>[
+  'https://blossom.ditto.pub/',
+  'https://media.libernet.app/',
+];
+
+class BlossomResult {
+  const BlossomResult({required this.url, required this.sha256});
+  final String url;
+  final String sha256;
+  @override
+  String toString() => 'BlossomResult(url: $url, sha256: $sha256)';
+}
+
+/// MIME types for the file types we support (by extension). Anything unknown
+/// falls back to application/octet-stream; the server rejects if unsupported.
+String mimeForExt(String? ext) {
+  if (ext == null) return 'application/octet-stream';
+  final e = ext.toLowerCase().replaceAll('.', '');
+  const map = <String, String>{
+    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+    'gif': 'image/gif', 'webp': 'image/webp', 'bmp': 'image/bmp',
+    'mp4': 'video/mp4', 'webm': 'video/webm', 'mov': 'video/quicktime',
+    'm4v': 'video/x-m4v', 'mkv': 'video/x-matroska',
+    'pdf': 'application/pdf', 'zip': 'application/zip',
+    'txt': 'text/plain', 'md': 'text/markdown',
+    'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'ogg': 'audio/ogg',
+  };
+  return map[e] ?? 'application/octet-stream';
+}
+
+bool isImageMime(String m) => m.startsWith('image/');
+bool isVideoMime(String m) => m.startsWith('video/');
+
+/// Upload [bytes] as [mimetype]. Tries [blossomServers] in order, retrying on
+/// failure. Returns the public URL (with a file extension per BUD-01) or null
+/// if all servers fail.
+Future<BlossomResult?> blossomUpload(
+  Identity identity,
+  List<int> bytes, {
+  required String mimetype,
+  String note = 'costr upload',
+}) async {
+  final sha = crypto.sha256.convert(bytes).toString();
+  final auth = _buildAuthEvent(identity, sha, bytes.length, mimetype, note);
+  // BUD-11 says base64url without padding, but libernet (Python b64) rejects
+  // no-pad with "Incorrect padding"; ditto accepts both. Padded works for all.
+  final authHeader =
+      'Nostr ${base64Url.encode(utf8.encode(jsonEncode(auth.toWireObject())))}';
+
+  for (final server in blossomServers) {
+    final url = '${server.replaceAll(RegExp(r'/+$'), '')}/upload';
+    try {
+      final res = await http
+          .put(
+            Uri.parse(url),
+            headers: <String, String>{
+              'Authorization': authHeader,
+              'Content-Type': mimetype,
+              'Content-Length': '${bytes.length}',
+              'X-SHA-256': sha,
+            },
+            body: bytes,
+          )
+          .timeout(const Duration(seconds: 90));
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        final body = jsonDecode(res.body);
+        if (body is Map && body['url'] is String) {
+          return BlossomResult(
+            url: body['url'] as String,
+            sha256: (body['sha256'] as String?) ?? sha,
+          );
+        }
+      }
+      // Non-success: try the next server.
+    } catch (_) {
+      // Network / decode error: try the next server.
+    }
+  }
+  return null;
+}
+
+Event _buildAuthEvent(
+  Identity id,
+  String sha256Hex,
+  int size,
+  String mimetype,
+  String note,
+) {
+  final exp =
+      (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600; // +1h
+  return id.signEvent(
+    kind: 24242,
+    content: note,
+    tags: <List<String>>[
+      <String>['t', 'upload'],
+      <String>['x', sha256Hex],
+      <String>['expiration', '$exp'],
+      <String>['size', '$size'],
+      <String>['m', mimetype],
+    ],
+  );
+}

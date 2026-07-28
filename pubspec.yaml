@@ -61,6 +61,10 @@ dependencies:
   video_player: ^2.13.0
   # NIP-44 crypto primitives (secp256k1 ECDH, ChaCha20, HKDF) for private bookmarks.
   pointycastle: ^4.0.0
+  # HTTP client for Blossom media upload.
+  http: ^1.4.0
+  # Native file/image picker for attaching media.
+  file_picker: ^10.0.0
 
 dev_dependencies:
   flutter_test:

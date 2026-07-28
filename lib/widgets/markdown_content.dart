@@ -111,6 +111,18 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       children.add(const SizedBox(height: 8));
       children.add(NetworkVideo(url: v.url, width: v.width, height: v.height));
     }
+    final extraFiles =
+        extra.where((m) => !m.isImage && !m.isVideo).toList();
+    if (extraFiles.isNotEmpty) {
+      children.add(const SizedBox(height: 8));
+      children.add(Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          for (final f in extraFiles) _FileChip(name: _fileName(f.url)),
+        ],
+      ));
+    }
 
     final isLong = event.content.length > _kCollapseThreshold;
     return _CollapseBox(
@@ -194,6 +206,38 @@ class _CollapseBox extends StatelessWidget {
 }
 
 // --- segmentation ----------------------------------------------------------
+
+String _fileName(String url) {
+  final path = Uri.tryParse(url)?.path ?? url;
+  final slash = path.lastIndexOf('/');
+  final name = slash >= 0 ? path.substring(slash + 1) : path;
+  return name.isEmpty ? url : name;
+}
+
+class _FileChip extends StatelessWidget {
+  const _FileChip({required this.name});
+  final String name;
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.insert_drive_file_outlined,
+              size: 18, color: theme.colorScheme.primary),
+          const SizedBox(width: 6),
+          Text(name, style: theme.textTheme.labelSmall),
+        ],
+      ),
+    );
+  }
+}
 
 /// Tokenize content into text / contiguous image-group / single-video
 /// segments, so consecutive images render as a 九宫格 grid and text-broken

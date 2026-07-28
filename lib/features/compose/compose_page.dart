@@ -1,7 +1,15 @@
 /// Compose page — write a kind-1 note, sign it, publish. Supports reply
-/// (replyTo) and quote (quoteOf) contexts.
+/// (replyTo), quote (quoteOf), and media/file attachments via Blossom.
+///
+/// Attachments: up to 9 images OR 1 video (not mixed), plus optional files
+/// (pdf/zip/etc per Blossom server's supported types). Limits: image 10MB,
+/// video 100MB, file 100MB. Uploaded to Blossom servers with fallback retry;
+/// each becomes a NIP-92 imeta tag in the signed event.
 library;
 
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +17,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/providers.dart';
 import '../../models/event.dart';
 import '../../nostr/actions.dart';
+import '../../services/blossom_upload.dart';
 
 class ComposePage extends ConsumerStatefulWidget {
   const ComposePage({super.key, this.replyTo, this.quoteOf});
@@ -20,18 +29,30 @@ class ComposePage extends ConsumerStatefulWidget {
   ConsumerState<ComposePage> createState() => _ComposePageState();
 }
 
+class _Attachment {
+  _Attachment({required this.url, required this.sha256, required this.mime, required this.name, required this.kind});
+  final String url;
+  final String sha256;
+  final String mime;
+  final String name;
+  final String kind; // 'image' | 'video' | 'file'
+}
+
 class _ComposePageState extends ConsumerState<ComposePage> {
   final TextEditingController _controller = TextEditingController();
+  final List<_Attachment> _attachments = [];
+  bool _uploading = false;
   bool _sending = false;
-  static const int _softLimit = 280;
 
-  @override
-  void initState() {
-    super.initState();
-    if (widget.quoteOf != null) {
-      // Quote: pre-fill nothing; the quote ref is appended on send.
-    }
-  }
+  static const int _softLimit = 280;
+  static const int _maxImages = 9;
+  static const int _maxFiles = 4;
+  static const int _maxImageBytes = 10 * 1024 * 1024;
+  static const int _maxVideoBytes = 100 * 1024 * 1024;
+  static const int _maxFileBytes = 100 * 1024 * 1024;
+
+  bool get _hasImages => _attachments.any((a) => a.kind == 'image');
+  bool get _hasVideo => _attachments.any((a) => a.kind == 'video');
 
   @override
   void dispose() {
@@ -45,23 +66,116 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     return '有什么新鲜事？';
   }
 
+  Future<void> _pickImages() async {
+    if (_hasVideo) {
+      _snack('已添加视频，不能与图片混合');
+      return;
+    }
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: true,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    setState(() => _uploading = true);
+    for (final f in result.files) {
+      if (_attachments.where((a) => a.kind == 'image').length >= _maxImages) {
+        _snack('最多 $_maxImages 张图片'); break;
+      }
+      if (f.size > _maxImageBytes) { _snack('图片超过 10MB: ${f.name}'); continue; }
+      final bytes = _bytesOf(f);
+      if (bytes == null) continue;
+      final mime = mimeForExt(f.extension);
+      final res = await blossomUpload(identity, bytes, mimetype: mime, note: 'costr image');
+      if (!mounted) return;
+      if (res != null) {
+        setState(() => _attachments.add(_Attachment(url: res.url, sha256: res.sha256, mime: mime, name: f.name, kind: 'image')));
+      } else {
+        _snack('上传失败: ${f.name}');
+      }
+    }
+    if (mounted) setState(() => _uploading = false);
+  }
+
+  Future<void> _pickVideo() async {
+    if (_hasImages) {
+      _snack('已添加图片，不能与视频混合');
+      return;
+    }
+    if (_hasVideo) return; // only one video
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return;
+    final result = await FilePicker.platform.pickFiles(type: FileType.video, withData: true);
+    if (result == null || result.files.isEmpty) return;
+    final f = result.files.single;
+    if (f.size > _maxVideoBytes) { _snack('视频超过 100MB'); return; }
+    final bytes = _bytesOf(f);
+    if (bytes == null) return;
+    final mime = mimeForExt(f.extension);
+    setState(() => _uploading = true);
+    final res = await blossomUpload(identity, bytes, mimetype: mime, note: 'costr video');
+    if (!mounted) return;
+    setState(() => _uploading = false);
+    if (res != null) {
+      setState(() => _attachments.add(_Attachment(url: res.url, sha256: res.sha256, mime: mime, name: f.name, kind: 'video')));
+    } else {
+      _snack('视频上传失败');
+    }
+  }
+
+  Future<void> _pickFile() async {
+    if (_attachments.where((a) => a.kind == 'file').length >= _maxFiles) {
+      _snack('最多 $_maxFiles 个附件'); return;
+    }
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return;
+    final result = await FilePicker.platform.pickFiles(type: FileType.any, withData: true);
+    if (result == null || result.files.isEmpty) return;
+    final f = result.files.single;
+    if (f.size > _maxFileBytes) { _snack('附件超过 100MB'); return; }
+    final bytes = _bytesOf(f);
+    if (bytes == null) return;
+    final mime = mimeForExt(f.extension);
+    setState(() => _uploading = true);
+    final res = await blossomUpload(identity, bytes, mimetype: mime, note: 'costr file ${f.name}');
+    if (!mounted) return;
+    setState(() => _uploading = false);
+    if (res != null) {
+      setState(() => _attachments.add(_Attachment(url: res.url, sha256: res.sha256, mime: mime, name: f.name, kind: 'file')));
+    } else {
+      _snack('附件上传失败: ${f.name}');
+    }
+  }
+
+  List<int>? _bytesOf(PlatformFile f) {
+    if (f.bytes != null) return f.bytes;
+    if (f.path != null) return File(f.path!).readAsBytesSync();
+    return null;
+  }
+
+  List<List<String>> _imetaTags() => [
+        for (final a in _attachments)
+          ['imeta', 'url ${a.url}', 'm ${a.mime}', 'x ${a.sha256}'],
+      ];
+
   Future<void> _send() async {
     final text = _controller.text.trim();
     final identity = ref.read(identityProvider).value;
-    if (identity == null) {
-      _snack('未登录'); return;
-    }
-    if (text.isEmpty && widget.quoteOf == null) {
+    if (identity == null) { _snack('未登录'); return; }
+    if (text.isEmpty && widget.quoteOf == null && _attachments.isEmpty) {
       _snack('内容不能为空'); return;
     }
     setState(() => _sending = true);
     try {
       final actions = NostrActions(identity);
+      final imeta = _imetaTags();
       final signed = widget.replyTo != null
-          ? actions.reply(widget.replyTo!, text)
+          ? actions.reply(widget.replyTo!, text, extraTags: imeta)
           : widget.quoteOf != null
-              ? actions.quote(widget.quoteOf!, text)
-              : identity.signEvent(kind: 1, content: text, tags: const []);
+              ? actions.quote(widget.quoteOf!, text, extraTags: imeta)
+              : identity.signEvent(kind: 1, content: text, tags: imeta);
       final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;
       _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}');
@@ -87,14 +201,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       appBar: AppBar(
         title: Text(widget.replyTo != null
             ? '回复'
-            : widget.quoteOf != null
-                ? '引用'
-                : '发帖'),
+            : widget.quoteOf != null ? '引用' : '发帖'),
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: TextButton(
-              onPressed: _sending ? null : _send,
+              onPressed: (_sending || _uploading) ? null : _send,
               child: Text(_sending ? '发送中…' : '发送'),
             ),
           ),
@@ -115,21 +227,93 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                 onChanged: (_) => setState(() {}),
               ),
             ),
+            if (_attachments.isNotEmpty) _AttachmentGrid(
+              attachments: _attachments,
+              onRemove: (a) => setState(() => _attachments.remove(a)),
+            ),
+            if (_uploading) const LinearProgressIndicator(),
+            const SizedBox(height: 8),
             Row(
               children: [
-                Text('仅文本（附图后续支持）', style: theme.textTheme.labelSmall),
+                _AttachBtn(icon: Icons.image_outlined, label: '图片', onPressed: _hasVideo ? null : _pickImages),
+                _AttachBtn(icon: Icons.movie_outlined, label: '视频', onPressed: _hasImages ? null : _pickVideo),
+                _AttachBtn(icon: Icons.attach_file, label: '文件', onPressed: _pickFile),
                 const Spacer(),
-                Text(
-                  '$count',
-                  style: TextStyle(
-                    color: over ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
+                Text('$count', style: TextStyle(color: over ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant)),
               ],
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AttachBtn extends StatelessWidget {
+  const _AttachBtn({required this.icon, required this.label, required this.onPressed});
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  @override
+  Widget build(BuildContext context) => TextButton.icon(
+        icon: Icon(icon, size: 20),
+        label: Text(label, style: const TextStyle(fontSize: 13)),
+        onPressed: onPressed,
+        style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6)),
+      );
+}
+
+class _AttachmentGrid extends StatelessWidget {
+  const _AttachmentGrid({required this.attachments, required this.onRemove});
+  final List<_Attachment> attachments;
+  final void Function(_Attachment) onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final a in attachments)
+            Stack(
+              children: [
+                _attachThumb(context, a),
+                Positioned(
+                  right: -4, top: -4,
+                  child: IconButton(
+                    icon: const Icon(Icons.cancel, size: 20),
+                    onPressed: () => onRemove(a),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _attachThumb(BuildContext context, _Attachment a) {
+    if (a.kind == 'image') {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(a.url, width: 80, height: 80, fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => Container(width: 80, height: 80, color: Colors.grey)),
+      );
+    }
+    return Container(
+      width: 120, height: 56,
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(children: [
+        Icon(a.kind == 'video' ? Icons.movie : Icons.insert_drive_file_outlined, size: 20),
+        const SizedBox(width: 6),
+        Expanded(child: Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
+      ]),
     );
   }
 }
@@ -155,12 +339,7 @@ class _ContextCard extends StatelessWidget {
         children: [
           Text(label, style: theme.textTheme.labelSmall),
           const SizedBox(height: 4),
-          Text(
-            event.content,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall,
-          ),
+          Text(event.content, maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
         ],
       ),
     );

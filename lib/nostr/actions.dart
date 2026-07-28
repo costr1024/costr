@@ -16,13 +16,15 @@ class NostrActions {
 
   /// Reply to [parent] (NIP-10). Includes a root marker (the thread root,
   /// computed from the parent's tags) and a reply marker (the parent), plus a
-  /// `p` tag for the parent's author.
-  Event reply(Event parent, String content) {
+  /// `p` tag for the parent's author. [extraTags] (e.g. imeta for attachments)
+  /// are appended.
+  Event reply(Event parent, String content, {List<List<String>> extraTags = const []}) {
     final rootId = parent.rootEventId;
     final tags = <List<String>>[
       ['e', rootId, '', 'root'],
       ['e', parent.id, '', 'reply'],
       ['p', parent.pubkey, ''],
+      ...extraTags,
     ];
     return id.signEvent(kind: 1, content: content, tags: tags);
   }
@@ -63,12 +65,14 @@ class NostrActions {
 
   /// Quote (kind-1 referencing [quoted]). The user's [content] is followed by a
   /// `nostr:note1…` reference; an `e` mention tag + `p` tag reference the quote.
-  Event quote(Event quoted, String content) {
+  /// [extraTags] (e.g. imeta) are appended.
+  Event quote(Event quoted, String content, {List<List<String>> extraTags = const []}) {
     final ref = 'nostr:${hexToNote(quoted.id)}';
     final full = content.isEmpty ? ref : '$content\n\n$ref';
     final tags = <List<String>>[
       ['e', quoted.id, '', 'mention'],
       ['p', quoted.pubkey, ''],
+      ...extraTags,
     ];
     return id.signEvent(kind: 1, content: full, tags: tags);
   }
