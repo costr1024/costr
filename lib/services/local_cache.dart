@@ -7,6 +7,7 @@ import 'package:drift/native.dart';
 
 part 'local_cache.g.dart';
 
+@DataClassName('EventRow')
 class Events extends Table {
   TextColumn get id => text()();
   TextColumn get pubkey => text()();
@@ -174,7 +175,7 @@ class LocalCache extends _$LocalCache {
 
   // --- Read ---
 
-  Future<List<Event>> queryFeed({int limit = 200}) {
+  Future<List<EventRow>> queryFeed({int limit = 200}) {
     return (select(events)
       ..where((e) => e.kind.equals(1))
       ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
@@ -182,7 +183,7 @@ class LocalCache extends _$LocalCache {
     ).get();
   }
 
-  Future<List<Event>> queryUserPosts(String pubkey, {int limit = 100}) {
+  Future<List<EventRow>> queryUserPosts(String pubkey, {int limit = 100}) {
     return (select(events)
       ..where((e) => e.pubkey.equals(pubkey) & e.kind.equals(1))
       ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
@@ -198,12 +199,12 @@ class LocalCache extends _$LocalCache {
     return rows.isEmpty ? null : rows.first;
   }
 
-  Future<List<Event>> queryReactions(String eventId) async {
+  Future<List<EventRow>> queryReactions(String eventId) async {
     final results = await customSelect(
       'SELECT e.* FROM events e JOIN event_tags t ON e.id = t.event_id WHERE e.kind = 7 AND t.name = ? AND t.value = ?',
       variables: [Variable('e'), Variable(eventId)],
     ).get();
-    return results.map((r) => Event(
+    return results.map((r) => EventRow(
       id: r.read<String>('id'),
       pubkey: r.read<String>('pubkey'),
       kind: r.read<int>('kind'),
@@ -216,18 +217,18 @@ class LocalCache extends _$LocalCache {
     )).toList();
   }
 
-  Future<Event?> queryEventById(String id) async {
+  Future<EventRow?> queryEventById(String id) async {
     final q = select(events)..where((e) => e.id.equals(id))..limit(1);
     final rows = await q.get();
     return rows.isEmpty ? null : rows.first;
   }
 
-  Future<List<Event>> queryReplies(String eventId) async {
+  Future<List<EventRow>> queryReplies(String eventId) async {
     final results = await customSelect(
       'SELECT e.* FROM events e JOIN event_tags t ON e.id = t.event_id WHERE e.kind = 1 AND t.name = ? AND t.value = ? ORDER BY e.created_at DESC',
       variables: [Variable('e'), Variable(eventId)],
     ).get();
-    return results.map((r) => Event(
+    return results.map((r) => EventRow(
       id: r.read<String>('id'),
       pubkey: r.read<String>('pubkey'),
       kind: r.read<int>('kind'),
@@ -240,12 +241,12 @@ class LocalCache extends _$LocalCache {
     )).toList();
   }
 
-  Future<List<Event>> searchEvents(String query, {int limit = 100}) async {
+  Future<List<EventRow>> searchEvents(String query, {int limit = 100}) async {
     final results = await customSelect(
       'SELECT e.* FROM events e JOIN events_fts f ON e.rowid = f.rowid WHERE e.kind = 1 AND events_fts MATCH ? ORDER BY e.created_at DESC LIMIT ?',
       variables: [Variable(query), Variable(limit)],
     ).get();
-    return results.map((r) => Event(
+    return results.map((r) => EventRow(
       id: r.read<String>('id'),
       pubkey: r.read<String>('pubkey'),
       kind: r.read<int>('kind'),
@@ -256,6 +257,20 @@ class LocalCache extends _$LocalCache {
       tagsJson: r.read<String>('tags_json'),
       receivedAt: r.read<int>('received_at'),
     )).toList();
+  }
+
+  Future<List<ReplaceableEvent>> queryAllMetadata() {
+    return (select(replaceableEvents)
+      ..where((e) => e.kind.equals(0))
+    ).get();
+  }
+
+  Future<List<EventRow>> queryRecentReactions({int limit = 500}) {
+    return (select(events)
+      ..where((e) => e.kind.equals(7))
+      ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
+      ..limit(limit)
+    ).get();
   }
 
   Future<ReplaceableEvent?> queryContactList(String pubkey) async {

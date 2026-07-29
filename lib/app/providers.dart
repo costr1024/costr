@@ -19,8 +19,11 @@ import '../nostr/event_store.dart';
 import '../nostr/identity.dart';
 import '../nostr/relay_client.dart';
 import '../nostr/relay_pool.dart';
+import '../services/local_cache.dart' as cache;
 import '../services/secure_storage_service.dart';
 import '../utils/language.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 
 /// Default relays. bostr requires NIP-42 auth to write (read-only for us);
@@ -35,6 +38,16 @@ const List<String> defaultRelays = <String>[
   'wss://relay.nostr.net/',
   'wss://relay.0xchat.com/',
 ];
+
+// --- Local cache (drift/SQLite) — provider ---
+
+final localCacheProvider = FutureProvider<cache.LocalCache>((ref) async {
+  final dir = await getApplicationDocumentsDirectory();
+  final dbPath = p.join(dir.path, 'costr.db');
+  final db = cache.LocalCache.open(dbPath);
+  ref.onDispose(db.close);
+  return db;
+});
 
 // Monotonic subId counter, namespaced for relay-log readability.
 int _seq = 0;
@@ -113,12 +126,16 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   StreamSubscription<Event>? _sub;
   Timer? _flush;
   bool _dirty = false;
+  cache.LocalCache? _cache;
 
   @override
   List<Event> build() {
+    // Hydrate from SQLite (async — fills store as data arrives).
+    _hydrate();
     final pool = ref.watch(relayPoolProvider);
     _sub = pool.events.listen((e) {
       if ((e.kind == 0 || e.isTextNote || e.kind == 7) && _store.add(e)) {
+        _persist(e);
         _scheduleFlush();
       }
     });
@@ -127,6 +144,90 @@ class EventStoreNotifier extends Notifier<List<Event>> {
       _flush?.cancel();
     });
     return _store.events;
+  }
+
+  /// Hydrate from SQLite on cold start — fills the in-memory store before
+  /// the first relay EOSE, so the UI shows cached content instantly.
+  Future<void> _hydrate() async {
+    _cache = ref.read(localCacheProvider).value;
+    if (_cache == null) {
+      ref.listen(localCacheProvider, (_, next) {
+        if (next.hasValue && _cache == null) {
+          _cache = next.value;
+          _doHydrate();
+        }
+      });
+      return;
+    }
+    await _doHydrate();
+  }
+
+  Future<void> _doHydrate() async {
+    final db = _cache;
+    if (db == null) return;
+    try {
+      // Kind-1 feed (200 newest)
+      for (final row in await db.queryFeed(limit: 200)) {
+        _store.add(_cacheRowToEvent(row));
+      }
+      // Kind-7 reactions (500 newest)
+      for (final row in await db.queryRecentReactions(limit: 500)) {
+        _store.add(_cacheRowToEvent(row));
+      }
+      // Kind-0 metadata (all cached)
+      for (final row in await db.queryAllMetadata()) {
+        _store.add(_replaceableRowToEvent(row));
+      }
+      if (_store.length > 0) {
+        _dirty = true;
+        _scheduleFlush();
+      }
+    } catch (_) {
+      // Hydration failure — continue with empty store, relays will fill it.
+    }
+  }
+
+  /// Persist an event to SQLite (called on every pool.events arrival).
+  Future<void> _persist(Event e) async {
+    final db = _cache;
+    if (db == null) return;
+    try {
+      await db.writeEvent(
+        id: e.id,
+        pubkey: e.pubkey,
+        kind: e.kind,
+        createdAt: e.createdAt,
+        content: e.content,
+        sig: e.sig,
+        raw: jsonEncode(e.toWireObject()),
+        tagsJson: jsonEncode(e.tags),
+        tags: e.tags,
+      );
+    } catch (_) {}
+  }
+
+  Event _cacheRowToEvent(cache.EventRow row) {
+    return Event(
+      id: row.id,
+      pubkey: row.pubkey,
+      createdAt: row.createdAt,
+      kind: row.kind,
+      tags: (jsonDecode(row.tagsJson) as List).cast<List<dynamic>>(),
+      content: row.content,
+      sig: row.sig,
+    );
+  }
+
+  Event _replaceableRowToEvent(cache.ReplaceableEvent row) {
+    return Event(
+      id: row.id,
+      pubkey: row.pubkey,
+      createdAt: row.createdAt,
+      kind: row.kind,
+      tags: (jsonDecode(row.tagsJson) as List).cast<List<dynamic>>(),
+      content: row.content,
+      sig: row.sig,
+    );
   }
 
   /// Throttle state emission: instead of rebuilding on every single event

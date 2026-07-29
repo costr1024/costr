@@ -3,7 +3,7 @@
 part of 'local_cache.dart';
 
 // ignore_for_file: type=lint
-class $EventsTable extends Events with TableInfo<$EventsTable, Event> {
+class $EventsTable extends Events with TableInfo<$EventsTable, EventRow> {
   @override
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
@@ -117,7 +117,7 @@ class $EventsTable extends Events with TableInfo<$EventsTable, Event> {
   static const String $name = 'events';
   @override
   VerificationContext validateIntegrity(
-    Insertable<Event> instance, {
+    Insertable<EventRow> instance, {
     bool isInserting = false,
   }) {
     final context = VerificationContext();
@@ -195,9 +195,9 @@ class $EventsTable extends Events with TableInfo<$EventsTable, Event> {
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  Event map(Map<String, dynamic> data, {String? tablePrefix}) {
+  EventRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return Event(
+    return EventRow(
       id: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}id'],
@@ -243,7 +243,7 @@ class $EventsTable extends Events with TableInfo<$EventsTable, Event> {
   }
 }
 
-class Event extends DataClass implements Insertable<Event> {
+class EventRow extends DataClass implements Insertable<EventRow> {
   final String id;
   final String pubkey;
   final int kind;
@@ -253,7 +253,7 @@ class Event extends DataClass implements Insertable<Event> {
   final String raw;
   final String tagsJson;
   final int receivedAt;
-  const Event({
+  const EventRow({
     required this.id,
     required this.pubkey,
     required this.kind,
@@ -293,12 +293,12 @@ class Event extends DataClass implements Insertable<Event> {
     );
   }
 
-  factory Event.fromJson(
+  factory EventRow.fromJson(
     Map<String, dynamic> json, {
     ValueSerializer? serializer,
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
-    return Event(
+    return EventRow(
       id: serializer.fromJson<String>(json['id']),
       pubkey: serializer.fromJson<String>(json['pubkey']),
       kind: serializer.fromJson<int>(json['kind']),
@@ -326,7 +326,7 @@ class Event extends DataClass implements Insertable<Event> {
     };
   }
 
-  Event copyWith({
+  EventRow copyWith({
     String? id,
     String? pubkey,
     int? kind,
@@ -336,7 +336,7 @@ class Event extends DataClass implements Insertable<Event> {
     String? raw,
     String? tagsJson,
     int? receivedAt,
-  }) => Event(
+  }) => EventRow(
     id: id ?? this.id,
     pubkey: pubkey ?? this.pubkey,
     kind: kind ?? this.kind,
@@ -347,8 +347,8 @@ class Event extends DataClass implements Insertable<Event> {
     tagsJson: tagsJson ?? this.tagsJson,
     receivedAt: receivedAt ?? this.receivedAt,
   );
-  Event copyWithCompanion(EventsCompanion data) {
-    return Event(
+  EventRow copyWithCompanion(EventsCompanion data) {
+    return EventRow(
       id: data.id.present ? data.id.value : this.id,
       pubkey: data.pubkey.present ? data.pubkey.value : this.pubkey,
       kind: data.kind.present ? data.kind.value : this.kind,
@@ -365,7 +365,7 @@ class Event extends DataClass implements Insertable<Event> {
 
   @override
   String toString() {
-    return (StringBuffer('Event(')
+    return (StringBuffer('EventRow(')
           ..write('id: $id, ')
           ..write('pubkey: $pubkey, ')
           ..write('kind: $kind, ')
@@ -394,7 +394,7 @@ class Event extends DataClass implements Insertable<Event> {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      (other is Event &&
+      (other is EventRow &&
           other.id == this.id &&
           other.pubkey == this.pubkey &&
           other.kind == this.kind &&
@@ -406,7 +406,7 @@ class Event extends DataClass implements Insertable<Event> {
           other.receivedAt == this.receivedAt);
 }
 
-class EventsCompanion extends UpdateCompanion<Event> {
+class EventsCompanion extends UpdateCompanion<EventRow> {
   final Value<String> id;
   final Value<String> pubkey;
   final Value<int> kind;
@@ -448,7 +448,7 @@ class EventsCompanion extends UpdateCompanion<Event> {
        sig = Value(sig),
        raw = Value(raw),
        tagsJson = Value(tagsJson);
-  static Insertable<Event> custom({
+  static Insertable<EventRow> custom({
     Expression<String>? id,
     Expression<String>? pubkey,
     Expression<int>? kind,
@@ -2171,14 +2171,14 @@ class $$EventsTableTableManager
         RootTableManager<
           _$LocalCache,
           $EventsTable,
-          Event,
+          EventRow,
           $$EventsTableFilterComposer,
           $$EventsTableOrderingComposer,
           $$EventsTableAnnotationComposer,
           $$EventsTableCreateCompanionBuilder,
           $$EventsTableUpdateCompanionBuilder,
-          (Event, BaseReferences<_$LocalCache, $EventsTable, Event>),
-          Event,
+          (EventRow, BaseReferences<_$LocalCache, $EventsTable, EventRow>),
+          EventRow,
           PrefetchHooks Function()
         > {
   $$EventsTableTableManager(_$LocalCache db, $EventsTable table)
@@ -2252,14 +2252,14 @@ typedef $$EventsTableProcessedTableManager =
     ProcessedTableManager<
       _$LocalCache,
       $EventsTable,
-      Event,
+      EventRow,
       $$EventsTableFilterComposer,
       $$EventsTableOrderingComposer,
       $$EventsTableAnnotationComposer,
       $$EventsTableCreateCompanionBuilder,
       $$EventsTableUpdateCompanionBuilder,
-      (Event, BaseReferences<_$LocalCache, $EventsTable, Event>),
-      Event,
+      (EventRow, BaseReferences<_$LocalCache, $EventsTable, EventRow>),
+      EventRow,
       PrefetchHooks Function()
     >;
 typedef $$ReplaceableEventsTableCreateCompanionBuilder =
