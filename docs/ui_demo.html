@@ -245,6 +245,22 @@
   .hint{font-size:12px;color:var(--tx3);text-align:center;line-height:1.5;margin-top:8px}
   .check{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--tx);justify-content:center;padding:4px 0}
   .nsec-area{width:100%;border:1px solid var(--bd);border-radius:12px;padding:12px;font:13px ui-monospace,monospace;outline:none;resize:none;min-height:72px;color:var(--tx);background:var(--bg)}
+  /* 创建账号多步向导 */
+  .steps-bar{display:flex;gap:0;margin:4px 0 18px}
+  .steps-bar span{flex:1;text-align:center;font-size:12px;color:var(--tx3);padding:8px 0;border-bottom:2px solid var(--bd)}
+  .steps-bar span.on{color:var(--brand);border-color:var(--brand);font-weight:600}
+  .c-step{display:flex;flex-direction:column;gap:12px}
+  .step-title{font-size:16px;font-weight:600;color:var(--tx);text-align:center;margin-bottom:2px}
+  .copy-btn{background:var(--bg2);border:1px solid var(--bd);border-radius:999px;padding:10px;font:600 14px var(--font);color:var(--brand);cursor:pointer}
+  .copy-btn.done{color:var(--green);border-color:#bfe6cf}
+  .ava-picker{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;padding:8px}
+  .ava-picker .pick-ava{width:84px;height:84px;border-radius:50%;background:#cfd6db;display:grid;place-items:center;color:#fff;font-size:34px;font-weight:700;position:relative}
+  .ava-picker .pick-ava .cam{position:absolute;right:0;bottom:0;width:28px;height:28px;border-radius:50%;background:var(--brand);color:#fff;display:grid;place-items:center;border:3px solid var(--bg)}
+  .ava-picker .pick-ava .cam svg{width:16px;height:16px}
+  .ava-picker span{font-size:13px;color:var(--blue)}
+  .nick-input{border:1px solid var(--bd);border-radius:12px;padding:12px;font:15px var(--font);outline:none;color:var(--tx);background:var(--bg)}
+  .nick-input:focus{border-color:var(--brand)}
+  .done-ic{width:64px;height:64px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;font-size:34px;margin:8px auto 0}
   /* 内联关注按钮（列表行） */
   .fbtn{border:1px solid var(--tx);background:var(--bg);color:var(--brand);font:700 13px var(--font);border-radius:999px;padding:6px 14px;cursor:pointer;flex:none;white-space:nowrap}
   .fbtn.on{background:var(--brand);color:#fff;border-color:var(--brand)}
@@ -501,12 +517,41 @@
       </div>
 
       <div class="login-step" id="login-create" hidden>
-        <p class="sub" style="text-align:left;margin:0 0 4px;font-weight:600;color:var(--tx)">这是你的账号钥匙</p>
-        <div class="key-box" id="new-nsec">nsec1q3w4e5r6t7y8u9i0o1a2s3d4f5g6h7j8k9l0zxcvbnm</div>
-        <div class="warn">⚠️ 请把它抄写保管好。<b>丢失无法找回</b>——去中心化里没人能帮你重置密码，因为这把钥匙就是你的整个账号。</div>
-        <label class="check"><input type="checkbox" onchange="document.getElementById('login-create-btn').disabled=!this.checked"> 我已抄写并妥善保存</label>
-        <button id="login-create-btn" class="big-btn primary" disabled onclick="loginDone()">完成，进入 Costr</button>
-        <button class="link-btn" onclick="loginStep('login-step1')">返回</button>
+        <div class="steps-bar"><span class="on">1 · 备份钥匙</span><span>2 · 设置资料</span><span>3 · 完成</span></div>
+
+        <!-- 步骤 1：备份私钥 -->
+        <div id="c-step1" class="c-step">
+          <p class="step-title">先备份你的私钥</p>
+          <div class="key-box" id="new-nsec">nsec1q3w4e5r6t7y8u9i0o1a2s3d4f5g6h7j8k9l0zxcvbnm</div>
+          <button class="copy-btn" id="copy-nsec-btn" onclick="copyNsec(this)">复制私钥</button>
+          <div class="warn">⚠️ 这把钥匙<b>就是你的整个账号</b>。请抄写或复制到安全的地方保管好。<b>丢失无法找回</b>——去中心化里没人能帮你重置，因为它不属于任何平台。</div>
+          <label class="check"><input type="checkbox" id="bk-check" onchange="document.getElementById('c-next1').disabled=!this.checked"> 我已抄写并妥善保存私钥</label>
+          <button id="c-next1" class="big-btn primary" disabled onclick="createStep(2)">下一步</button>
+          <button class="link-btn" onclick="loginStep('login-step1')">返回</button>
+        </div>
+
+        <!-- 步骤 2：设置昵称 + 头像 -->
+        <div id="c-step2" class="c-step" hidden>
+          <p class="step-title">设置昵称和头像</p>
+          <div class="ava-picker" onclick="alert('打开相册选择头像（demo 占位）')">
+            <div class="pick-ava">? <span class="cam"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span></div>
+            <span>点击更换头像</span>
+          </div>
+          <input class="nick-input" id="nick-input" placeholder="昵称（例如：阿橘）" maxlength="20">
+          <p class="hint">昵称和头像公开可见，以后随时能改。不填也行，Costr 会用你的钥匙生成默认名。</p>
+          <button class="big-btn primary" onclick="createStep(3)">下一步</button>
+          <button class="link-btn" onclick="createStep(1)">上一步</button>
+        </div>
+
+        <!-- 步骤 3：完成 -->
+        <div id="c-step3" class="c-step" hidden>
+          <div class="done-ic">✓</div>
+          <p class="step-title">账号创建完成</p>
+          <p class="sub" id="done-msg" style="margin:0 12px 4px">欢迎来到 Costr！</p>
+          <p class="hint">记住：你的私钥只存在这台手机里，随时能在「设置 → 账号」里查看提醒。</p>
+          <button class="big-btn primary" onclick="loginDone()">开始使用</button>
+          <button class="link-btn" onclick="createStep(2)">上一步</button>
+        </div>
       </div>
 
       <div class="login-step" id="login-import" hidden>
@@ -606,8 +651,17 @@ paintLogo(document.getElementById('logo-mark4'));
 
 /* ---------- 登录 / 注册 / 退出 ---------- */
 function loginStep(id){['login-step1','login-create','login-import'].forEach(x=>document.getElementById(x).hidden=x!==id);}
-function loginCreate(){loginStep('login-create');}
+function loginCreate(){loginStep('login-create');createStep(1);}
 function loginImport(){loginStep('login-import');}
+function createStep(n){
+  ['c-step1','c-step2','c-step3'].forEach(x=>document.getElementById(x).hidden = x!=='c-step'+n);
+  document.querySelectorAll('#login-create .steps-bar span').forEach((s,i)=>s.classList.toggle('on',i===n-1));
+  if(n===3){
+    const nick=document.getElementById('nick-input').value.trim();
+    document.getElementById('done-msg').textContent = nick ? '欢迎，'+nick+'！' : '欢迎来到 Costr！';
+  }
+}
+function copyNsec(btn){btn.classList.add('done');btn.textContent='已复制 ✓';setTimeout(()=>{btn.classList.remove('done');btn.textContent='复制私钥';},1500);}
 function loginDone(){
   document.getElementById('login-import-btn') && (document.getElementById('login-import-btn').disabled=true);
   go('home');
