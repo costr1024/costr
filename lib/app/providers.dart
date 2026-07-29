@@ -114,9 +114,20 @@ final relayPoolProvider = Provider<RelayPool>((ref) {
 
 /// Loads identity from secure storage, then opens relay connections. The router
 /// waits on this before resolving redirects, avoiding a cold-start race.
+/// Also triggers cache cleanup 30s after startup (Jumble pattern).
 final bootstrapProvider = FutureProvider<void>((ref) async {
   await ref.watch(identityProvider.future);
   await ref.read(relayPoolProvider).connect();
+  // Cache cleanup 30s after startup (avoids startup jank).
+  Timer(const Duration(seconds: 30), () async {
+    final cache = ref.read(localCacheProvider).value;
+    if (cache == null) return;
+    try {
+      await cache.cleanupOldEvents(ttlDays: 30);
+      await cache.enforceSizeCap();
+      await cache.vacuum();
+    } catch (_) {}
+  });
 });
 
 // --- Event store (text notes only) -----------------------------------------
@@ -806,14 +817,23 @@ class UserResult {
   final Metadata? metadata;
 }
 
-/// Global post search (NIP-50 `search` filter, kind 1). Collects results for a
-/// fixed 6s window (non-search relays may EOSE-empty quickly, so we don't
-/// resolve on first EOSE — that would miss nostr.wine's results arriving
-/// after a fast empty EOSE).
+/// Global post search: SQLite FTS5 (instant local results) + NIP-50 relay
+/// search (fresh results from nostr.wine, 6s window). Merged + deduped.
 final searchPostsProvider =
     FutureProvider.family<List<Event>, String>((ref, query) async {
   final q = query.trim();
   if (q.isEmpty) return const <Event>[];
+  // 1. SQLite FTS5 (instant, local cached events).
+  final cache = ref.watch(localCacheProvider).value;
+  final cached = <Event>[];
+  if (cache != null) {
+    try {
+      for (final row in await cache.searchEvents(q, limit: 100)) {
+        cached.add(_cacheRowToEvent(row));
+      }
+    } catch (_) {}
+  }
+  // 2. NIP-50 relay search (fresh results).
   final pool = ref.watch(relayPoolProvider);
   final collected = <Event>[];
   final seen = <String>{};
@@ -831,11 +851,16 @@ final searchPostsProvider =
     evSub.cancel();
     pool.closeSubscription(subId);
   });
-  // Fixed 6s collect window — don't resolve on first EOSE (a non-search relay
-  // may EOSE-empty before nostr.wine delivers results).
   await Future<void>.delayed(const Duration(seconds: 6));
-  collected.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-  return collected;
+  // Merge cached + fresh, dedup by id.
+  final all = <Event>[...collected, ...cached];
+  final seenMerge = <String>{};
+  final merged = <Event>[];
+  for (final e in all) {
+    if (seenMerge.add(e.id)) merged.add(e);
+  }
+  merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return merged;
 });
 
 /// Global user search (NIP-50 `search` filter, kind 0 metadata).
