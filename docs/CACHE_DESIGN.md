@@ -205,6 +205,12 @@ CREATE TABLE relay_config (
 
 支持中继动态添加/删除/启用禁用，读写分离（某些中继只读，某些可写）。
 
+**重要**：中继列表同时是 **NIP-65（kind 10002）** 用户元数据——必须同步到中继，让其他用户知道去哪个 relay 拉你的帖子（outbox 模型）。
+
+- `relay_config` 表是 kind 10002 的本地缓存 + 本地独有设置（enabled 开关等不发布到中继的字段）
+- 修改中继列表时：① 更新 `relay_config` 表 ② 签发 kind 10002（`["r", "url", "read"/"write"]` tags）发布到中继 ③ 更新 RelayPool 连接
+- 冷启动从 `relay_config` 表 hydrate（秒出），同时 REQ kind 10002 后台刷新
+
 ---
 
 ## 三、缓存一致性策略
@@ -338,11 +344,11 @@ WHERE id IN (
 
 ### 6.1 中继列表持久化
 
-中继列表存储在 `relay_config` 表 + `config` 表（默认列表）。支持运行时添加/删除/启用/禁用中继，不重启 app。
+中继列表存储在 `relay_config` 表（kind 10002 本地缓存）。支持运行时添加/删除/启用/禁用中继，不重启 app。修改后同步签发 kind 10002（NIP-65）发布到中继。
 
 ### 6.2 读写分离
 
-某些中继只读（如 relay.bostr.online 需 NIP-42 + 白名单才能写），某些可读写。`relay_config.read` / `relay_config.write` 控制每条中继的角色。
+某些中继只读（如 relay.bostr.online 需 NIP-42 + 白名单才能写），某些可读写。`relay_config.read` / `relay_config.write` 控制每条中继的角色，同时映射到 kind 10002 的 `["r", "url", "read"/"write"]` tag。
 
 ### 6.3 动态生效
 
@@ -435,11 +441,11 @@ path: ^1.9.0               # 路径操作
 
 - **nsec 私钥**：取决于平台——Android Keystore 卸载即清除（需重新登录）；iOS Keychain 卸载后可能保留（取决于设备设置）。
 - **metadata / 关注列表 / 帖子缓存**：全部丢失，但可从中继重新拉取（首次启动较慢，逐步恢复）。
-- **NSFW 设置 / 中继列表等本地配置**：丢失。中继列表可从默认列表恢复；NSFW 设置回到默认值。
+- **NSFW 设置等本地配置**：丢失（纯本地，无中继备份）。中继列表可从 kind 10002 重新拉取恢复；NSFW 设置回到默认值。
 
 ### 缓解方案
 
-1. **中继优先恢复**：缓存丢失后 app 仍可正常工作——从默认中继列表连接、重新 REQ kind-0/1/3/7，数据逐步回填到 SQLite。体验等同于首次安装。
+1. **中继优先恢复**：缓存丢失后 app 仍可正常工作——从默认中继列表连接、重新 REQ kind-0/1/3/7/10002，数据逐步回填到 SQLite。体验等同于首次安装。
 
 2. **drift 迁移保护**：app 升级时 drift 内置 migration——schema 变更不会丢旧数据，只增补新列/表。版本号在 `@DriftDatabase(schemaVersion: N)` 控制。
 
