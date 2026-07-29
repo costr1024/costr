@@ -72,8 +72,18 @@
 ### 3.5 图标
 
 - 线性描边图标，未选 `#536471`，选中 `#0F1419`（或填充版）。
-- 动作栏：💬 回复 / 🔁 转发 / ❤️ 喜欢 / ↗ 分享——X 的四件套。
-  - **不用 emoji 当动作图标**（当前 `post_actions.dart` 用 emoji，要换成 SVG 线性图标）。
+- 动作栏四件套（参考 X 布局，Amethyst 交互）：
+  - **💬 回复**：点 → push Compose 带 `replyTo`。
+  - **🔁 转发**（弹菜单二选一，参考 Amethyst）：
+    - **转发**（NIP-18 kind 6）：确认后签 kind 6 + `e`/`p` tag，直接转发不带评论。
+    - **引用**（kind 1）：push Compose 带 `quoteOf`，正文带 `nostr:note1` 引用 + `e` mention tag。
+    - 不做下拉即转发的隐藏入口——弹菜单让用户明确选，避免误操作。
+  - **❤️ 喜欢 / Reaction**（点弹表情选择器，参考 Amethyst）：
+    - 选择器分两区：**快捷 unicode**（❤️ 👍 😂 🔥 🎉 👎）+ **自定义表情**（NIP-30 `:shortcode:` + URL，按帖子上出现过的自定义表情优先展示）。
+    - 选一个 → 签 NIP-25 kind 7（`e`/`p`/`k` tag + `emoji` tag for 自定义），列表下方 reaction chip 即时 +1；再点同一个 → 撤回（签 `-` content 的 kind 7）。
+    - 帖子下方按 emoji 聚合显示 chip：`❤️ 18` `:nostr: 3`，我选中的 chip 高亮区分。
+    - 不用 emoji 当动作图标本身（动作图标仍用线性 SVG）。
+  - **↗ 分享**：复制 `https://njump.me/<note1>`。
 
 ## 4. 信息架构（重新设计的导航）
 
@@ -101,7 +111,7 @@ X 风格底栏（4 tab + FAB），从当前 2 tab 升级：
 | 回复我的帖子 | NIP-10 kind 1 | `{"kinds":[1],"#e":[我的note id…]}` |
 | 提及我（@我） | NIP-10 mention | `{"kinds":[1],"#p":[我的pubkey]}` |
 | 转发我的帖子 | NIP-18 kind 6 | `{"kinds":[6],"#e":[我的note id…]}` |
-| 喜欢/表情 reaction | NIP-25 kind 7 | `{"kinds":[7],"#e":[我的note id…]}` |
+| 喜欢/表情 reaction | NIP-25 kind 7 + NIP-30 | `{"kinds":[7],"#e":[我的note id…]}`；聚合时按 emoji / shortcode 分组 |
 | 引用我的帖子 | kind 1 含 `nostr:note1` | 客户端在 `#p` / 正文里匹配 |
 | 新关注者 | NIP-02 kind 3 | `{"kinds":[3],"#p":[我的pubkey]}` |
 

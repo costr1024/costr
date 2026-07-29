@@ -196,6 +196,39 @@
   .chip .x{cursor:pointer;color:var(--tx2);margin-left:2px}
   .relay{display:inline-flex;align-items:center;gap:5px;background:#eaf6ef;border-radius:999px;padding:4px 10px;font-size:12px;color:var(--green);margin-right:8px}
   .relay .dotg{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  /* reaction chips (NIP-25/NIP-30 聚合) */
+  .rchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .rchip{display:inline-flex;align-items:center;gap:5px;background:var(--bg2);border:1px solid var(--bd);
+    border-radius:999px;padding:3px 10px 3px 8px;font-size:13px;color:var(--tx);cursor:pointer}
+  .rchip .e{font-size:14px;line-height:1}
+  .rchip i{font-style:normal;color:var(--tx2);font-size:12px}
+  .rchip.mine{background:#eaf6ff;border-color:#bedded;color:#1d6fb1}
+  /* popover（表情选择器 / 转发菜单） */
+  .popover{position:absolute;display:none;z-index:25;background:#fff;border:1px solid var(--bd);
+    border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.22);padding:8px}
+  .rp{width:248px}
+  .rp-quick{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
+  .rp-quick button{height:38px;border-radius:10px;border:none;background:var(--bg2);font-size:20px;
+    cursor:pointer;line-height:1;padding:0}
+  .rp-quick button:hover,.rp-custom button:hover{background:#e7eaec}
+  .rp-quick button.sel{background:#eaf6ff;outline:2px solid #bedded}
+  .rp-sep{height:1px;background:var(--bd);margin:8px 0 6px}
+  .rp-label{font-size:11px;color:var(--tx3);font-weight:600;padding:0 4px 6px}
+  .rp-custom{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+  .rp-custom button{border:none;background:var(--bg2);border-radius:10px;padding:6px 0 4px;cursor:pointer;
+    display:flex;flex-direction:column;align-items:center;gap:3px}
+  .rp-custom .ce-img{width:24px;height:24px;border-radius:6px}
+  .rp-custom .ce-nm{font-size:9px;color:var(--tx2);line-height:1;max-width:42px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .rp-custom button.sel{background:#eaf6ff;outline:2px solid #bedded}
+  .rpm{width:260px;padding:4px}
+  .rpm button{display:flex;align-items:center;gap:12px;width:100%;padding:11px;border:none;background:none;
+    cursor:pointer;border-radius:12px;text-align:left}
+  .rpm button:hover{background:var(--bg2)}
+  .rpm .ic{width:22px;height:22px;color:var(--tx2);flex:none;display:grid;place-items:center}
+  .rpm .ic svg{width:22px;height:22px}
+  .rpm .t b{display:block;font-size:15px;font-weight:600;color:var(--tx)}
+  .rpm .t small{display:block;font-size:12px;color:var(--tx3);margin-top:1px}
   @media (max-width:1100px){.side{display:none}body{padding:8px}}
 </style>
 </head>
@@ -214,7 +247,9 @@
     · 通知中心（全部/提及 + 分组聚合 + 设置）<br>
     · 整体导航：4 tab + FAB（X 风格）<br>
     · 应用介绍页 / 新手引导<br>
-    · App Logo<br><br>
+    · App Logo<br>
+    · <b>喜欢 = 表情选择器</b>（Amethyst 风格：快捷 unicode + 自定义表情 NIP-30）<br>
+    · <b>转发菜单</b>：直接转发(NIP-18) / 引用(kind 1 带 note) 二选一<br><br>
     <b>操作</b><br>
     点底栏切换 · 点列表进详情 · 点 FAB 发帖<br>
     <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> 切 tab · <kbd>C</kbd> 发帖 · <kbd>Esc</kbd> 返回<br><br>
@@ -455,6 +490,9 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
   </button>
 
+  <!-- 通用 popover：表情选择器 / 转发·引用菜单 -->
+  <div class="popover" id="popover"></div>
+
  </div>
 </div>
 
@@ -479,17 +517,27 @@ function initials(n){return n.slice(0,1)}
 function color(i){return AVA_COLORS[i%AVA_COLORS.length]}
 
 const POSTS=[
-  {i:0,u:0,text:'今天把通知中心做完了，聚合后列表干净多了。一百条喜欢聚合成五条，UI 不卡了。#flutter #costr',img:true,t:'2分钟前',rc:18,rp:4,like:32,sh:2},
-  {i:1,u:1,text:'去中心化最浪漫的一点是：你的账号在你自己手机里，没有谁能替你按发送键。',t:'14分钟前',rc:6,rp:1,like:51,sh:8},
-  {i:2,u:2,text:'试了下 Costr 的发帖，居然秒出现在另一个客户端上，有点爽。',img:true,t:'1小时前',rc:12,rp:3,like:9,sh:1},
-  {i:3,u:3,text:'年轻人第一个去中心化社交工具，门槛低、长得像 X，这就够了。别一上来就讲 NIP 讲中继，把人吓跑。',t:'3小时前',rc:42,rp:9,like:120,sh:24},
-  {i:4,u:4,text:'省电的关键：App 在后台别傻盯着连接，回前台再补拉增量。',t:'5小时前',rc:3,rp:0,like:18,sh:5},
+  {i:0,u:0,text:'今天把通知中心做完了，聚合后列表干净多了。一百条喜欢聚合成五条，UI 不卡了。#flutter #costr',img:true,t:'2分钟前',rc:18,rp:4,sh:2,reactions:{'❤️':18,'👍':9,'🔥':5}},
+  {i:1,u:1,text:'去中心化最浪漫的一点是：你的账号在你自己手机里，没有谁能替你按发送键。',t:'14分钟前',rc:6,rp:1,sh:8,reactions:{'❤️':42,'🔥':9}},
+  {i:2,u:2,text:'试了下 Costr 的发帖，居然秒出现在另一个客户端上，有点爽。',img:true,t:'1小时前',rc:12,rp:3,sh:1,reactions:{'❤️':5,'😂':4,':costr:':2}},
+  {i:3,u:3,text:'年轻人第一个去中心化社交工具，门槛低、长得像 X，这就够了。别一上来就讲 NIP 讲中继，把人吓跑。',t:'3小时前',rc:42,rp:9,sh:24,reactions:{'❤️':88,'👍':20,'🎉':12,':nostr:':3}},
+  {i:4,u:4,text:'省电的关键：App 在后台别傻盯着连接，回前台再补拉增量。',t:'5小时前',rc:3,rp:0,sh:5,reactions:{'❤️':12,'👍':6}},
 ];
 const REPLIES=[
-  {i:5,u:5,text:'聚合这个思路好，X 也是这么干的，列表才不会一拉到底全是重复。',t:'10分钟前',rc:1,rp:0,like:4,sh:0},
-  {i:6,u:6,text:'问个小白问题：我的帖子别人看不到怎么办？是不是要等一会？',t:'6分钟前',rc:0,rp:0,like:2,sh:0},
-  {i:7,u:2,text:'后台不订阅 + 回前台补拉，这个体验比很多 App 都强。',t:'3分钟前',rc:0,rp:0,like:5,sh:0},
+  {i:5,u:5,text:'聚合这个思路好，X 也是这么干的，列表才不会一拉到底全是重复。',t:'10分钟前',rc:1,rp:0,sh:0,reactions:{'👍':4}},
+  {i:6,u:6,text:'问个小白问题：我的帖子别人看不到怎么办？是不是要等一会？',t:'6分钟前',rc:0,rp:0,sh:0,reactions:{}},
+  {i:7,u:2,text:'后台不订阅 + 回前台补拉，这个体验比很多 App 都强。',t:'3分钟前',rc:0,rp:0,sh:0,reactions:{'❤️':5}},
 ];
+
+/* 自定义表情（NIP-30：shortcode + URL，demo 用渐变方块代替图片） */
+const CUSTOM=[
+  {s:':costr:',c:'linear-gradient(135deg,#1d9bf0,#0f6bff)'},
+  {s:':nostr:',c:'linear-gradient(135deg,#7b2ff7,#4a00e0)'},
+  {s:':party:',c:'linear-gradient(135deg,#43e97b,#38f9d7)'},
+  {s:':fire:',c:'linear-gradient(135deg,#f857a6,#ff5858)'},
+  {s:':ok:',c:'linear-gradient(135deg,#f9d423,#ff4e50)'},
+];
+const QUICK=['❤️','👍','😂','🔥','🎉','👎'];
 
 function ava(u){const [n,h]=NAMES[u];const c=color(u);
   return `<div class="ava" style="background:${c}">${initials(n)}</div>`}
@@ -524,17 +572,95 @@ function postCard(p,extra=''){
       <div class="who"><b>${n}</b> <span class="h">@${h}</span><span class="dot">·</span><span class="t">${p.t}</span></div>
       <div class="txt">${p.text}</div>
       ${p.img?'<div class="media"></div>':''}
-      <div class="actions">
-        <div class="a" onclick="event.stopPropagation();openReply(${p.i})">${ACT.reply.svg}<span>${p.rc}</span></div>
-        <div class="a" onclick="event.stopPropagation()">${ACT.repost.svg}<span>${p.rp}</span></div>
-        <div class="a" onclick="event.stopPropagation();toggleLike(this)">${ACT.like.svg}<span>${p.like}</span></div>
-        <div class="a" onclick="event.stopPropagation()">${svgShare()}<span>${p.sh}</span></div>
-      </div>
+      <div id="act-${p.i}">${actionsHTML(p)}</div>
     </div>
   </div>`;
 }
 function svgShare(){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M12 3v13M8 7l4-4 4 4"/></svg>'}
-function toggleLike(el){el.classList.toggle('liked');el.style.color=el.classList.contains('liked')?'var(--red)':'var(--tx3)';const s=el.querySelector('span');s.textContent=parseInt(s.textContent)+(el.classList.contains('liked')?1:-1)}
+
+/* reaction / 转发 聚合与渲染 */
+const myReactions={}; // postIndex -> Set<string>
+function reactionsTotal(p){return Object.values(p.reactions||{}).reduce((a,b)=>a+b,0);}
+function findPost(i){return POSTS.find(x=>x.i===i)||REPLIES.find(x=>x.i===i);}
+function chipsInner(p){
+  const my=myReactions[p.i]||new Set();
+  return Object.entries(p.reactions||{}).map(([k,v])=>{
+    const isCode=k.startsWith(':');
+    return `<span class="rchip ${my.has(k)?'mine':''}"><span class="e">${isCode?k:k}</span><i>${v}</i></span>`;
+  }).join('');
+}
+function actionsHTML(p){
+  const ci=chipsInner(p);
+  return `<div class="actions">
+    <div class="a" onclick="event.stopPropagation();openReply(${p.i})">${ACT.reply.svg}<span>${p.rc}</span></div>
+    <div class="a" onclick="event.stopPropagation();openRepostMenu(this,${p.i})">${ACT.repost.svg}<span>${p.rp}</span></div>
+    <div class="a" onclick="event.stopPropagation();openReactions(this,${p.i})">${ACT.like.svg}<span>${reactionsTotal(p)}</span></div>
+    <div class="a" onclick="event.stopPropagation()">${svgShare()}<span>${p.sh}</span></div>
+  </div>`+(ci?`<div class="rchips" onclick="event.stopPropagation();openReactions(this,${p.i})">${ci}</div>`:'');
+}
+function updateCard(i){
+  const p=findPost(i); if(!p)return;
+  document.querySelectorAll('#act-'+i).forEach(el=>{el.innerHTML=actionsHTML(p);});
+}
+
+/* 表情选择器（Amethyst 风格：快捷 unicode + 自定义表情 NIP-30） */
+function openReactions(el,i){
+  const p=findPost(i); const my=myReactions[i]||new Set();
+  const quickBtns=QUICK.map(e=>`<button class="${my.has(e)?'sel':''}" onclick="react(${i},'${e}')">${e}</button>`).join('');
+  const custBtns=CUSTOM.map(c=>`<button class="${my.has(c.s)?'sel':''}" onclick="react(${i},'${c.s}')"><span class="ce-img" style="background:${c.c}"></span><span class="ce-nm">${c.s.replace(/:/g,'')}</span></button>`).join('');
+  positionPopover(el,`<div class="rp">
+    <div class="rp-quick">${quickBtns}</div>
+    <div class="rp-sep"></div>
+    <div class="rp-label">自定义表情（来自帖子作者所在服务器）</div>
+    <div class="rp-custom">${custBtns}</div>
+  </div>`);
+}
+function react(i,emoji){
+  if(!myReactions[i])myReactions[i]=new Set();
+  const p=findPost(i); if(!p.reactions)p.reactions={};
+  const has=myReactions[i].has(emoji);
+  if(has){myReactions[i].delete(emoji);const v=p.reactions[emoji]-1;if(v<=0)delete p.reactions[emoji];else p.reactions[emoji]=v;}
+  else{myReactions[i].add(emoji);p.reactions[emoji]=(p.reactions[emoji]||0)+1;}
+  hidePopover(); updateCard(i);
+}
+
+/* 转发菜单：直接转发(NIP-18 kind 6) / 引用(kind 1 带 note) */
+function openRepostMenu(el,i){
+  positionPopover(el,`<div class="rpm">
+    <button onclick="doRepost(${i})"><span class="ic">${ACT.repost.svg}</span><span class="t"><b>转发</b><small>直接转发到你的主页，不带评论</small></span></button>
+    <button onclick="doQuote(${i})"><span class="ic">${ACT.quote.svg}</span><span class="t"><b>引用</b><small>带你的评论引用这条帖子</small></span></button>
+  </div>`);
+}
+function doRepost(i){
+  hidePopover(); const p=findPost(i); if(!p)return;
+  p.rp++; updateCard(i);
+  alert('已转发（demo 占位）：这条帖子已转发到你的主页。\n实际：签 NIP-18 kind 6 + e/p tag。');
+}
+function doQuote(i){
+  hidePopover(); const p=findPost(i); const [n,h]=NAMES[p.u];
+  document.getElementById('compose-ctxt').innerHTML=`引用 <b>@${h}</b> 的帖子：${p.text.slice(0,24)}…`;
+  openCompose();
+}
+
+/* popover 定位 / 关闭 */
+function positionPopover(el,html){
+  const pop=document.getElementById('popover');
+  pop.innerHTML=html; pop.style.display='block'; pop.style.left='0px'; pop.style.top='0px';
+  const sc=document.getElementById('screen').getBoundingClientRect();
+  const r=el.getBoundingClientRect();
+  const x=r.left-sc.left+r.width/2;
+  const y=r.top-sc.top;
+  const pw=pop.offsetWidth, ph=pop.offsetHeight;
+  let left=Math.max(8,Math.min(x-pw/2,390-pw-8));
+  let top=y-ph-10; if(top<56) top=y+r.height+8;
+  pop.style.left=left+'px'; pop.style.top=top+'px';
+}
+function hidePopover(){document.getElementById('popover').style.display='none';}
+document.addEventListener('click',e=>{
+  const pop=document.getElementById('popover');
+  if(pop.style.display!=='block')return;
+  if(!pop.contains(e.target)) hidePopover();
+});
 
 /* ---------- 渲染通知 ---------- */
 function notifItem(n){
@@ -630,12 +756,12 @@ function openDetail(i){
         <div class="txt">${p.text}</div>
         ${p.img?'<div class="media"></div>':''}
         <div style="color:var(--tx3);font-size:13px;margin-top:10px">${p.t} · 23:45</div>
-        <div style="display:flex;gap:16px;border-top:1px solid var(--bd);border-bottom:1px solid var(--bd);padding:8px 0;margin-top:8px;color:var(--tx2);font-size:13px"><span><b style="color:var(--tx)">${p.rc}</b> 回复</span><span><b style="color:var(--tx)">${p.like}</b> 喜欢</span><span><b style="color:var(--tx)">${p.rp}</b> 转发</span></div>
-        <div class="actions"><div class="a" onclick="openReply(${p.i})">${ACT.reply.svg}<span>${p.rc}</span></div><div class="a">${ACT.repost.svg}<span>${p.rp}</span></div><div class="a" onclick="toggleLike(this)">${ACT.like.svg}<span>${p.like}</span></div><div class="a">${svgShare()}<span>${p.sh}</span></div></div>
+        <div style="display:flex;gap:16px;border-top:1px solid var(--bd);border-bottom:1px solid var(--bd);padding:8px 0;margin-top:8px;color:var(--tx2);font-size:13px"><span><b style="color:var(--tx)">${p.rc}</b> 回复</span><span><b style="color:var(--tx)">${reactionsTotal(p)}</b> 喜欢</span><span><b style="color:var(--tx)">${p.rp}</b> 转发</span></div>
+        <div id="act-${p.i}">${actionsHTML(p)}</div>
       </div>
     </div>
     <div class="sect-h">回复 · ${REPLIES.length}</div>
-    ${REPLIES.map(r=>{const[nn,hh]=NAMES[r.u];return `<div class="reply-card" onclick="openDetail(${r.i})">${ava(r.u)}<div class="body"><div class="who"><b>${nn}</b> <span class="h">@${hh}</span><span class="dot">·</span><span class="t">${r.t}</span></div><div class="txt">${r.text}</div><div class="actions"><div class="a">${ACT.reply.svg}<span>${r.rc}</span></div><div class="a">${ACT.repost.svg}<span>${r.rp}</span></div><div class="a" onclick="toggleLike(this)">${ACT.like.svg}<span>${r.like}</span></div><div class="a">${svgShare()}<span>${r.sh}</span></div></div></div></div>`}).join('')}
+    ${REPLIES.map(r=>{const[nn,hh]=NAMES[r.u];return `<div class="reply-card" onclick="openDetail(${r.i})">${ava(r.u)}<div class="body"><div class="who"><b>${nn}</b> <span class="h">@${hh}</span><span class="dot">·</span><span class="t">${r.t}</span></div><div class="txt">${r.text}</div><div id="act-${r.i}">${actionsHTML(r)}</div></div></div>`}).join('')}
   `;
   go('detail');
 }
