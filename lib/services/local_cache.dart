@@ -23,6 +23,17 @@ class Events extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// Outbox drafts — events that failed to publish, stored for retry.
+class Drafts extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get rawJson => text()();
+  IntColumn get createdAt => integer()();
+  IntColumn get attempts => integer().withDefault(const Constant(0))();
+
+  @override
+  String get tableName => 'drafts';
+}
+
 class ReplaceableEvents extends Table {
   TextColumn get pubkey => text()();
   IntColumn get kind => integer()();
@@ -67,7 +78,7 @@ class RelayConfig extends Table {
   Set<Column> get primaryKey => {url};
 }
 
-@DriftDatabase(tables: [Events, ReplaceableEvents, EventTags, ConfigTable, RelayConfig])
+@DriftDatabase(tables: [Events, ReplaceableEvents, EventTags, ConfigTable, RelayConfig, Drafts])
 class LocalCache extends _$LocalCache {
   LocalCache(super.e);
 
@@ -76,46 +87,59 @@ class LocalCache extends _$LocalCache {
   }
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) async {
       await m.createAll();
-      await m.database.customStatement(
-        'CREATE INDEX IF NOT EXISTS idx_events_pubkind ON events(pubkey, kind, created_at DESC)',
-      );
-      await m.database.customStatement(
-        'CREATE INDEX IF NOT EXISTS idx_events_kindtime ON events(kind, created_at DESC)',
-      );
-      await m.database.customStatement(
-        'CREATE INDEX IF NOT EXISTS idx_events_pubtime ON events(pubkey, created_at DESC)',
-      );
-      await m.database.customStatement(
-        'CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC)',
-      );
-      await m.database.customStatement(
-        'CREATE INDEX IF NOT EXISTS idx_tags_nameval ON event_tags(name, value)',
-      );
-      await m.database.customStatement(
-        'CREATE INDEX IF NOT EXISTS idx_tags_event ON event_tags(event_id)',
-      );
-      await m.database.customStatement(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5("
-        "content, pubkey, kind, content=events, content_rowid=rowid, "
-        "tokenize='unicode61')",
-      );
-      await m.database.customStatement(
-        "CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN "
-        "INSERT INTO events_fts(rowid, content, pubkey, kind) "
-        "VALUES (new.rowid, new.content, new.pubkey, new.kind); END",
-      );
-      await m.database.customStatement(
-        "CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN "
-        "DELETE FROM events_fts WHERE rowid = old.rowid; END",
-      );
+      await _createIndexes(m);
+      await _createFts(m);
+    },
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        await m.createTable(drafts);
+      }
     },
   );
+
+  Future<void> _createIndexes(Migrator m) async {
+    await m.database.customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_events_pubkind ON events(pubkey, kind, created_at DESC)',
+    );
+    await m.database.customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_events_kindtime ON events(kind, created_at DESC)',
+    );
+    await m.database.customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_events_pubtime ON events(pubkey, created_at DESC)',
+    );
+    await m.database.customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC)',
+    );
+    await m.database.customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_tags_nameval ON event_tags(name, value)',
+    );
+    await m.database.customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_tags_event ON event_tags(event_id)',
+    );
+  }
+
+  Future<void> _createFts(Migrator m) async {
+    await m.database.customStatement(
+      "CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5("
+      "content, pubkey, kind, content=events, content_rowid=rowid, "
+      "tokenize='unicode61')",
+    );
+    await m.database.customStatement(
+      "CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN "
+      "INSERT INTO events_fts(rowid, content, pubkey, kind) "
+      "VALUES (new.rowid, new.content, new.pubkey, new.kind); END",
+    );
+    await m.database.customStatement(
+      "CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN "
+      "DELETE FROM events_fts WHERE rowid = old.rowid; END",
+    );
+  }
 
   // --- Write ---
 
@@ -297,6 +321,37 @@ class LocalCache extends _$LocalCache {
 
   Future<void> deleteConfig(String key) async {
     await (delete(configTable)..where((c) => c.key.equals(key))).go();
+  }
+
+  // --- Drafts (outbox: events that failed to publish, for retry) ---
+
+  /// Save a draft event (failed to publish) for later retry.
+  Future<void> saveDraft(String rawJson) async {
+    await customStatement(
+      'INSERT INTO drafts(raw_json, created_at, attempts) VALUES (?, ?, 0)',
+      [rawJson, DateTime.now().millisecondsSinceEpoch ~/ 1000],
+    );
+  }
+
+  /// Load all pending drafts (oldest first). Returns raw JSON strings.
+  Future<List<String>> getDrafts() async {
+    final results = await customSelect(
+      'SELECT raw_json FROM drafts ORDER BY created_at ASC',
+    ).get();
+    return results.map((r) => r.read<String>('raw_json')).toList();
+  }
+
+  /// Delete a draft after successful publish.
+  Future<void> deleteDraft(int rowid) async {
+    await customStatement('DELETE FROM drafts WHERE rowid = ?', [rowid]);
+  }
+
+  /// Increment attempt count on a draft (for backoff decisions).
+  Future<void> incrementDraftAttempts(int rowid) async {
+    await customStatement(
+      'UPDATE drafts SET attempts = attempts + 1 WHERE rowid = ?',
+      [rowid],
+    );
   }
 
   // --- Relay config ---

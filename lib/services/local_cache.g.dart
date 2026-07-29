@@ -1969,6 +1969,299 @@ class RelayConfigCompanion extends UpdateCompanion<RelayConfigData> {
   }
 }
 
+class $DraftsTable extends Drafts with TableInfo<$DraftsTable, Draft> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DraftsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _rawJsonMeta = const VerificationMeta(
+    'rawJson',
+  );
+  @override
+  late final GeneratedColumn<String> rawJson = GeneratedColumn<String>(
+    'raw_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _attemptsMeta = const VerificationMeta(
+    'attempts',
+  );
+  @override
+  late final GeneratedColumn<int> attempts = GeneratedColumn<int>(
+    'attempts',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [id, rawJson, createdAt, attempts];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'drafts';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<Draft> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('raw_json')) {
+      context.handle(
+        _rawJsonMeta,
+        rawJson.isAcceptableOrUnknown(data['raw_json']!, _rawJsonMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_rawJsonMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('attempts')) {
+      context.handle(
+        _attemptsMeta,
+        attempts.isAcceptableOrUnknown(data['attempts']!, _attemptsMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  Draft map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return Draft(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      rawJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}raw_json'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      attempts: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}attempts'],
+      )!,
+    );
+  }
+
+  @override
+  $DraftsTable createAlias(String alias) {
+    return $DraftsTable(attachedDatabase, alias);
+  }
+}
+
+class Draft extends DataClass implements Insertable<Draft> {
+  final int id;
+  final String rawJson;
+  final int createdAt;
+  final int attempts;
+  const Draft({
+    required this.id,
+    required this.rawJson,
+    required this.createdAt,
+    required this.attempts,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['raw_json'] = Variable<String>(rawJson);
+    map['created_at'] = Variable<int>(createdAt);
+    map['attempts'] = Variable<int>(attempts);
+    return map;
+  }
+
+  DraftsCompanion toCompanion(bool nullToAbsent) {
+    return DraftsCompanion(
+      id: Value(id),
+      rawJson: Value(rawJson),
+      createdAt: Value(createdAt),
+      attempts: Value(attempts),
+    );
+  }
+
+  factory Draft.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return Draft(
+      id: serializer.fromJson<int>(json['id']),
+      rawJson: serializer.fromJson<String>(json['rawJson']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+      attempts: serializer.fromJson<int>(json['attempts']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'rawJson': serializer.toJson<String>(rawJson),
+      'createdAt': serializer.toJson<int>(createdAt),
+      'attempts': serializer.toJson<int>(attempts),
+    };
+  }
+
+  Draft copyWith({int? id, String? rawJson, int? createdAt, int? attempts}) =>
+      Draft(
+        id: id ?? this.id,
+        rawJson: rawJson ?? this.rawJson,
+        createdAt: createdAt ?? this.createdAt,
+        attempts: attempts ?? this.attempts,
+      );
+  Draft copyWithCompanion(DraftsCompanion data) {
+    return Draft(
+      id: data.id.present ? data.id.value : this.id,
+      rawJson: data.rawJson.present ? data.rawJson.value : this.rawJson,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      attempts: data.attempts.present ? data.attempts.value : this.attempts,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('Draft(')
+          ..write('id: $id, ')
+          ..write('rawJson: $rawJson, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('attempts: $attempts')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, rawJson, createdAt, attempts);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is Draft &&
+          other.id == this.id &&
+          other.rawJson == this.rawJson &&
+          other.createdAt == this.createdAt &&
+          other.attempts == this.attempts);
+}
+
+class DraftsCompanion extends UpdateCompanion<Draft> {
+  final Value<int> id;
+  final Value<String> rawJson;
+  final Value<int> createdAt;
+  final Value<int> attempts;
+  const DraftsCompanion({
+    this.id = const Value.absent(),
+    this.rawJson = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.attempts = const Value.absent(),
+  });
+  DraftsCompanion.insert({
+    this.id = const Value.absent(),
+    required String rawJson,
+    required int createdAt,
+    this.attempts = const Value.absent(),
+  }) : rawJson = Value(rawJson),
+       createdAt = Value(createdAt);
+  static Insertable<Draft> custom({
+    Expression<int>? id,
+    Expression<String>? rawJson,
+    Expression<int>? createdAt,
+    Expression<int>? attempts,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (rawJson != null) 'raw_json': rawJson,
+      if (createdAt != null) 'created_at': createdAt,
+      if (attempts != null) 'attempts': attempts,
+    });
+  }
+
+  DraftsCompanion copyWith({
+    Value<int>? id,
+    Value<String>? rawJson,
+    Value<int>? createdAt,
+    Value<int>? attempts,
+  }) {
+    return DraftsCompanion(
+      id: id ?? this.id,
+      rawJson: rawJson ?? this.rawJson,
+      createdAt: createdAt ?? this.createdAt,
+      attempts: attempts ?? this.attempts,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (rawJson.present) {
+      map['raw_json'] = Variable<String>(rawJson.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (attempts.present) {
+      map['attempts'] = Variable<int>(attempts.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DraftsCompanion(')
+          ..write('id: $id, ')
+          ..write('rawJson: $rawJson, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('attempts: $attempts')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalCache extends GeneratedDatabase {
   _$LocalCache(QueryExecutor e) : super(e);
   $LocalCacheManager get managers => $LocalCacheManager(this);
@@ -1978,6 +2271,7 @@ abstract class _$LocalCache extends GeneratedDatabase {
   late final $EventTagsTable eventTags = $EventTagsTable(this);
   late final $ConfigTableTable configTable = $ConfigTableTable(this);
   late final $RelayConfigTable relayConfig = $RelayConfigTable(this);
+  late final $DraftsTable drafts = $DraftsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -1988,6 +2282,7 @@ abstract class _$LocalCache extends GeneratedDatabase {
     eventTags,
     configTable,
     relayConfig,
+    drafts,
   ];
 }
 
@@ -3061,6 +3356,174 @@ typedef $$RelayConfigTableProcessedTableManager =
       RelayConfigData,
       PrefetchHooks Function()
     >;
+typedef $$DraftsTableCreateCompanionBuilder =
+    DraftsCompanion Function({
+      Value<int> id,
+      required String rawJson,
+      required int createdAt,
+      Value<int> attempts,
+    });
+typedef $$DraftsTableUpdateCompanionBuilder =
+    DraftsCompanion Function({
+      Value<int> id,
+      Value<String> rawJson,
+      Value<int> createdAt,
+      Value<int> attempts,
+    });
+
+class $$DraftsTableFilterComposer extends Composer<_$LocalCache, $DraftsTable> {
+  $$DraftsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get rawJson => $composableBuilder(
+    column: $table.rawJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get attempts => $composableBuilder(
+    column: $table.attempts,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DraftsTableOrderingComposer
+    extends Composer<_$LocalCache, $DraftsTable> {
+  $$DraftsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get rawJson => $composableBuilder(
+    column: $table.rawJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get attempts => $composableBuilder(
+    column: $table.attempts,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DraftsTableAnnotationComposer
+    extends Composer<_$LocalCache, $DraftsTable> {
+  $$DraftsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get rawJson =>
+      $composableBuilder(column: $table.rawJson, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<int> get attempts =>
+      $composableBuilder(column: $table.attempts, builder: (column) => column);
+}
+
+class $$DraftsTableTableManager
+    extends
+        RootTableManager<
+          _$LocalCache,
+          $DraftsTable,
+          Draft,
+          $$DraftsTableFilterComposer,
+          $$DraftsTableOrderingComposer,
+          $$DraftsTableAnnotationComposer,
+          $$DraftsTableCreateCompanionBuilder,
+          $$DraftsTableUpdateCompanionBuilder,
+          (Draft, BaseReferences<_$LocalCache, $DraftsTable, Draft>),
+          Draft,
+          PrefetchHooks Function()
+        > {
+  $$DraftsTableTableManager(_$LocalCache db, $DraftsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DraftsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DraftsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DraftsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> rawJson = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<int> attempts = const Value.absent(),
+              }) => DraftsCompanion(
+                id: id,
+                rawJson: rawJson,
+                createdAt: createdAt,
+                attempts: attempts,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required String rawJson,
+                required int createdAt,
+                Value<int> attempts = const Value.absent(),
+              }) => DraftsCompanion.insert(
+                id: id,
+                rawJson: rawJson,
+                createdAt: createdAt,
+                attempts: attempts,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DraftsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$LocalCache,
+      $DraftsTable,
+      Draft,
+      $$DraftsTableFilterComposer,
+      $$DraftsTableOrderingComposer,
+      $$DraftsTableAnnotationComposer,
+      $$DraftsTableCreateCompanionBuilder,
+      $$DraftsTableUpdateCompanionBuilder,
+      (Draft, BaseReferences<_$LocalCache, $DraftsTable, Draft>),
+      Draft,
+      PrefetchHooks Function()
+    >;
 
 class $LocalCacheManager {
   final _$LocalCache _db;
@@ -3075,4 +3538,6 @@ class $LocalCacheManager {
       $$ConfigTableTableTableManager(_db, _db.configTable);
   $$RelayConfigTableTableManager get relayConfig =>
       $$RelayConfigTableTableManager(_db, _db.relayConfig);
+  $$DraftsTableTableManager get drafts =>
+      $$DraftsTableTableManager(_db, _db.drafts);
 }
