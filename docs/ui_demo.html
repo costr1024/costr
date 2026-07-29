@@ -19,6 +19,7 @@
     --font:-apple-system,"PingFang SC","HarmonyOS Sans","Noto Sans CJK SC",system-ui,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  [hidden]{display:none !important}
   html,body{height:100%}
   body{font-family:var(--font);background:#dadfe2;color:var(--tx);
     display:flex;align-items:center;justify-content:center;gap:32px;flex-wrap:wrap;padding:24px}
@@ -513,7 +514,7 @@
       <div class="login-step" id="login-step1">
         <button class="big-btn primary" onclick="loginCreate()">我是新用户，创建账号</button>
         <button class="big-btn" onclick="loginImport()">我有账号，用私钥登录</button>
-        <p class="hint">私钥以 <code>nsec1</code> 开头 · 只存在本机，不上传任何服务器</p>
+        <p class="hint">没有用户名密码——你的账号就是一把钥匙，本机生成、只存本机。</p>
       </div>
 
       <div class="login-step" id="login-create" hidden>
@@ -523,6 +524,7 @@
         <div id="c-step1" class="c-step">
           <p class="step-title">先备份你的私钥</p>
           <div class="key-box" id="new-nsec">nsec1q3w4e5r6t7y8u9i0o1a2s3d4f5g6h7j8k9l0zxcvbnm</div>
+          <p class="hint" style="text-align:left">私钥以 <code>nsec1</code> 开头 · 只存在本机，不上传任何服务器。</p>
           <button class="copy-btn" id="copy-nsec-btn" onclick="copyNsec(this)">复制私钥</button>
           <div class="warn">⚠️ 这把钥匙<b>就是你的整个账号</b>。请抄写或复制到安全的地方保管好。<b>丢失无法找回</b>——去中心化里没人能帮你重置，因为它不属于任何平台。</div>
           <label class="check"><input type="checkbox" id="bk-check" onchange="document.getElementById('c-next1').disabled=!this.checked"> 我已抄写并妥善保存私钥</label>
