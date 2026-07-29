@@ -43,6 +43,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   final List<_Attachment> _attachments = [];
   bool _uploading = false;
   bool _sending = false;
+  bool _nsfw = false;
 
   static const int _softLimit = 280;
   static const int _maxImages = 9;
@@ -53,6 +54,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
   bool get _hasImages => _attachments.any((a) => a.kind == 'image');
   bool get _hasVideo => _attachments.any((a) => a.kind == 'video');
+
+  @override
+  void initState() {
+    super.initState();
+    _nsfw = ref.read(nsfwSettingsProvider).defaultComposeNsfw;
+  }
 
   @override
   void dispose() {
@@ -179,13 +186,17 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     try {
       final actions = NostrActions(identity);
       final imeta = _imetaTags();
+      final extraTags = <List<String>>[
+        ...imeta,
+        if (_nsfw) ['t', 'nsfw'],
+      ];
       // Content already has attachment URLs (appended by _appendToEditor on
       // upload completion) — don't append again.
       final signed = widget.replyTo != null
-          ? actions.reply(widget.replyTo!, text, extraTags: imeta)
+          ? actions.reply(widget.replyTo!, text, extraTags: extraTags)
           : widget.quoteOf != null
-              ? actions.quote(widget.quoteOf!, text, extraTags: imeta)
-              : identity.signEvent(kind: 1, content: text, tags: imeta);
+              ? actions.quote(widget.quoteOf!, text, extraTags: extraTags)
+              : identity.signEvent(kind: 1, content: text, tags: extraTags);
       final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;
       _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}');
@@ -249,6 +260,13 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                 _AttachBtn(icon: Icons.movie_outlined, label: '视频', onPressed: _hasImages ? null : _pickVideo),
                 _AttachBtn(icon: Icons.attach_file, label: '文件', onPressed: _pickFile),
                 const Spacer(),
+                FilterChip(
+                  label: const Text('NSFW'),
+                  selected: _nsfw,
+                  onSelected: (v) => setState(() => _nsfw = v),
+                  visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 8),
                 Text('$count', style: TextStyle(color: over ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant)),
               ],
             ),

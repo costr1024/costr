@@ -750,8 +750,8 @@ class _AboutText extends ConsumerStatefulWidget {
 
 class _AboutTextState extends ConsumerState<_AboutText> {
   bool _expanded = false;
-  static const int _collapseThreshold = 300;
-  static const double _collapsedHeight = 200;
+  static const int _collapseThreshold = 200;
+  static const double _collapsedHeight = 150;
 
   static final RegExp _entityRegex =
       RegExp(r'(?:nostr:)?(nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}');
@@ -819,27 +819,35 @@ class _AboutTextState extends ConsumerState<_AboutText> {
         ],
       );
     }
-    return Stack(
+    // Collapsed: use SizedBox + ClipRect (robust — no SingleChildScrollView
+    // which can conflict with NestedScrollView's gesture handling).
+    final surface = theme.colorScheme.surface;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: _collapsedHeight),
-          child: ClipRect(child: SingleChildScrollView(
-            physics: const NeverScrollableScrollPhysics(),
-            child: body,
-          )),
-        ),
-        Positioned(
-          left: 0, right: 0, bottom: 0,
-          child: Container(
-            alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(top: 18),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                colors: [theme.colorScheme.surface.withValues(alpha: 0), theme.colorScheme.surface],
+        SizedBox(
+          height: _collapsedHeight,
+          child: Stack(
+            children: [
+              ClipRect(child: body),
+              Positioned(
+                left: 0, right: 0, bottom: 0,
+                child: Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(top: 24),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                      colors: [surface.withValues(alpha: 0), surface],
+                    ),
+                  ),
+                  child: TextButton(
+                    onPressed: () => setState(() => _expanded = true),
+                    child: const Text('展开'),
+                  ),
+                ),
               ),
-            ),
-            child: TextButton(onPressed: () => setState(() => _expanded = true), child: const Text('展开')),
+            ],
           ),
         ),
       ],

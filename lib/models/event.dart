@@ -95,6 +95,9 @@ class Event {
   bool get isTextNote => kind == kindTextNote;
   bool get isContactList => kind == kindContactList;
 
+  /// True if the event has a `["t", "nsfw"]` tag (convention for NSFW content).
+  bool get isNsfw => hashtags.contains('nsfw');
+
   /// The event id this kind-1 note directly replies to (NIP-10), or null if it
   /// is a top-level post. Marker precedence: "reply" > legacy positional (empty
   /// marker, last one wins) > "root" (reply-to-root). "mention" tags are not

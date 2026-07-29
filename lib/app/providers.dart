@@ -949,6 +949,55 @@ Future<RelayOk> bookmarkEvent(
   return pool.publishAndWait(signed);
 }
 
+// --- NSFW settings (local, not synced to relays) ---------------------------
+
+class NsfwSettings {
+  const NsfwSettings({this.autoReveal = false, this.defaultComposeNsfw = false});
+  final bool autoReveal;
+  final bool defaultComposeNsfw;
+  NsfwSettings copyWith({bool? autoReveal, bool? defaultComposeNsfw}) =>
+      NsfwSettings(
+        autoReveal: autoReveal ?? this.autoReveal,
+        defaultComposeNsfw: defaultComposeNsfw ?? this.defaultComposeNsfw,
+      );
+}
+
+class NsfwSettingsNotifier extends Notifier<NsfwSettings> {
+  static const _kAutoReveal = 'costr.nsfw.autoReveal';
+  static const _kDefault = 'costr.nsfw.defaultCompose';
+
+  @override
+  NsfwSettings build() {
+    _load();
+    return const NsfwSettings();
+  }
+
+  Future<void> _load() async {
+    final s = ref.read(storageProvider);
+    final ar = await s.readValue(_kAutoReveal);
+    final dc = await s.readValue(_kDefault);
+    if (ar != null || dc != null) {
+      state = NsfwSettings(
+        autoReveal: ar == 'true',
+        defaultComposeNsfw: dc == 'true',
+      );
+    }
+  }
+
+  Future<void> setAutoReveal(bool v) async {
+    state = state.copyWith(autoReveal: v);
+    await ref.read(storageProvider).writeValue(_kAutoReveal, v.toString());
+  }
+
+  Future<void> setDefaultComposeNsfw(bool v) async {
+    state = state.copyWith(defaultComposeNsfw: v);
+    await ref.read(storageProvider).writeValue(_kDefault, v.toString());
+  }
+}
+
+final nsfwSettingsProvider =
+    NotifierProvider<NsfwSettingsNotifier, NsfwSettings>(NsfwSettingsNotifier.new);
+
 // --- Relay status -----------------------------------------------------------
 
 final relayStatusProvider =

@@ -156,6 +156,27 @@ class SecureStorageService {
     await _file.delete(_nsecKey);
   }
 
-  /// No resources to release; provided for provider onDispose symmetry.
   Future<void> dispose() async {}
+
+  // --- Generic key-value storage (for local settings like NSFW) ---
+
+  Future<String?> readValue(String key) async {
+    try {
+      return await _secure.read(key: key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> writeValue(String key, String value) async {
+    try {
+      await _secure.write(key: key, value: value);
+    } catch (_) {}
+  }
+
+  Future<void> deleteValue(String key) async {
+    try {
+      await _secure.delete(key: key);
+    } catch (_) {}
+  }
 }

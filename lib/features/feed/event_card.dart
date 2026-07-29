@@ -1,6 +1,8 @@
 /// Renders one kind-1 text note: avatar, display name/npub, relative time, content.
 library;
 
+import 'dart:ui' as dart_ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -64,7 +66,7 @@ class EventCard extends ConsumerWidget {
                     ],
                   ),
                   const SizedBox(height: 6),
-                  MarkdownContent(event: event),
+                  _NsfwAwareContent(event: event),
                   if (event.hashtags.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Wrap(
@@ -114,7 +116,66 @@ class EventCard extends ConsumerWidget {
   }
 }
 
-/// Reaction emoji chips (NIP-25 kind-7 counts).
+/// Shows NSFW warning overlay if the event has an "nsfw" tag, unless
+/// autoReveal is on or the user has already tapped "查看" on this card.
+class _NsfwAwareContent extends ConsumerStatefulWidget {
+  const _NsfwAwareContent({required this.event});
+  final Event event;
+
+  @override
+  ConsumerState<_NsfwAwareContent> createState() => _NsfwAwareContentState();
+}
+
+class _NsfwAwareContentState extends ConsumerState<_NsfwAwareContent> {
+  bool _revealed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = ref.watch(nsfwSettingsProvider);
+    if (!widget.event.isNsfw || settings.autoReveal || _revealed) {
+      return MarkdownContent(event: widget.event);
+    }
+    // NSFW warning overlay.
+    final theme = Theme.of(context);
+    return Stack(
+      children: [
+        // Blurred content behind.
+        ClipRect(
+          child: ImageFiltered(
+            imageFilter: dart_ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Opacity(
+              opacity: 0.3,
+              child: MarkdownContent(event: widget.event),
+            ),
+          ),
+        ),
+        // Warning overlay.
+        Positioned.fill(
+          child: Container(
+            color: theme.colorScheme.surface.withValues(alpha: 0.7),
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.warning_amber_rounded,
+                    size: 40, color: theme.colorScheme.error),
+                const SizedBox(height: 8),
+                Text('此帖可能包含敏感内容',
+                    style: theme.textTheme.bodyMedium),
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
+                  icon: const Icon(Icons.visibility, size: 18),
+                  label: const Text('点击查看'),
+                  onPressed: () => setState(() => _revealed = true),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 class _ReactionChips extends ConsumerWidget {
   const _ReactionChips({required this.eventId});
   final String eventId;
