@@ -265,6 +265,19 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   }
 }
 
+/// Top-level helper: convert a drift EventRow to our Event model.
+Event _cacheRowToEvent(cache.EventRow row) {
+  return Event(
+    id: row.id,
+    pubkey: row.pubkey,
+    createdAt: row.createdAt,
+    kind: row.kind,
+    tags: (jsonDecode(row.tagsJson) as List).cast<List<dynamic>>(),
+    content: row.content,
+    sig: row.sig,
+  );
+}
+
 final eventStoreProvider =
     NotifierProvider<EventStoreNotifier, List<Event>>(EventStoreNotifier.new);
 
@@ -460,14 +473,24 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   return events.toList();
 });
 
-/// Find an event by id: hit the store first, else fetch via REQ {ids:[id]}.
-/// Used by the post detail page.
+/// Find an event by id: hit SQLite first (O(1) PK), then in-memory store,
+/// else fetch via REQ {ids:[id]}.
 final eventByIdProvider =
     FutureProvider.family<Event?, String>((ref, id) async {
+  // 1. SQLite (O(1) PK lookup).
+  final cache = ref.watch(localCacheProvider).value;
+  if (cache != null) {
+    final row = await cache.queryEventById(id);
+    if (row != null) {
+      return _cacheRowToEvent(row);
+    }
+  }
+  // 2. In-memory store.
   final store = ref.watch(eventStoreProvider);
   for (final e in store) {
     if (e.id == id) return e;
   }
+  // 3. Relay REQ.
   final pool = ref.watch(relayPoolProvider);
   final completer = Completer<Event?>();
   late StreamSubscription<Event> sub;
@@ -486,10 +509,19 @@ final eventByIdProvider =
   );
 });
 
-/// A user's public kind-1 notes (posts + replies), newest-first. Resolves on
-/// the first relay's EOSE (or a 10s timeout). Used by the profile page.
+/// A user's public kind-1 notes (posts + replies), newest-first. SQLite first
+/// (instant), then relay REQ for fresh data. Used by the profile page.
 final userPostsProvider =
     FutureProvider.family<List<Event>, String>((ref, pubkey) async {
+  // 1. SQLite cache (instant).
+  final cache = ref.watch(localCacheProvider).value;
+  final cached = <Event>[];
+  if (cache != null) {
+    for (final row in await cache.queryUserPosts(pubkey, limit: 100)) {
+      cached.add(_cacheRowToEvent(row));
+    }
+  }
+  // 2. Relay REQ (fresh data, merges into cache via _persist).
   final pool = ref.watch(relayPoolProvider);
   final collected = <Event>[];
   final seen = <String>{};
@@ -523,8 +555,15 @@ final userPostsProvider =
     const Duration(seconds: 10),
     onTimeout: () {},
   );
-  collected.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-  return collected;
+  // Merge cached + fresh, dedup by id, newest-first.
+  final all = <Event>[...collected, ...cached];
+  final seenMerge = <String>{};
+  final merged = <Event>[];
+  for (final e in all) {
+    if (seenMerge.add(e.id)) merged.add(e);
+  }
+  merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return merged;
 });
 
 /// A user's follows (NIP-02 kind-3 p-tags) for the profile 关注 tab. Fetches
@@ -1103,12 +1142,22 @@ final relayStatusProvider =
 
 // --- User metadata (NIP-01 kind 0) ----------------------------------------
 
-/// Per-pubkey metadata cache. Checks the EventStore first (kind-0 events
-/// arrive via the global feed REQ {kinds:[0,1,7]}). Falls back to a
-/// dedicated REQ if not cached. Cached for the session.
+/// Per-pubkey metadata cache. Checks SQLite first (O(1) PK lookup), then
+/// in-memory EventStore, then falls back to a dedicated REQ.
 final metadataProvider =
     FutureProvider.family<Metadata?, String>((ref, pubkey) async {
-  // 1. Check EventStore first (kind-0 may have arrived via global feed).
+  // 1. SQLite (O(1) PK lookup — fastest, persisted).
+  final cache = ref.watch(localCacheProvider).value;
+  if (cache != null) {
+    final row = await cache.queryMetadata(pubkey);
+    if (row != null) {
+      try {
+        final json = jsonDecode(row.content);
+        if (json is Map<String, dynamic>) return Metadata.fromJson(json);
+      } catch (_) {}
+    }
+  }
+  // 2. In-memory EventStore (kind-0 may have arrived via global feed).
   final store = ref.watch(eventStoreProvider);
   for (final e in store) {
     if (e.kind == 0 && e.pubkey == pubkey) {
@@ -1118,7 +1167,7 @@ final metadataProvider =
       } catch (_) {}
     }
   }
-  // 2. Fall back to a dedicated REQ.
+  // 3. Fall back to a dedicated REQ.
   final pool = ref.watch(relayPoolProvider);
   final completer = Completer<Metadata?>();
   late StreamSubscription<Event> sub;
