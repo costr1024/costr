@@ -42,7 +42,7 @@ String nextSubId(String purpose) => 'costr:$purpose:${_seq++}';
 /// so it can be unit-tested independently of the relay pool.
 Map<String, dynamic> buildFeedFilter(FeedMode mode, List<String> follows) {
   final filter = <String, dynamic>{
-    'kinds': [Event.kindTextNote],
+    'kinds': [0, 1, 7], // metadata + text notes + reactions (Amethyst pattern)
     'limit': 200,
   };
   if (mode == FeedMode.following && follows.isNotEmpty) {
@@ -116,7 +116,7 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   List<Event> build() {
     final pool = ref.watch(relayPoolProvider);
     _sub = pool.events.listen((e) {
-      if (e.isTextNote && _store.add(e)) {
+      if ((e.kind == 0 || e.isTextNote || e.kind == 7) && _store.add(e)) {
         _scheduleFlush();
       }
     });
@@ -664,19 +664,15 @@ final searchUsersProvider =
   return collected;
 });
 
-/// Reactions (NIP-25 kind-7) for an event. REQ {kinds:[7], "#e":[eventId]}.
-/// Returns a map of emoji/content → count. Resolves on all-EOSE / timeout.
+/// Reactions (NIP-25 kind-7) for an event. Reads from the EventStore (kind-7
+/// events arrive as part of the global feed REQ {kinds:[1,7]}). No separate
+/// #e parameterized query needed (most relays don't support #e anyway).
 final reactionsProvider =
-    FutureProvider.family<Map<String, int>, String>((ref, eventId) async {
-  final pool = ref.watch(relayPoolProvider);
+    Provider.family<Map<String, int>, String>((ref, eventId) {
+  final store = ref.watch(eventStoreProvider);
   final counts = <String, int>{};
-  final seen = <String>{};
-  final completer = Completer<void>();
-  late StreamSubscription<Event> evSub;
-  late StreamSubscription<String> eoseSub;
-  evSub = pool.events.listen((e) {
-    if (e.kind == 7 && !seen.add(e.id)) return;
-    // Check if this reaction references eventId.
+  for (final e in store) {
+    if (e.kind != 7) continue;
     for (final t in e.tags) {
       if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
         final key = e.content.isEmpty ? '+' : e.content;
@@ -684,26 +680,7 @@ final reactionsProvider =
         break;
       }
     }
-  });
-  final subId = nextSubId('reactions');
-  final connectedCount =
-      pool.states.where((s) => s.status == RelayStatus.connected).length;
-  var eoses = 0;
-  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    eoses++;
-    if (eoses >= connectedCount && !completer.isCompleted) completer.complete();
-  });
-  pool.request(
-    subId,
-    <String, dynamic>{'kinds': [7], '#e': [eventId]},
-    closeOnEose: true,
-  );
-  ref.onDispose(() {
-    evSub.cancel();
-    eoseSub.cancel();
-    pool.closeSubscription(subId);
-  });
-  await completer.future.timeout(const Duration(seconds: 10), onTimeout: () {});
+  }
   return counts;
 });
 
@@ -821,7 +798,11 @@ Future<RelayOk> followUser(WidgetRef ref, String pubkey, {String? category}) asy
 
   final signed = NostrActions(identity).follow(current, pubkey);
   final ok = await pool.publishAndWait(signed);
-  if (ok.ok) ref.invalidate(followingStateProvider);
+    // Optimistically add to the EventStore (so the local feed + UI reflect the
+    // follow immediately, before relay confirmation).
+    if (ok.ok) {
+      ref.invalidate(followingStateProvider);
+    }
 
   // If a category is set, also add to the NIP-51 kind-30000 categorized list.
   if (category != null && category.isNotEmpty && ok.ok) {
@@ -1005,11 +986,22 @@ final relayStatusProvider =
 
 // --- User metadata (NIP-01 kind 0) ----------------------------------------
 
-/// Per-pubkey metadata cache. Issues a kind-0 REQ with closeOnEose (one-shot
-/// snapshot — kind 0 is replace-by-author), cached by the family key so each
-/// pubkey is fetched at most once per session. Used by avatars + profile page.
+/// Per-pubkey metadata cache. Checks the EventStore first (kind-0 events
+/// arrive via the global feed REQ {kinds:[0,1,7]}). Falls back to a
+/// dedicated REQ if not cached. Cached for the session.
 final metadataProvider =
     FutureProvider.family<Metadata?, String>((ref, pubkey) async {
+  // 1. Check EventStore first (kind-0 may have arrived via global feed).
+  final store = ref.watch(eventStoreProvider);
+  for (final e in store) {
+    if (e.kind == 0 && e.pubkey == pubkey) {
+      try {
+        final json = jsonDecode(e.content);
+        if (json is Map<String, dynamic>) return Metadata.fromJson(json);
+      } catch (_) {}
+    }
+  }
+  // 2. Fall back to a dedicated REQ.
   final pool = ref.watch(relayPoolProvider);
   final completer = Completer<Metadata?>();
   late StreamSubscription<Event> sub;

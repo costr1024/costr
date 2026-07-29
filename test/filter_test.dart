@@ -5,14 +5,14 @@ void main() {
   group('buildFeedFilter', () {
     test('global mode: kinds=[1], limit=200, no authors', () {
       final f = buildFeedFilter(FeedMode.global, const ['x']);
-      expect(f['kinds'], [1]);
+      expect(f['kinds'], [0, 1, 7]);
       expect(f['limit'], 200);
       expect(f.containsKey('authors'), isFalse);
     });
 
     test('following mode with follows: includes authors', () {
       final f = buildFeedFilter(FeedMode.following, const ['a', 'b']);
-      expect(f['kinds'], [1]);
+      expect(f['kinds'], [0, 1, 7]);
       expect(f['limit'], 200);
       expect(f['authors'], ['a', 'b']);
     });

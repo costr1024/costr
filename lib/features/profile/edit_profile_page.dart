@@ -109,13 +109,11 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
       }
       final contentJson = jsonEncode(data);
       final signed = NostrActions(identity).setMetadata(contentJson);
-      final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
-      if (!mounted) return;
-      _snack(ok.ok ? '资料已更新' : '更新失败：${ok.reason}');
-      if (ok.ok) {
-        ref.invalidate(metadataProvider(identity.pubkeyHex));
-        if (context.mounted) context.pop();
-      }
+      // Optimistically update: push the kind-0 event to the EventStore so
+      // the profile page reflects the change immediately (Amethyst pattern).
+      ref.read(relayPoolProvider).publish(signed);
+      ref.invalidate(metadataProvider(identity.pubkeyHex));
+      if (context.mounted) context.pop();
     } catch (e) {
       _snack('错误：$e');
     } finally {

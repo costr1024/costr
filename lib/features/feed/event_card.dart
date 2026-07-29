@@ -182,23 +182,19 @@ class _ReactionChips extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(reactionsProvider(eventId));
-    return async.when(
-      loading: () => const SizedBox.shrink(),
-      error: (_, _) => const SizedBox.shrink(),
-      data: (Map<String, int> counts) {
-        if (counts.isEmpty) return const SizedBox.shrink();
-        final theme = Theme.of(context);
-        return Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 2,
-            children: [
-              for (final entry in counts.entries)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+    final counts = ref.watch(reactionsProvider(eventId));
+    if (counts.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 2,
+        children: [
+          for (final entry in counts.entries)
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(12),
@@ -219,8 +215,6 @@ class _ReactionChips extends ConsumerWidget {
             ],
           ),
         );
-      },
-    );
   }
 }
 
