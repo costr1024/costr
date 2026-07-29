@@ -8,7 +8,7 @@
   Costr 交互稿（单文件自包含）。
   设计原则见 docs/DESIGN.md。本文件与功能实现必须同步更新。
   用法：浏览器打开，点底栏切换屏幕，点列表项进入详情。
-  快捷键：1 首页  2 搜索  3 通知  4 我的  c 发帖  Esc 返回
+  快捷键：1 首页  2 搜索  3 通知  4 我的  C 发帖  L 登录/注册  Esc 返回
 -->
 <style>
   :root{
@@ -230,6 +230,34 @@
   .rpm .t b{display:block;font-size:15px;font-weight:600;color:var(--tx)}
   .rpm .t small{display:block;font-size:12px;color:var(--tx3);margin-top:1px}
   @media (max-width:1100px){.side{display:none}body{padding:8px}}
+  /* 登录 / 注册 */
+  .login-wrap{padding:40px 24px 32px;display:flex;flex-direction:column;min-height:100%;background:var(--bg)}
+  .login-logo{display:grid;place-items:center;padding:36px 0 16px}
+  .login-wrap h2{text-align:center;font-size:23px;margin-bottom:6px}
+  .login-wrap .sub{text-align:center;color:var(--tx2);font-size:14px;line-height:1.6;margin:0 12px 26px}
+  .login-step{display:flex;flex-direction:column;gap:12px}
+  .big-btn{padding:13px;border-radius:999px;font:700 15px var(--font);cursor:pointer;border:1px solid var(--tx);background:var(--bg);color:var(--brand);text-align:center}
+  .big-btn.primary{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .link-btn{background:none;border:none;color:var(--blue);font:600 14px var(--font);cursor:pointer;padding:8px}
+  .key-box{font:12px ui-monospace,monospace;background:var(--bg2);border:1px solid var(--bd);border-radius:12px;padding:12px;word-break:break-all;color:var(--tx);line-height:1.5}
+  .warn{font-size:13px;color:var(--tx2);background:#fff4e6;border:1px solid #ffd9a0;border-radius:12px;padding:12px;line-height:1.6}
+  .warn b{color:var(--tx)}
+  .hint{font-size:12px;color:var(--tx3);text-align:center;line-height:1.5;margin-top:8px}
+  .check{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--tx);justify-content:center;padding:4px 0}
+  .nsec-area{width:100%;border:1px solid var(--bd);border-radius:12px;padding:12px;font:13px ui-monospace,monospace;outline:none;resize:none;min-height:72px;color:var(--tx);background:var(--bg)}
+  /* 内联关注按钮（列表行） */
+  .fbtn{border:1px solid var(--tx);background:var(--bg);color:var(--brand);font:700 13px var(--font);border-radius:999px;padding:6px 14px;cursor:pointer;flex:none;white-space:nowrap}
+  .fbtn.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .fbtn.mutual{background:var(--bg2);color:var(--tx2);border-color:var(--bd)}
+  .fbtn.danger{border-color:var(--red);color:var(--red);background:var(--bg)}
+  /* profile 子搜索 / 分组筛选 */
+  .sub-search{padding:8px 12px;border-bottom:1px solid var(--bd);position:sticky;top:0;background:var(--bg);z-index:2}
+  .sub-search .in{display:flex;align-items:center;gap:8px;background:var(--bg2);border-radius:999px;padding:8px 12px}
+  .sub-search input{border:none;background:none;outline:none;font:14px var(--font);flex:1;color:var(--tx)}
+  .grp-chips{display:flex;gap:6px;padding:8px 12px;overflow-x:auto;border-bottom:1px solid var(--bd)}
+  .grp-chips::-webkit-scrollbar{display:none}
+  .gchip{flex:none;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font:600 13px var(--font);border-radius:999px;padding:6px 12px;cursor:pointer}
+  .gchip.on{background:var(--brand);color:#fff;border-color:var(--brand)}
 </style>
 </head>
 <body>
@@ -252,7 +280,14 @@
     · <b>转发菜单</b>：直接转发(NIP-18) / 引用(kind 1 带 note) 二选一<br><br>
     <b>操作</b><br>
     点底栏切换 · 点列表进详情 · 点 FAB 发帖<br>
-    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> 切 tab · <kbd>C</kbd> 发帖 · <kbd>Esc</kbd> 返回<br><br>
+    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> 切 tab · <kbd>C</kbd> 发帖 · <kbd>L</kbd> 登录 · <kbd>Esc</kbd> 返回<br><br>
+    <b>新增</b><br>
+    · 登录/注册（创建账号 / 私钥导入）<br>
+    · 退出登录确认页<br>
+    · 搜索结果 帖子/用户 分 tab<br>
+    · 主页 帖子/回帖 搜索<br>
+    · 关注列表 自定义分组展示 + 搜索<br>
+    · 关注者列表 搜索 + 回关<br><br>
     <b>配色</b>：纯白底 + 黑主色（X 浅色基线）<br>
     <b>Logo</b>：广播弧 + 圆点，隐喻"你是自己的广播站"
   </div>
@@ -303,6 +338,10 @@
         <input id="search-input" placeholder="搜索 Costr 上的用户或帖子" oninput="onSearch(this.value)">
       </div>
     </div>
+    <div class="tabs" id="search-tabs">
+      <button class="on" data-st="posts">帖子</button>
+      <button data-st="users">用户</button>
+    </div>
     <div class="content" id="search-content"></div>
   </section>
 
@@ -345,9 +384,13 @@
           <div class="prof-stats"><span><b>312</b> 关注</span><span><b>1.2k</b> 关注者</span></div>
         </div>
       </div>
-      <div class="tabs" style="margin-top:12px">
-        <button class="on">帖子</button><button>回帖</button><button>关注</button><button>关注者</button>
+      <div class="tabs" id="prof-tabs" style="margin-top:12px">
+        <button class="on" data-pt="posts">帖子</button>
+        <button data-pt="replies">回帖</button>
+        <button data-pt="following">关注</button>
+        <button data-pt="followers">关注者</button>
       </div>
+      <div id="prof-filter"></div>
       <div id="prof-list"></div>
     </div>
   </section>
@@ -395,6 +438,9 @@
       <div class="set-group"><div class="h">关于</div>
         <div class="set-row" style="cursor:pointer" onclick="go('about')"><div class="l"><b>关于 Costr</b><span>是什么、设计理念</span></div><span style="color:var(--tx3)">›</span></div>
       </div>
+      <div class="set-group"><div class="h">账号</div>
+        <div class="set-row" style="cursor:pointer" onclick="openSheet('logout-sheet')"><div class="l"><b style="color:var(--red)">退出登录</b><span>保留本地数据，下次可恢复</span></div><span style="color:var(--tx3)">›</span></div>
+      </div>
       <div style="padding:24px 16px;color:var(--tx3);font-size:12px;text-align:center">Costr v1 · 中文优先</div>
     </div>
   </section>
@@ -440,6 +486,53 @@
     </div>
     <div class="content detail" id="detail-content"></div>
   </section>
+
+  <!-- ============ 登录 / 注册 ============ -->
+  <section data-screen="login" hidden>
+    <div class="login-wrap">
+      <div class="login-logo"><svg id="logo-mark4" viewBox="0 0 64 64" width="64" height="64"></svg></div>
+      <h2>欢迎来到 Costr</h2>
+      <p class="sub">你的广播站。<br>发帖全网可见，没有平台审核你的号，你的钥匙只在自己手机里。</p>
+
+      <div class="login-step" id="login-step1">
+        <button class="big-btn primary" onclick="loginCreate()">我是新用户，创建账号</button>
+        <button class="big-btn" onclick="loginImport()">我有账号，用私钥登录</button>
+        <p class="hint">私钥以 <code>nsec1</code> 开头 · 只存在本机，不上传任何服务器</p>
+      </div>
+
+      <div class="login-step" id="login-create" hidden>
+        <p class="sub" style="text-align:left;margin:0 0 4px;font-weight:600;color:var(--tx)">这是你的账号钥匙</p>
+        <div class="key-box" id="new-nsec">nsec1q3w4e5r6t7y8u9i0o1a2s3d4f5g6h7j8k9l0zxcvbnm</div>
+        <div class="warn">⚠️ 请把它抄写保管好。<b>丢失无法找回</b>——去中心化里没人能帮你重置密码，因为这把钥匙就是你的整个账号。</div>
+        <label class="check"><input type="checkbox" onchange="document.getElementById('login-create-btn').disabled=!this.checked"> 我已抄写并妥善保存</label>
+        <button id="login-create-btn" class="big-btn primary" disabled onclick="loginDone()">完成，进入 Costr</button>
+        <button class="link-btn" onclick="loginStep('login-step1')">返回</button>
+      </div>
+
+      <div class="login-step" id="login-import" hidden>
+        <p class="sub" style="text-align:left;margin:0 0 4px;font-weight:600;color:var(--tx)">粘贴你的私钥</p>
+        <textarea class="nsec-area" id="nsec-input" placeholder="nsec1……" oninput="document.getElementById('login-import-btn').disabled=this.value.trim().length===0"></textarea>
+        <div class="warn" style="background:#eef7ff;border-color:#bfe0ff">私钥只存在这台手机的安全存储里。Costr 没有服务器存你的钥匙，所以<b>不会也不需要</b>上传它。</div>
+        <button id="login-import-btn" class="big-btn primary" disabled onclick="loginDone()">登录</button>
+        <button class="link-btn" onclick="loginStep('login-step1')">返回</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 退出登录 sheet -->
+  <div class="sheet" id="logout-sheet">
+    <div class="card">
+      <div class="grab"></div>
+      <div style="padding:8px 20px 20px">
+        <h3 style="font-size:18px;margin-bottom:8px">退出登录？</h3>
+        <p style="color:var(--tx2);font-size:14px;line-height:1.6">本地数据（帖子缓存、关注列表）会保留在这台手机上，下次用同一把私钥登录即可恢复。<br><br>想<b>彻底注销这个账号</b>？去中心化里没人能删你的号——但你可以不再用这把钥匙，它就静默下去了。</p>
+        <div style="display:flex;gap:10px;margin-top:16px">
+          <button class="big-btn" style="flex:1" onclick="closeSheet('logout-sheet')">取消</button>
+          <button class="big-btn primary" style="flex:1;background:var(--red);border-color:var(--red)" onclick="closeSheet('logout-sheet');loginStep('login-step1');go('login')">退出登录</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- 发帖 sheet -->
   <div class="sheet" id="compose-sheet">
@@ -509,6 +602,18 @@ function paintLogo(el){ el.innerHTML = `
 paintLogo(document.getElementById('logo-mark'));
 paintLogo(document.getElementById('logo-mark2'));
 paintLogo(document.getElementById('logo-mark3'));
+paintLogo(document.getElementById('logo-mark4'));
+
+/* ---------- 登录 / 注册 / 退出 ---------- */
+function loginStep(id){['login-step1','login-create','login-import'].forEach(x=>document.getElementById(x).hidden=x!==id);}
+function loginCreate(){loginStep('login-create');}
+function loginImport(){loginStep('login-import');}
+function loginDone(){
+  document.getElementById('login-import-btn') && (document.getElementById('login-import-btn').disabled=true);
+  go('home');
+}
+function openSheet(id){document.getElementById(id).classList.add('show');}
+function closeSheet(id){document.getElementById(id).classList.remove('show');}
 
 /* ---------- 示例数据 ---------- */
 const AVA_COLORS=['#e0736b','#5b8fb0','#c9a227','#6a9b6e','#8a6fb0','#b07b9e','#4a8a9b'];
@@ -522,11 +627,29 @@ const POSTS=[
   {i:2,u:2,text:'试了下 Costr 的发帖，居然秒出现在另一个客户端上，有点爽。',img:true,t:'1小时前',rc:12,rp:3,sh:1,reactions:{'❤️':5,'😂':4,':costr:':2}},
   {i:3,u:3,text:'年轻人第一个去中心化社交工具，门槛低、长得像 X，这就够了。别一上来就讲 NIP 讲中继，把人吓跑。',t:'3小时前',rc:42,rp:9,sh:24,reactions:{'❤️':88,'👍':20,'🎉':12,':nostr:':3}},
   {i:4,u:4,text:'省电的关键：App 在后台别傻盯着连接，回前台再补拉增量。',t:'5小时前',rc:3,rp:0,sh:5,reactions:{'❤️':12,'👍':6}},
+  {i:8,u:0,text:'Costr 通知中心做好了：聚合 + 后台不订阅 + 回前台补拉。年轻、省电、不打扰。#costr #通知',t:'昨天',rc:9,rp:2,sh:3,reactions:{'❤️':14,'🔥':3,':costr:':2}},
 ];
 const REPLIES=[
   {i:5,u:5,text:'聚合这个思路好，X 也是这么干的，列表才不会一拉到底全是重复。',t:'10分钟前',rc:1,rp:0,sh:0,reactions:{'👍':4}},
   {i:6,u:6,text:'问个小白问题：我的帖子别人看不到怎么办？是不是要等一会？',t:'6分钟前',rc:0,rp:0,sh:0,reactions:{}},
   {i:7,u:2,text:'后台不订阅 + 回前台补拉，这个体验比很多 App 都强。',t:'3分钟前',rc:0,rp:0,sh:0,reactions:{'❤️':5}},
+  {i:10,u:0,text:'同感，聚合是关键，否则一拉到底全是重复。',t:'20小时前',rc:0,rp:0,sh:0,reactions:{'👍':3}},
+  {i:11,u:0,text:'后台不订阅这个策略真的很省电，回前台再补拉增量就够了。',t:'18小时前',rc:1,rp:0,sh:0,reactions:{'❤️':4}},
+];
+
+/* 用户简介（关注/关注者列表展示用） */
+const BIOS={0:'写代码，发呆，偶尔写点东西',1:'去中心化爱好者',2:'每天刷 Costr',3:'产品 + 折腾',4:'省电主义',5:'认真提问',6:'新手小白',7:'潜水党'};
+
+/* 我（阿橘）的关注列表，带自定义分组（NIP-02 + NIP-51 分组） */
+const GROUPS=['亲友','新闻资讯','网友','未分组'];
+const FOLLOW_LIST=[
+  {u:1,group:'亲友'},{u:5,group:'亲友'},
+  {u:3,group:'新闻资讯'},{u:2,group:'新闻资讯'},
+  {u:4,group:'网友'},{u:7,group:'网友'},{u:6,group:'未分组'},
+];
+/* 关注者（含是否已互关） */
+const FOLLOWER_LIST=[
+  {u:2,mutual:true},{u:5,mutual:false},{u:3,mutual:true},{u:6,mutual:false},{u:7,mutual:false},
 ];
 
 /* 自定义表情（NIP-30：shortcode + URL，demo 用渐变方块代替图片） */
@@ -708,8 +831,8 @@ const TAB_SCREENS={home:'home',search:'search',notif:'notif',profile:'profile'};
 function setScreen(name){
   document.querySelectorAll('[data-screen]').forEach(s=>s.hidden=s.dataset.screen!==name);
   const isTab=name in TAB_SCREENS;
-  document.getElementById('navbar').style.display='';
-  document.getElementById('fab').style.display = (name==='detail'||name==='notif-settings'||name==='settings'||name==='about')?'none':'';
+  document.getElementById('navbar').style.display = (name==='login')?'none':'';
+  document.getElementById('fab').style.display = (name==='detail'||name==='notif-settings'||name==='settings'||name==='about'||name==='login')?'none':'';
   document.querySelectorAll('.navitem').forEach(b=>b.classList.toggle('on',TAB_SCREENS[name]===b.dataset.nav));
 }
 function go(name){
@@ -717,14 +840,15 @@ function go(name){
   setScreen(name);
   if(name==='notif'){renderNotifs(currentNotifTab); refreshBadge();}
   if(name==='home'){document.getElementById('feed-list').innerHTML=POSTS.map(postCard).join('');}
-  if(name==='profile'){document.getElementById('prof-list').innerHTML=POSTS.slice(0,3).map(p=>postCard(p)).join('');}
+  if(name==='profile'){profQuery='';renderProfile();}
+  if(name==='search'){const si=document.getElementById('search-input');if(si.value){renderSearch();}}
   const c=document.querySelector('.content'); if(c&&c.parentNode.matches('[data-screen="'+name+'"]')) c.scrollTop=0;
   document.querySelector(`[data-screen="${name}"] .content`)?.scrollTo(0,0);
 }
 function back(){const p=stack.pop()||'home';current=p;setScreen(p);
   if(p==='notif'){renderNotifs(currentNotifTab);}
   if(p==='home'){document.getElementById('feed-list').innerHTML=POSTS.map(postCard).join('');}
-  if(p==='profile'){document.getElementById('prof-list').innerHTML=POSTS.slice(0,3).map(postCard).join('');}
+  if(p==='profile'){renderProfile();}
 }
 
 /* tab 切换 */
@@ -766,18 +890,105 @@ function openDetail(i){
   go('detail');
 }
 
-/* 搜索 */
-function onSearch(q){
+/* 搜索（帖子 / 用户 分 tab，Amethyst 风格） */
+let searchQ='', searchTab='posts';
+function onSearch(q){searchQ=q;renderSearch();}
+function renderSearch(){
   const c=document.getElementById('search-content');
-  if(!q.trim()){c.innerHTML=`<div class="empty">搜索 Costr 上的用户或帖子。<br>试试搜「Costr」「通知」。</div>`;return;}
+  const q=searchQ.trim();
+  if(!q){c.innerHTML=`<div class="empty">搜索 Costr 上的用户或帖子。<br>试试搜「Costr」「通知」「阿橘」。</div>`;return;}
   const users=NAMES.filter(([n,h])=>n.includes(q)||h.includes(q));
   const posts=POSTS.filter(p=>p.text.includes(q)).concat(REPLIES.filter(r=>r.text.includes(q)));
-  let h='';
-  if(users.length){h+=`<div class="sect-h">用户</div>`+users.map(([n,hh])=>{const u=NAMES.findIndex(x=>x[0]===n);return `<div class="user-row" onclick="go('profile')"><div class="ava" style="background:${color(u)}">${initials(n)}</div><div class="nm"><b>${n}</b><div class="h">@${hh}</div></div></div>`}).join('')}
-  if(posts.length){h+=`<div class="sect-h">帖子</div>`+posts.map(p=>postCard(p)).join('')}
-  if(!users.length&&!posts.length)h=`<div class="empty">没找到「${q}」相关的内容。</div>`;
-  c.innerHTML=h;
+  if(searchTab==='users'){
+    c.innerHTML = users.length
+      ? `<div class="sect-h">用户 · ${users.length}</div>`+users.map(([n,hh])=>{const u=NAMES.findIndex(x=>x[0]===n);return `<div class="user-row" onclick="go('profile')"><div class="ava" style="background:${color(u)}">${initials(n)}</div><div class="nm"><b>${n}</b><div class="h">@${hh}</div><div class="bio">${BIOS[u]||''}</div></div><button class="fbtn" onclick="event.stopPropagation();this.classList.toggle('on');this.textContent=this.classList.contains('on')?'已关注':'关注'">关注</button></div>`}).join('')
+      : `<div class="empty">没找到「${q}」的用户。</div>`;
+  } else {
+    c.innerHTML = posts.length
+      ? `<div class="sect-h">帖子 · ${posts.length}</div>`+posts.map(p=>postCard(p)).join('')
+      : `<div class="empty">没找到「${q}」的帖子。</div>`;
+  }
 }
+document.getElementById('search-tabs').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  document.querySelectorAll('#search-tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  searchTab=b.dataset.st;renderSearch();
+});
+
+/* 用户主页：帖子/回帖搜索 + 关注分组展示 + 关注者过滤 */
+let profTab='posts', profQuery='', profGroup='全部';
+function renderProfile(){
+  const tabs=document.querySelectorAll('#prof-tabs button');
+  tabs.forEach(b=>b.classList.toggle('on',b.dataset.pt===profTab));
+  const filter=document.getElementById('prof-filter');
+  const searchSVG='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#536471" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>';
+  if(profTab==='posts'||profTab==='replies'){
+    const ph=profTab==='posts'?'搜索阿橘的帖子':'搜索阿橘的回帖';
+    filter.innerHTML=`<div class="sub-search"><div class="in">${searchSVG}<input value="${profQuery}" placeholder="${ph}" oninput="profQuery=this.value;renderProfileList()"></div></div>`;
+  } else if(profTab==='following'){
+    const chips=['全部'].concat(GROUPS).map(g=>`<button class="gchip ${profGroup===g?'on':''}" onclick="profGroup='${g}';renderProfile()">${g}</button>`).join('');
+    filter.innerHTML=`<div class="sub-search"><div class="in">${searchSVG}<input value="${profQuery}" placeholder="搜索你关注的人" oninput="profQuery=this.value;renderProfileList()"></div></div><div class="grp-chips">${chips}</div>`;
+  } else {
+    filter.innerHTML=`<div class="sub-search"><div class="in">${searchSVG}<input value="${profQuery}" placeholder="搜索关注你的人" oninput="profQuery=this.value;renderProfileList()"></div></div>`;
+  }
+  renderProfileList();
+}
+function renderProfileList(){
+  const list=document.getElementById('prof-list');
+  const q=profQuery.trim();
+  if(profTab==='posts'){
+    let items=POSTS.filter(p=>p.u===0);
+    if(q)items=items.filter(p=>p.text.includes(q));
+    list.innerHTML=items.length?items.map(p=>postCard(p)).join(''):`<div class="empty">阿橘还没有匹配「${q}」的帖子。</div>`;
+  } else if(profTab==='replies'){
+    let items=REPLIES.filter(r=>r.u===0);
+    if(q)items=items.filter(r=>r.text.includes(q));
+    list.innerHTML=items.length?items.map(r=>{const[nn,hh]=NAMES[r.u];return `<div class="reply-card" onclick="openDetail(${r.i})">${ava(r.u)}<div class="body"><div class="who"><b>${nn}</b> <span class="h">@${hh}</span><span class="dot">·</span><span class="t">${r.t}</span></div><div class="txt">${r.text}</div><div id="act-${r.i}">${actionsHTML(r)}</div></div></div>`}).join(''):`<div class="empty">阿橘还没有匹配「${q}」的回帖。</div>`;
+  } else if(profTab==='following'){
+    let items=FOLLOW_LIST.filter(f=>!q || NAMES[f.u][0].includes(q)||NAMES[f.u][1].includes(q));
+    if(profGroup!=='全部')items=items.filter(f=>f.group===profGroup);
+    if(!items.length){list.innerHTML=`<div class="empty">没有匹配的关注。</div>`;return;}
+    // 全部：按分组展示；指定分组：单列
+    if(profGroup==='全部'){
+      let h='';
+      for(const g of GROUPS){
+        const grp=items.filter(f=>f.group===g);
+        if(!grp.length)continue;
+        h+=`<div class="sect-h">${g} · ${grp.length}</div>`+grp.map(f=>followRow(f.u,'已关注','on')).join('');
+      }
+      // 未匹配分组的兜底
+      list.innerHTML=h;
+    } else {
+      list.innerHTML=items.map(f=>followRow(f.u,'已关注','on')).join('');
+    }
+  } else { // followers
+    let items=FOLLOWER_LIST.filter(f=>!q || NAMES[f.u][0].includes(q)||NAMES[f.u][1].includes(q));
+    list.innerHTML=items.length?items.map(f=>{
+      const label=f.mutual?'已关注':'回关';
+      const cls=f.mutual?'mutual':'';
+      return followRow(f.u,label,cls);
+    }).join(''):`<div class="empty">没有匹配的关注者。</div>`;
+  }
+}
+function followRow(uIdx,label,cls){
+  const [n,h]=NAMES[uIdx];
+  return `<div class="user-row" onclick="go('profile')"><div class="ava" style="background:${color(uIdx)}">${initials(n)}</div><div class="nm"><b>${n}</b><div class="h">@${h}</div><div class="bio">${BIOS[uIdx]||''}</div></div><button class="fbtn ${cls}" onclick="event.stopPropagation();onFollowRow(this)">${label}</button></div>`;
+}
+function onFollowRow(btn){
+  // 简单 toggle：已关注↔关注；回关↔已关注（互关后变已关注灰）
+  if(btn.classList.contains('mutual'))return; // 已互关，不处理
+  if(btn.classList.contains('on')){
+    btn.classList.remove('on');btn.textContent='关注';
+  } else {
+    btn.classList.add('on');btn.textContent='已关注';
+  }
+}
+document.getElementById('prof-tabs').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  profTab=b.dataset.pt;profQuery='';if(profTab!=='following')profGroup='全部';
+  renderProfile();
+});
+
 
 /* 发帖 */
 function openCompose(){
@@ -807,6 +1018,9 @@ function submitPost(){
 document.getElementById('compose-sheet').addEventListener('click',e=>{
   if(e.target.id==='compose-sheet') e.currentTarget.classList.remove('show');
 });
+document.getElementById('logout-sheet').addEventListener('click',e=>{
+  if(e.target.id==='logout-sheet') e.currentTarget.classList.remove('show');
+});
 
 /* onboarding */
 const OB_STEPS=[
@@ -822,12 +1036,19 @@ function startOB(){obStep=0;showOB();document.getElementById('ob').classList.add
 
 /* 键盘 */
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){const sh=document.getElementById('compose-sheet');if(sh.classList.contains('show')){sh.classList.remove('show');return;}back();}
+  if(e.key==='Escape'){
+    const ob=document.getElementById('ob'); if(ob.classList.contains('show')){closeOB();return;}
+    const sh=document.getElementById('compose-sheet');if(sh.classList.contains('show')){sh.classList.remove('show');return;}
+    const ls=document.getElementById('logout-sheet');if(ls.classList.contains('show')){ls.classList.remove('show');return;}
+    const pop=document.getElementById('popover');if(pop.style.display==='block'){hidePopover();return;}
+    back();
+  }
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
   if(e.key==='1')go('home');
   if(e.key==='2')go('search');
   if(e.key==='3')go('notif');
   if(e.key==='4')go('profile');
+  if(e.key==='l')go('login');
   if(e.key==='c')openCompose();
 });
 

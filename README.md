@@ -35,8 +35,8 @@ Android、iOS、Windows、macOS、Linux 五端。
 
 ## 设计与交互
 
-- [docs/DESIGN.md](docs/DESIGN.md) —— 设计原则与交互规范（设计"宪法"）：用户定位、设计优先级（复刻 X app UI > 简约年轻 > 开箱即用 > 性能）、视觉语言（X 浅色基线：纯白底 + 黑主色，弃用 Material3 紫色）、Costr Logo 规范、4-tab + FAB 导航、通知中心数据源与界面、应用介绍页 / 新手引导、文案规范、性能约束。
-- [docs/ui_demo.html](docs/ui_demo.html) —— 可导航单文件交互稿（浏览器打开即用）：首页 / 搜索 / 通知 / 我的 + 发帖 + 通知设置 / 关于 / 帖子详情 + 新手引导，内联 Costr Logo SVG。
+- [docs/DESIGN.md](docs/DESIGN.md) —— 设计原则与交互规范（设计"宪法"）：用户定位、设计优先级（复刻 X app UI > 简约年轻 > 开箱即用 > 性能）、视觉语言（X 浅色基线：纯白底 + 黑主色，弃用 Material3 紫色）、Costr Logo 规范、4-tab + FAB 导航、通知中心数据源与界面、表情选择器（NIP-25/NIP-30）与转发/引用菜单、应用介绍页 / 新手引导、登录/注册/退出、搜索与主页筛选/关注分组、文案规范、性能约束。
+- [docs/ui_demo.html](docs/ui_demo.html) —— 可导航单文件交互稿（浏览器打开即用）：首页 / 搜索 / 通知 / 我的 + 发帖 + 登录/注册 + 退出登录 + 通知设置 / 关于 / 帖子详情 + 新手引导，内联 Costr Logo SVG。快捷键 `1/2/3/4` 切 tab、`C` 发帖、`L` 登录、`Esc` 返回。
 - 品牌名统一写作 **Costr**（首字母大写）。**每开发新功能前必须先回看这两个文件**，demo 与实现保持同步。
 
 ## 协议
