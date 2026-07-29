@@ -69,17 +69,19 @@ dependencies:
   url_launcher: ^6.3.0
   # Image cropping (square avatar + ratio banner) before Blossom upload.
   image_cropper: ^12.2.1
+  # Local cache: reactive SQLite ORM for 30-day Nostr event persistence.
+  drift: ^2.34.0
+  sqlite3_flutter_libs: ^0.5.0
+  path_provider: ^2.1.0
+  path: ^1.9.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
-  # The "flutter_lints" package below contains a set of recommended lints to
-  # encourage good coding practices. The lint set provided by the package is
-  # activated in the `analysis_options.yaml` file located at the root of your
-  # package. See that file for information about deactivating specific lint
-  # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  # Code generation for drift (local cache).
+  build_runner: ^2.4.0
+  drift_dev: ^2.34.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
