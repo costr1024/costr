@@ -67,6 +67,8 @@ dependencies:
   file_picker: ^10.0.0
   # Launch URLs in the default browser (for hyperlinks in posts).
   url_launcher: ^6.3.0
+  # Image cropping (square avatar + ratio banner) before Blossom upload.
+  image_cropper: ^12.2.1
 
 dev_dependencies:
   flutter_test:
