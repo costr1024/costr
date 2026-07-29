@@ -187,11 +187,27 @@ class EventStoreNotifier extends Notifier<List<Event>> {
     }
   }
 
-  /// Persist an event to SQLite (called on every pool.events arrival).
+  /// Persist an event to SQLite. Only persists events related to the user's
+  /// social graph (follows + self):
+  /// - Replaceable events (kind 0/3/10000+/30000+): ALWAYS cached (tiny,
+  ///   deduped by pubkey+kind, used for avatars/follows/bookmarks).
+  /// - Immutable events (kind 1/7): ONLY if author is in the follows set or
+  ///   is the user themselves. Global firehose events from random users are
+  ///   NOT persisted (in-memory only for browsing).
   Future<void> _persist(Event e) async {
     final db = _cache;
     if (db == null) return;
     try {
+      final isReplaceable = e.kind == 0 || e.kind == 3 ||
+          (e.kind >= 10000 && e.kind < 20000) ||
+          (e.kind >= 30000 && e.kind < 40000);
+      if (!isReplaceable) {
+        // Immutable events: only cache from social graph (follows + followers + self).
+        final graph = ref.read(socialGraphProvider);
+        if (!graph.contains(e.pubkey)) {
+          return; // global firehose from non-social-graph users — in-memory only
+        }
+      }
       await db.writeEvent(
         id: e.id,
         pubkey: e.pubkey,
@@ -309,6 +325,33 @@ class ContactListCacheNotifier extends Notifier<Event?> {
 
 final contactListCacheProvider =
     NotifierProvider<ContactListCacheNotifier, Event?>(ContactListCacheNotifier.new);
+
+/// The user's social graph: follows + followers + self. Used by
+/// EventStoreNotifier._persist to decide which events to cache to SQLite
+/// (only events from the social graph are persisted — global firehose is
+/// in-memory only). Updated by FollowingNotifier (follows) +
+/// userFollowersProvider (followers) + identityProvider (self).
+class SocialGraphNotifier extends Notifier<Set<String>> {
+  @override
+  Set<String> build() {
+    // Watch identity for self pubkey.
+    final id = ref.watch(identityProvider).value;
+    final self = id?.pubkeyHex;
+    // Watch follows.
+    final follows = ref.watch(followingStateProvider).value ?? const <String>[];
+    final set = <String>{...follows};
+    if (self != null) set.add(self);
+    return set;
+  }
+
+  /// Add follower pubkeys (called when userFollowersProvider resolves).
+  void addFollowers(List<String> pubkeys) {
+    state = {...state, ...pubkeys};
+  }
+}
+
+final socialGraphProvider =
+    NotifierProvider<SocialGraphNotifier, Set<String>>(SocialGraphNotifier.new);
 
 class FollowingNotifier extends AsyncNotifier<List<String>> {
   StreamSubscription<Event>? _sub;
@@ -563,6 +606,8 @@ final userFollowersProvider =
     const Duration(seconds: 12),
     onTimeout: () {},
   );
+  // Add followers to the social graph so their events get cached too.
+  ref.read(socialGraphProvider.notifier).addFollowers(collected);
   return collected;
 });
 

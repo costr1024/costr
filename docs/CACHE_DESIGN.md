@@ -48,9 +48,11 @@ costr 当前所有数据（帖子、metadata、reactions、关注列表）纯内
   │     ├─→ EventStoreNotifier (内存 LRU 5000，UI 热数据)
   │     │     └─ 触发 200ms throttle → state = store.events
   │     │
-  │     └─→ LocalCache.writeEvent() (SQLite 持久化)
-  │           ├─ kind 0/3/10000+/30000+ → replaceable_events 表 (upsert)
-  │           └─ kind 1/7/... → events 表 (insert by id)
+  │     └─→ _persist() (条件性写入 SQLite — 仅社交关系链)
+  │           ├─ 可变事件 (kind 0/3/10000+/30000+) → 始终写入 (小, 去重)
+  │           └─ 不可变事件 (kind 1/7) → 仅当作者在社交关系链中时写入
+  │               社交关系链 = 我关注的人 + 关注我的人 + 自己
+  │               全球信息流的随机用户事件不持久化 (仅内存, 节省空间)
   │
 UI Provider 读取
   │
@@ -61,8 +63,27 @@ UI Provider 读取
   │     └─ search: SELECT FROM events_fts WHERE content MATCH ?
   │
   └─→ ② 同时发中继 REQ（后台刷新）
-        └─ 新事件到达 → 写入 SQLite + 更新内存 → provider 自动 rebuild
+        └─ 新事件到达 → 写 SQLite (仅社交关系链) + 更新内存 → provider 自动 rebuild
 ```
+
+### 缓存范围（仅社交关系链，不缓存全球信息流）
+
+| 数据类型 | 缓存策略 | 原因 |
+|---|---|---|
+| kind 0 (metadata) | ✅ 始终缓存 | 极小 (可变, PK 去重), 头像/名字需要 |
+| kind 3 (contact list) | ✅ 始终缓存 | 极小 (可变, PK 去重), 关注列表需要 |
+| kind 10000+/30000+ | ✅ 始终缓存 | 极小 (可变, PK 去重), 书签/分组需要 |
+| kind 1 (text notes) | ✅ 仅社交关系链中的人 | 关注我的人 + 我关注的人 + 自己 |
+| kind 7 (reactions) | ✅ 仅社交关系链中的人 | 同上 |
+| config/settings | ✅ 始终缓存 | 本地配置 |
+| relay_config | ✅ 始终缓存 | NIP-65 中继列表 |
+
+**社交关系链** = `socialGraphProvider`（Set<String>）维护，包含：
+- 我关注的人（来自 kind-3 contactListCache）
+- 关注我的人（来自 userFollowersProvider 的 `#p` 查询结果）
+- 我自己
+
+**不缓存**：全球信息流中随机用户的 kind 1/7 事件。这些只在内存 LRU 中暂存供浏览，不写入 SQLite，避免缓存膨胀。后续如需 2 层社交关系链缓存（关注的人关注的人），扩展 `socialGraphProvider` 即可。
 
 ---
 
