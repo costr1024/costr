@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Costr — 交互稿</title>
+<!--
+  Costr 交互稿（单文件自包含）。
+  设计原则见 docs/DESIGN.md。本文件与功能实现必须同步更新。
+  用法：浏览器打开，点底栏切换屏幕，点列表项进入详情。
+  快捷键：1 首页  2 搜索  3 通知  4 我的  c 发帖  Esc 返回
+-->
+<style>
+  :root{
+    --bg:#ffffff; --bg2:#f7f9f9; --bd:#eff3f4;
+    --tx:#0f1419; --tx2:#536471; --tx3:#71767b;
+    --brand:#0f1419; --red:#f4212e; --green:#00ba7c; --blue:#1d9bf0;
+    --radius:16px;
+    --font:-apple-system,"PingFang SC","HarmonyOS Sans","Noto Sans CJK SC",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{font-family:var(--font);background:#dadfe2;color:var(--tx);
+    display:flex;align-items:center;justify-content:center;gap:32px;flex-wrap:wrap;padding:24px}
+  /* ---- 桌面说明卡 ---- */
+  .side{width:300px;align-self:center}
+  .side h1{font-size:22px;display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .side .lede{color:var(--tx2);font-size:14px;line-height:1.7;margin-bottom:14px}
+  .side .legend{background:var(--bg);border:1px solid var(--bd);border-radius:14px;padding:14px 16px;font-size:13px;color:var(--tx2);line-height:1.9}
+  .side .legend b{color:var(--tx)}
+  .side .legend kbd{background:#eef0f1;border:1px solid var(--bd);border-bottom-width:2px;border-radius:6px;padding:1px 6px;font:600 12px var(--font);color:var(--tx)}
+  /* ---- 手机框 ---- */
+  .phone{width:390px;height:844px;background:#0f1419;border-radius:54px;padding:12px;
+    box-shadow:0 30px 80px rgba(0,0,0,.35),0 4px 14px rgba(0,0,0,.2);position:relative;flex:none}
+  .screen{width:100%;height:100%;background:var(--bg);border-radius:42px;overflow:hidden;
+    position:relative;display:flex;flex-direction:column}
+  /* 状态栏 */
+  .statusbar{height:50px;flex:none;display:flex;align-items:flex-end;justify-content:space-between;
+    padding:0 28px 6px;font-size:15px;font-weight:600;color:var(--tx)}
+  .statusbar .right{display:flex;align-items:center;gap:6px}
+  .sb-batt{width:24px;height:12px;border:1.5px solid var(--tx);border-radius:3px;position:relative;padding:1.5px}
+  .sb-batt::after{content:"";position:absolute;right:-3px;top:3px;width:2px;height:4px;background:var(--tx);border-radius:0 2px 2px 0}
+  .sb-batt i{display:block;height:100%;width:80%;background:var(--tx);border-radius:1px}
+  /* 顶栏 */
+  .topbar{height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;
+    padding:0 16px;border-bottom:1px solid var(--bd);background:rgba(255,255,255,.92);backdrop-filter:blur(8px)}
+  .topbar .title{font-size:20px;font-weight:700}
+  .topbar .tb-left,.topbar .tb-right{display:flex;align-items:center;gap:6px;color:var(--tx2)}
+  .iconbtn{width:36px;height:36px;border-radius:999px;display:grid;place-items:center;
+    border:none;background:transparent;color:var(--tx2);cursor:pointer}
+  .iconbtn:hover{background:rgba(15,20,25,.08)}
+  /* 内容区 */
+  .content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  .content::-webkit-scrollbar{width:0}
+  /* tab 条（顶栏下） */
+  .tabs{display:flex;border-bottom:1px solid var(--bd);position:sticky;top:0;background:var(--bg);z-index:2}
+  .tabs button{flex:1;padding:14px 0;text-align:center;background:none;border:none;font:600 15px var(--font);color:var(--tx3);cursor:pointer;position:relative}
+  .tabs button.on{color:var(--tx)}
+  .tabs button.on::after{content:"";position:absolute;left:50%;bottom:-1px;transform:translateX(-50%);
+    width:44px;height:3px;background:var(--brand);border-radius:3px}
+  /* 帖子卡 */
+  .post{display:flex;gap:12px;padding:12px 16px;border-bottom:1px solid var(--bd);cursor:pointer}
+  .post:active{background:var(--bg2)}
+  .post .ava{width:40px;height:40px;border-radius:50%;flex:none;background:#cfd6db;display:grid;place-items:center;color:#fff;font-weight:700;overflow:hidden}
+  .post .body{flex:1;min-width:0}
+  .post .who{display:flex;align-items:center;gap:4px;font-size:14px}
+  .post .who b{font-weight:700;color:var(--tx)}
+  .post .who .h{color:var(--tx3)}
+  .post .who .t{color:var(--tx3)}
+  .post .who .dot{color:var(--tx3)}
+  .post .txt{font-size:15px;line-height:1.42;margin-top:2px;white-space:pre-wrap;word-break:break-word}
+  .post .media{margin-top:8px;border-radius:14px;overflow:hidden;border:1px solid var(--bd);height:180px;background:linear-gradient(135deg,#dbe2e6,#c5cdd3)}
+  .actions{display:flex;justify-content:space-between;margin-top:8px;color:var(--tx3);max-width:340px}
+  .actions .a{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+  .actions .a svg{width:18px;height:18px}
+  /* 通知项 */
+  .notif{display:flex;gap:12px;padding:12px 16px;border-bottom:1px solid var(--bd);cursor:pointer}
+  .notif:active{background:var(--bg2)}
+  .notif .mark{width:40px;display:flex;flex-direction:column;align-items:center;gap:6px}
+  .notif .mark .gi{width:24px;height:24px;display:grid;place-items:center;color:var(--tx2)}
+  .notif .mark .gi svg{width:22px;height:22px}
+  .notif .mark .gi.heart{color:var(--red)} .notif .mark .gi.repost{color:var(--green)}
+  .notif .mark .gi.follow{color:var(--blue)} .notif .mark .gi.reply{color:var(--tx2)}
+  .notif .mark .dot{width:8px;height:8px;border-radius:50%;background:var(--brand)}
+  .notif .mark .dot.off{visibility:hidden}
+  .notif .body{flex:1;min-width:0}
+  .notif .avatars{display:flex;margin-bottom:6px}
+  .notif .avatars .ava{width:32px;height:32px;margin-left:-8px;border:2px solid var(--bg);border-radius:50%;background:#cfd6db;display:grid;place-items:center;color:#fff;font-weight:700;font-size:12px}
+  .notif .avatars .ava:first-child{margin-left:0}
+  .notif .avatars .more{width:32px;height:32px;margin-left:-8px;border:2px solid var(--bg);border-radius:50%;background:#e7eaec;display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--tx2)}
+  .notif .desc{font-size:14px;line-height:1.4;color:var(--tx)}
+  .notif .desc b{font-weight:700}
+  .notif .desc .what{color:var(--tx2)}
+  .notif .preview{font-size:14px;color:var(--tx2);margin-top:6px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .notif .t{font-size:12px;color:var(--tx3);margin-top:6px}
+  /* 设置 */
+  .set-group{margin-top:14px}
+  .set-group .h{padding:8px 16px;font-size:12px;color:var(--tx3);font-weight:600}
+  .set-row{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg);border-top:1px solid var(--bd)}
+  .set-row:last-child{border-bottom:1px solid var(--bd)}
+  .set-row .l b{display:block;font-size:15px;font-weight:500}
+  .set-row .l span{display:block;font-size:12px;color:var(--tx2);margin-top:2px;line-height:1.4}
+  .switch{width:42px;height:26px;border-radius:999px;background:#cfd6db;position:relative;cursor:pointer;transition:.15s;flex:none}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:.15s}
+  .switch.on{background:var(--green)}
+  .switch.on::after{left:18px}
+  /* 底栏 */
+  .navbar{height:64px;flex:none;display:flex;align-items:center;justify-content:space-around;
+    border-top:1px solid var(--bd);background:rgba(255,255,255,.95);padding-bottom:env(safe-area-inset-bottom)}
+  .navitem{display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;color:var(--tx3);position:relative;padding-top:4px}
+  .navitem svg{width:26px;height:26px}
+  .navitem span{font-size:10px}
+  .navitem.on{color:var(--brand)}
+  .navitem .badge{position:absolute;top:-2px;right:8px;background:var(--red);color:#fff;font-size:10px;font-weight:700;
+    min-width:18px;height:18px;border-radius:9px;display:grid;place-items:center;padding:0 5px;border:2px solid var(--bg)}
+  .fab{position:absolute;right:16px;bottom:80px;width:56px;height:56px;border-radius:50%;background:var(--brand);
+    border:none;color:#fff;display:grid;place-items:center;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.25);z-index:5}
+  .fab svg{width:26px;height:26px}
+  /* 头部 banner */
+  .banner{height:150px;background:linear-gradient(135deg,#3a4148,#1f2429);position:relative}
+  .prof-head{padding:0 16px;position:relative}
+  .prof-head .big-ava{width:76px;height:76px;border-radius:50%;background:#cfd6db;border:4px solid var(--bg);margin-top:-38px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:26px}
+  .prof-head .follow-btn{position:absolute;right:16px;top:8px;background:var(--bg);color:var(--brand);border:1px solid var(--tx);font-weight:700;border-radius:999px;padding:8px 16px;font-size:14px;cursor:pointer}
+  .prof-head .follow-btn.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .prof-name{font-size:20px;font-weight:700;margin-top:8px}
+  .prof-h{color:var(--tx3);font-size:14px}
+  .prof-meta{margin-top:10px;font-size:14px;color:var(--tx);line-height:1.5}
+  .prof-meta .ab{color:var(--tx2);margin-top:6px}
+  .prof-stats{display:flex;gap:20px;margin-top:12px;font-size:14px;color:var(--tx2)}
+  .prof-stats b{color:var(--tx)}
+  /* 搜索 */
+  .search-box{padding:8px 12px;position:sticky;top:0;background:var(--bg);z-index:2;border-bottom:1px solid var(--bd)}
+  .search-box .in{display:flex;align-items:center;gap:8px;background:var(--bg2);border-radius:999px;padding:10px 14px}
+  .search-box input{border:none;background:none;outline:none;font:15px var(--font);flex:1;color:var(--tx)}
+  .sect-h{padding:10px 16px;font-size:13px;color:var(--tx3);font-weight:600;border-bottom:1px solid var(--bd)}
+  .user-row{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--bd);cursor:pointer}
+  .user-row .ava{width:40px;height:40px;border-radius:50%;background:#cfd6db;display:grid;place-items:center;color:#fff;font-weight:700;flex:none}
+  .user-row .nm b{font-size:14px;font-weight:700}
+  .user-row .nm .h{font-size:13px;color:var(--tx3)}
+  .user-row .nm .bio{font-size:13px;color:var(--tx2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* compose modal */
+  .sheet{position:absolute;inset:0;background:rgba(0,0,0,.4);display:none;z-index:20}
+  .sheet.show{display:block}
+  .sheet .card{position:absolute;bottom:0;left:0;right:0;background:var(--bg);border-radius:22px 22px 0 0;max-height:86%;display:flex;flex-direction:column}
+  .sheet .grab{width:38px;height:4px;background:#cfd6db;border-radius:2px;margin:8px auto}
+  .sheet .ch-head{display:flex;align-items:center;gap:12px;padding:6px 16px 12px}
+  .sheet .ch-head .ava{width:40px;height:40px;border-radius:50%;background:#cfd6db;display:grid;place-items:center;color:#fff;font-weight:700}
+  .sheet .ch-head .ctxt{font-size:13px;color:var(--tx3)}
+  .sheet .ch-head .ctxt b{color:var(--tx)}
+  .sheet textarea{border:none;outline:none;resize:none;font:17px var(--font);padding:0 20px 12px;min-height:140px;color:var(--tx);background:none}
+  .sheet .ch-foot{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--bd)}
+  .sheet .ch-foot .tools{display:flex;gap:14px;color:var(--brand)}
+  .sheet .ch-foot .tools svg{width:22px;height:22px}
+  .sheet .ch-foot .cnt{font-size:13px;color:var(--tx2)}
+  .sheet .ch-foot .cnt b{color:var(--brand)}
+  .sheet .post-btn{background:var(--brand);color:#fff;border:none;border-radius:999px;padding:8px 18px;font:700 15px var(--font);cursor:pointer}
+  .sheet .post-btn:disabled{opacity:.5}
+  /* 介绍页 / 引导 */
+  .intro{padding:24px 20px 40px}
+  .intro .logo-wrap{display:grid;place-items:center;padding:30px 0 20px}
+  .intro h2{font-size:22px;margin:14px 0 6px}
+  .intro .sub{color:var(--tx2);font-size:14px;line-height:1.6}
+  .intro .cards{margin-top:18px}
+  .intro .card{border:1px solid var(--bd);border-radius:var(--radius);padding:18px;margin-bottom:14px}
+  .intro .card .ic{width:44px;height:44px;border-radius:12px;background:var(--bg2);display:grid;place-items:center;margin-bottom:12px}
+  .intro .card .ic svg{width:26px;height:26px}
+  .intro .card h3{font-size:17px;margin-bottom:6px}
+  .intro .card p{font-size:14px;color:var(--tx2);line-height:1.6}
+  .intro .card p b{color:var(--tx)}
+  .intro .ph{margin-top:18px;text-align:center;color:var(--tx3);font-size:12px}
+  /* onboarding 遮罩 */
+  .ob{position:absolute;inset:0;z-index:30;background:rgba(0,0,0,.55);display:none}
+  .ob.show{display:block}
+  .ob .tip{position:absolute;background:#fff;border-radius:14px;padding:14px 16px;max-width:240px;box-shadow:0 12px 30px rgba(0,0,0,.3)}
+  .ob .tip h4{font-size:15px;margin-bottom:4px}
+  .ob .tip p{font-size:13px;color:var(--tx2);line-height:1.5}
+  .ob .tip .skip{position:absolute;right:12px;top:12px;font-size:13px;color:var(--blue);background:none;border:none;cursor:pointer}
+  .ob .tip .nx{margin-top:10px;background:var(--brand);color:#fff;border:none;border-radius:999px;padding:7px 18px;font:700 14px var(--font);cursor:pointer}
+  /* 帖子详情 */
+  .detail .op{display:flex;gap:12px;padding:12px 16px;border-bottom:1px solid var(--bd)}
+  .thread-line{margin-left:20px;width:2px;background:var(--bd);margin-right:-22px;align-self:stretch}
+  .reply-card{display:flex;gap:12px;padding:12px 16px;border-bottom:1px solid var(--bd);cursor:pointer}
+  .reply-card .ava{width:36px;height:36px;border-radius:50%;background:#cfd6db;display:grid;place-items:center;color:#fff;font-weight:700;flex:none}
+  .empty{padding:80px 32px;text-align:center;color:var(--tx2);font-size:15px;line-height:1.7}
+  .back-bar .iconbtn{visibility:visible}
+  /* hero 顶栏（首页用 logo） */
+  .topbar .logo{display:flex;align-items:center;gap:8px}
+  .topbar .logo svg{width:28px;height:28px}
+  .topbar .logo b{font-size:20px;font-weight:800;letter-spacing:-.3px}
+  /* 选中态填充图标 helper */
+  .seg{display:flex;margin:8px 12px;border:1px solid var(--bd);border-radius:999px;overflow:hidden}
+  .seg button{flex:1;padding:9px 0;text-align:center;background:none;border:none;font:600 14px var(--font);color:var(--tx2);cursor:pointer}
+  .seg button.on{background:var(--bg2);color:var(--tx)}
+  .chip-row{padding:4px 12px 8px}
+  .chip{display:inline-flex;align-items:center;gap:4px;background:var(--bg2);border-radius:999px;padding:5px 10px 5px 10px;font-size:13px;color:var(--tx)}
+  .chip .x{cursor:pointer;color:var(--tx2);margin-left:2px}
+  .relay{display:inline-flex;align-items:center;gap:5px;background:#eaf6ef;border-radius:999px;padding:4px 10px;font-size:12px;color:var(--green);margin-right:8px}
+  .relay .dotg{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  @media (max-width:1100px){.side{display:none}body{padding:8px}}
+</style>
+</head>
+<body>
+
+<!-- 桌面说明 -->
+<aside class="side">
+  <h1>
+    <svg id="logo-mark" viewBox="0 0 64 64" width="34" height="34" aria-hidden="true"></svg>
+    Costr 交互稿
+  </h1>
+  <p class="lede">中国年轻用户的去中心化社交客户端。本稿覆盖<strong>通知中心</strong>及整体导航重设计。
+    设计原则见 <code>docs/DESIGN.md</code>。</p>
+  <div class="legend">
+    <b>本次重点</b><br>
+    · 通知中心（全部/提及 + 分组聚合 + 设置）<br>
+    · 整体导航：4 tab + FAB（X 风格）<br>
+    · 应用介绍页 / 新手引导<br>
+    · App Logo<br><br>
+    <b>操作</b><br>
+    点底栏切换 · 点列表进详情 · 点 FAB 发帖<br>
+    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> 切 tab · <kbd>C</kbd> 发帖 · <kbd>Esc</kbd> 返回<br><br>
+    <b>配色</b>：纯白底 + 黑主色（X 浅色基线）<br>
+    <b>Logo</b>：广播弧 + 圆点，隐喻"你是自己的广播站"
+  </div>
+</aside>
+
+<!-- 手机 -->
+<div class="phone">
+ <div class="screen" id="screen">
+
+  <!-- 状态栏 -->
+  <div class="statusbar">
+    <span>9:41</span>
+    <div class="right">
+      <svg width="17" height="12" viewBox="0 0 17 12" fill="none"><rect x="0" y="6" width="3" height="6" rx="1" fill="#0f1419"/><rect x="5" y="4" width="3" height="8" rx="1" fill="#0f1419"/><rect x="10" y="2" width="3" height="10" rx="1" fill="#0f1419"/></svg>
+      <div class="sb-batt"><i></i></div>
+    </div>
+  </div>
+
+  <!-- ============ 首页 ============ -->
+  <section data-screen="home">
+    <div class="topbar">
+      <div class="logo">
+        <svg id="logo-mark2" viewBox="0 0 64 64" width="30" height="30"></svg>
+        <b>Costr</b>
+      </div>
+      <div class="tb-right">
+        <span class="relay"><span class="dotg"></span>3/3</span>
+        <button class="iconbtn" onclick="go('search')" title="搜索">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="content">
+      <div class="seg" id="feed-seg">
+        <button class="on" data-f="global">全球</button>
+        <button data-f="following">关注</button>
+      </div>
+      <div class="chip-row" id="tag-chip" style="display:none"><span class="chip">#<span id="tag-name">flutter</span><span class="x" onclick="clearTag()">✕</span></span></div>
+      <div id="feed-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ 搜索 ============ -->
+  <section data-screen="search" hidden>
+    <div class="search-box">
+      <div class="in">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#536471" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="search-input" placeholder="搜索 Costr 上的用户或帖子" oninput="onSearch(this.value)">
+      </div>
+    </div>
+    <div class="content" id="search-content"></div>
+  </section>
+
+  <!-- ============ 通知 ============ -->
+  <section data-screen="notif" hidden>
+    <div class="topbar">
+      <div class="tb-left"><b class="title">通知</b></div>
+      <button class="iconbtn" onclick="go('notif-settings')" title="通知设置">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 8 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H2a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 8a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V2a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 16 4.6a1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H22a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+    <div class="tabs" id="notif-tabs">
+      <button class="on" data-t="all">全部</button>
+      <button data-t="mentions">提及</button>
+    </div>
+    <div class="content" id="notif-list"></div>
+  </section>
+
+  <!-- ============ 我的 ============ -->
+  <section data-screen="profile" hidden>
+    <div class="topbar">
+      <button class="iconbtn" onclick="go('about')" title="关于">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+      </button>
+      <b class="title" style="font-size:17px">阿橘</b>
+      <button class="iconbtn" onclick="go('settings')" title="设置">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 8 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H2a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 8a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V2a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 16 4.6a1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H22a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+    <div class="content">
+      <div class="banner"></div>
+      <div class="prof-head">
+        <div class="big-ava">橘</div>
+        <button class="follow-btn on" id="edit-btn" onclick="alert('进入编辑资料页（占位）')">编辑资料</button>
+        <div class="prof-name">阿橘</div>
+        <div class="prof-h">@juju@costr</div>
+        <div class="prof-meta">
+          写代码，发呆，偶尔写点东西。<br>
+          <span class="ab">🌍 中国 · 🔗 juju.dev</span>
+          <div class="prof-stats"><span><b>312</b> 关注</span><span><b>1.2k</b> 关注者</span></div>
+        </div>
+      </div>
+      <div class="tabs" style="margin-top:12px">
+        <button class="on">帖子</button><button>回帖</button><button>关注</button><button>关注者</button>
+      </div>
+      <div id="prof-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ 通知设置 ============ -->
+  <section data-screen="notif-settings" hidden>
+    <div class="topbar">
+      <button class="iconbtn" onclick="back()" title="返回">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      </button>
+      <b class="title" style="font-size:17px">通知设置</b>
+      <span style="width:36px"></span>
+    </div>
+    <div class="content">
+      <div class="set-group">
+        <div class="h">哪些事要通知你</div>
+        <div class="set-row"><div class="l"><b>回复与提及</b><span>别人 @你 或回复你的帖子时通知</span></div><div class="switch on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="set-row"><div class="l"><b>喜欢与转发</b><span>别人喜欢、转发你的帖子时通知</span></div><div class="switch on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="set-row"><div class="l"><b>新关注者</b><span>有人开始关注你时通知</span></div><div class="switch on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="set-row"><div class="l"><b>整合通知</b><span>同一帖子的多条互动合并成一条，少打扰你</span></div><div class="switch on" onclick="this.classList.toggle('on')"></div></div>
+      </div>
+      <div class="set-group">
+        <div class="h">提示</div>
+        <div class="set-row" style="cursor:default"><div class="l"><b>不在后台盯着你</b><span>App 在后台时不会偷偷保持连接，回到前台才会拉取新通知，省电。</span></div></div>
+        <div class="set-row" style="cursor:default"><div class="l"><b>只有最近 200 条帖子会被监听</b><span>太老的帖子基本不再有人互动，不再监听，省流量。</span></div></div>
+      </div>
+      <div style="padding:20px 16px;color:var(--tx3);font-size:12px;line-height:1.6">
+        所有通知只存在你这台手机上。Costr 不收集、不上传你的通知记录。
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 设置（我的入口） ============ -->
+  <section data-screen="settings" hidden>
+    <div class="topbar">
+      <button class="iconbtn" onclick="back()" title="返回"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
+      <b class="title" style="font-size:17px">设置</b><span style="width:36px"></span>
+    </div>
+    <div class="content">
+      <div class="set-group"><div class="h">通用</div>
+        <div class="set-row" style="cursor:pointer" onclick="go('notif-settings')"><div class="l"><b>通知</b><span>回复、喜欢、关注等</span></div><span style="color:var(--tx3)">›</span></div>
+        <div class="set-row" style="cursor:pointer" onclick="alert('账号与身份（占位）')"><div class="l"><b>账号与身份</b><span>你的身份钥匙、登录与登出</span></div><span style="color:var(--tx3)">›</span></div>
+        <div class="set-row" style="cursor:pointer" onclick="alert('服务器节点（占位）')"><div class="l"><b>服务器节点</b><span>Costr 连接的服务器，一般不用改</span></div><span style="color:var(--tx3)">›</span></div>
+      </div>
+      <div class="set-group"><div class="h">关于</div>
+        <div class="set-row" style="cursor:pointer" onclick="go('about')"><div class="l"><b>关于 Costr</b><span>是什么、设计理念</span></div><span style="color:var(--tx3)">›</span></div>
+      </div>
+      <div style="padding:24px 16px;color:var(--tx3);font-size:12px;text-align:center">Costr v1 · 中文优先</div>
+    </div>
+  </section>
+
+  <!-- ============ 关于 / 介绍页 ============ -->
+  <section data-screen="about" hidden>
+    <div class="topbar">
+      <button class="iconbtn" onclick="back()" title="返回"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
+      <b class="title" style="font-size:17px">关于 Costr</b><span style="width:36px"></span>
+    </div>
+    <div class="content">
+      <div class="intro">
+        <div class="logo-wrap"><svg id="logo-mark3" viewBox="0 0 64 64" width="72" height="72"></svg></div>
+        <h2 style="text-align:center">Costr</h2>
+        <p class="sub" style="text-align:center">你的广播站。</p>
+        <div class="cards">
+          <div class="card">
+            <div class="ic"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0f1419" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg></div>
+            <h3>发一条，全网可见</h3>
+            <p>你发的每一条帖子，都会广播到整个网络。<b>没有平台审核你的号</b>，也不会被悄悄限流。</p>
+          </div>
+          <div class="card">
+            <div class="ic"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0f1419" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 5L20 8l-4 3.9.9 5.6L12 14.8 7.1 17.5 8 11.9 4 8l5.6-1z"/><path d="M7 19l-2 3M19 19l2 3"/></svg></div>
+            <h3>你的钥匙，在你手机里</h3>
+            <p>你的账号就是一串钥匙，<b>只存在你这台手机上</b>。没有公司能封你，也没有人能替你发帖——像自己开了个广播站。</p>
+          </div>
+          <div class="card">
+            <div class="ic"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0f1419" status="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12h6"/></svg></div>
+            <h3>简单、克制、不打扰</h3>
+            <p>信息是公开的，但体验是安静的。<b>默认值就是最好的设置</b>，开箱即用，不用折腾一堆开关。</p>
+          </div>
+        </div>
+        <p class="ph">Costr · Chinese Nostr · 一个面向中国年轻人的去中心化社交客户端</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 帖子详情 ============ -->
+  <section data-screen="detail" hidden>
+    <div class="topbar">
+      <button class="iconbtn" onclick="back()" title="返回"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
+      <b class="title" style="font-size:17px">帖子</b><span style="width:36px"></span>
+    </div>
+    <div class="content detail" id="detail-content"></div>
+  </section>
+
+  <!-- 发帖 sheet -->
+  <div class="sheet" id="compose-sheet">
+    <div class="card">
+      <div class="grab"></div>
+      <div class="ch-head">
+        <div class="ava">橘</div>
+        <div class="ctxt" id="compose-ctxt">发一条新帖子</div>
+      </div>
+      <textarea id="compose-text" placeholder="有什么想说的？" oninput="onComposeInput(this.value)"></textarea>
+      <div class="ch-foot">
+        <div class="tools">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M10 8l6 4-6 4z"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5V7l-4-4H7a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h6"/><path d="M14 3v4h4M9 14h4M9 10h7"/></svg>
+        </div>
+        <div class="cnt"><b id="char-count">0</b>/280</div>
+        <button class="post-btn" id="post-btn" onclick="submitPost()" disabled>发帖</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- onboarding 遮罩 -->
+  <div class="ob" id="ob">
+    <div class="tip" id="ob-tip" style="right:12px;bottom:96px">
+      <button class="skip" onclick="closeOB()">跳过</button>
+      <h4 id="ob-title">发帖</h4>
+      <p id="ob-text">点这里发一条帖子。你发的会广播到全网。</p>
+      <button class="nx" onclick="nextOB()">下一步</button>
+    </div>
+  </div>
+
+  <!-- 底栏 -->
+  <div class="navbar" id="navbar">
+    <button class="navitem on" data-nav="home" onclick="go('home')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg><span>首页</span></button>
+    <button class="navitem" data-nav="search" onclick="go('search')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><span>搜索</span></button>
+    <button class="navitem" data-nav="notif" onclick="go('notif')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
+      <span class="badge" id="notif-badge">7</span><span>通知</span></button>
+    <button class="navitem" data-nav="profile" onclick="go('profile')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span>我的</span></button>
+  </div>
+
+  <!-- FAB -->
+  <button class="fab" id="fab" onclick="openCompose()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+
+ </div>
+</div>
+
+<script>
+/* ---------- Logo（广播弧 + 圆点） ---------- */
+function paintLogo(el){ el.innerHTML = `
+  <rect x="0" y="0" width="64" height="64" rx="14" fill="#0f1419"/>
+  <g fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round">
+    <path d="M36.6 27.4 A8 8 0 0 1 36.6 36.6"/>
+    <path d="M41.5 24 A14 14 0 0 1 41.5 40"/>
+    <path d="M46.4 20.5 A20 20 0 0 1 46.4 43.5"/>
+  </g>
+  <circle cx="30" cy="32" r="2.6" fill="#fff"/>` }
+paintLogo(document.getElementById('logo-mark'));
+paintLogo(document.getElementById('logo-mark2'));
+paintLogo(document.getElementById('logo-mark3'));
+
+/* ---------- 示例数据 ---------- */
+const AVA_COLORS=['#e0736b','#5b8fb0','#c9a227','#6a9b6e','#8a6fb0','#b07b9e','#4a8a9b'];
+const NAMES=[['阿橘','juju'],['小满','xiaoman'],['陈一','chenyi'],['木木','mumu'],['阿K','kayi'],['夜行','yexing'],['糖糖','tangtang'],['老李','laoli']];
+function initials(n){return n.slice(0,1)}
+function color(i){return AVA_COLORS[i%AVA_COLORS.length]}
+
+const POSTS=[
+  {i:0,u:0,text:'今天把通知中心做完了，聚合后列表干净多了。一百条喜欢聚合成五条，UI 不卡了。#flutter #costr',img:true,t:'2分钟前',rc:18,rp:4,like:32,sh:2},
+  {i:1,u:1,text:'去中心化最浪漫的一点是：你的账号在你自己手机里，没有谁能替你按发送键。',t:'14分钟前',rc:6,rp:1,like:51,sh:8},
+  {i:2,u:2,text:'试了下 Costr 的发帖，居然秒出现在另一个客户端上，有点爽。',img:true,t:'1小时前',rc:12,rp:3,like:9,sh:1},
+  {i:3,u:3,text:'年轻人第一个去中心化社交工具，门槛低、长得像 X，这就够了。别一上来就讲 NIP 讲中继，把人吓跑。',t:'3小时前',rc:42,rp:9,like:120,sh:24},
+  {i:4,u:4,text:'省电的关键：App 在后台别傻盯着连接，回前台再补拉增量。',t:'5小时前',rc:3,rp:0,like:18,sh:5},
+];
+const REPLIES=[
+  {i:5,u:5,text:'聚合这个思路好，X 也是这么干的，列表才不会一拉到底全是重复。',t:'10分钟前',rc:1,rp:0,like:4,sh:0},
+  {i:6,u:6,text:'问个小白问题：我的帖子别人看不到怎么办？是不是要等一会？',t:'6分钟前',rc:0,rp:0,like:2,sh:0},
+  {i:7,u:2,text:'后台不订阅 + 回前台补拉，这个体验比很多 App 都强。',t:'3分钟前',rc:0,rp:0,like:5,sh:0},
+];
+
+function ava(u){const [n,h]=NAMES[u];const c=color(u);
+  return `<div class="ava" style="background:${c}">${initials(n)}</div>`}
+function who(u){const [n,h]=NAMES[u];return `<b>${n}</b> <span class="h">@${h}</span><span class="dot">·</span><span class="t">`}
+
+const ACT={
+  reply:{ic:'reply',svg:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H6l-3 3V8.5A8.5 8.5 0 0 1 11.5 0h1A8.5 8.5 0 0 1 21 11.5z"/></svg>',verb:'回复了你的帖子'},
+  like:{ic:'heart',svg:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.5 1.2 4 2.5.5-1.3 2-2.5 4-2.5 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg>',verb:'喜欢了你的帖子'},
+  repost:{ic:'repost',svg:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3l4 3-4 3M7 7h14M7 21l-4-3 4-3M21 17H3"/></svg>',verb:'转发了你的帖子'},
+  follow:{ic:'follow',svg:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',verb:'开始关注你'},
+  quote:{ic:'reply',svg:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H4v6h5l-1 4 5-5V7zM20 7h-5v6h5l-1 4 5-5V7z"/></svg>',verb:'引用了你的帖子'},
+  mention:{ic:'reply',svg:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H6l-3 3V8.5A8.5 8.5 0 0 1 11.5 0h1A8.5 8.5 0 0 1 21 11.5z"/></svg>',verb:'在帖子里 @了你'},
+};
+
+const NOTIFS=[
+  {type:'like',users:[1,2,4,5],extra:3,time:'2分钟前',preview:'今天把通知中心做完了，聚合后列表干净多了…',target:0,unread:true},
+  {type:'reply',users:[5],time:'10分钟前',preview:'聚合这个思路好，X 也是这么干的，列表才不会重复…',target:0,unread:true},
+  {type:'follow',users:[6,2],extra:1,time:'17分钟前',preview:'',unread:true},
+  {type:'repost',users:[3],time:'32分钟前',preview:'去中心化最浪漫的一点是：你的账号在你自己手机里…',target:1,unread:true},
+  {type:'quote',users:[2],time:'1小时前',preview:'试了下 Costr 的发帖，居然秒出现在另一个客户端…',target:2,unread:false},
+  {type:'mention',users:[6],time:'2小时前',preview:'@阿橘 问个小白问题：我的帖子别人看不到怎么办？',target:5,unread:false},
+  {type:'like',users:[3,4],extra:8,time:'3小时前',preview:'年轻人第一个去中心化社交工具，门槛低、长得像 X…',target:3,unread:false},
+  {type:'follow',users:[7],time:'5小时前',preview:'',unread:false},
+];
+
+/* ---------- 渲染帖子卡 ---------- */
+function postCard(p,extra=''){
+  const [n,h]=NAMES[p.u];
+  return `<div class="post" onclick="openDetail(${p.i})">
+    ${ava(p.u)}
+    <div class="body">
+      <div class="who"><b>${n}</b> <span class="h">@${h}</span><span class="dot">·</span><span class="t">${p.t}</span></div>
+      <div class="txt">${p.text}</div>
+      ${p.img?'<div class="media"></div>':''}
+      <div class="actions">
+        <div class="a" onclick="event.stopPropagation();openReply(${p.i})">${ACT.reply.svg}<span>${p.rc}</span></div>
+        <div class="a" onclick="event.stopPropagation()">${ACT.repost.svg}<span>${p.rp}</span></div>
+        <div class="a" onclick="event.stopPropagation();toggleLike(this)">${ACT.like.svg}<span>${p.like}</span></div>
+        <div class="a" onclick="event.stopPropagation()">${svgShare()}<span>${p.sh}</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+function svgShare(){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M12 3v13M8 7l4-4 4 4"/></svg>'}
+function toggleLike(el){el.classList.toggle('liked');el.style.color=el.classList.contains('liked')?'var(--red)':'var(--tx3)';const s=el.querySelector('span');s.textContent=parseInt(s.textContent)+(el.classList.contains('liked')?1:-1)}
+
+/* ---------- 渲染通知 ---------- */
+function notifItem(n){
+  const act=ACT[n.type];
+  const names=n.users.map(u=>NAMES[u][0]).join('、');
+  const head = n.extra ? `${names} 和另外 ${n.extra} 人` : names;
+  const avatars = n.users.slice(0,3).map(u=>{const [nm,h]=NAMES[u];return `<div class="ava" style="background:${color(u)}">${initials(nm)}</div>`}).join('')
+    + (n.extra?`<div class="more">+${n.extra}</div>`:'');
+  const target = n.type==='follow' ? '开始关注了你' : act.verb;
+  return `<div class="notif" onclick="openNotif(${NOTIFS.indexOf(n)})">
+    <div class="mark"><div class="gi ${act.ic}">${act.svg}</div><div class="dot ${n.unread?'':'off'}"></div></div>
+    <div class="body">
+      <div class="avatars">${avatars}</div>
+      <div class="desc"><b>${head}</b> <span class="what">${target}</span></div>
+      ${n.preview?`<div class="preview">${n.preview}</div>`:''}
+      <div class="t">${n.time}</div>
+    </div>
+  </div>`;
+}
+function renderNotifs(tab){
+  const list=document.getElementById('notif-list');
+  let items=NOTIFS;
+  if(tab==='mentions') items=NOTIFS.filter(n=>n.type==='mention'||n.type==='reply');
+  list.innerHTML = items.length ? items.map(notifItem).join('') :
+    `<div class="empty">还没有提及你的通知。<br>有人在帖子里 @你 或回复你时会出现在这里。</div>`;
+}
+function openNotif(i){
+  const n=NOTIFS[i];
+  n.unread=false; refreshBadge();
+  if(n.type==='follow'){go('profile');}
+  else if(n.target!=null){openDetail(n.target);}
+  else {go('home');}
+}
+function refreshBadge(){
+  const u=NOTIFS.filter(n=>n.unread).length;
+  const b=document.getElementById('notif-badge');
+  if(u){b.style.display='grid';b.textContent=u;}else{b.style.display='none';}
+  document.querySelectorAll('.navitem[data-nav=notif]')[0];
+}
+
+/* ---------- 屏幕切换 ---------- */
+const stack=[];
+let current='home';
+const TAB_SCREENS={home:'home',search:'search',notif:'notif',profile:'profile'};
+function setScreen(name){
+  document.querySelectorAll('[data-screen]').forEach(s=>s.hidden=s.dataset.screen!==name);
+  const isTab=name in TAB_SCREENS;
+  document.getElementById('navbar').style.display='';
+  document.getElementById('fab').style.display = (name==='detail'||name==='notif-settings'||name==='settings'||name==='about')?'none':'';
+  document.querySelectorAll('.navitem').forEach(b=>b.classList.toggle('on',TAB_SCREENS[name]===b.dataset.nav));
+}
+function go(name){
+  if(name!==current){stack.push(current);current=name;}
+  setScreen(name);
+  if(name==='notif'){renderNotifs(currentNotifTab); refreshBadge();}
+  if(name==='home'){document.getElementById('feed-list').innerHTML=POSTS.map(postCard).join('');}
+  if(name==='profile'){document.getElementById('prof-list').innerHTML=POSTS.slice(0,3).map(p=>postCard(p)).join('');}
+  const c=document.querySelector('.content'); if(c&&c.parentNode.matches('[data-screen="'+name+'"]')) c.scrollTop=0;
+  document.querySelector(`[data-screen="${name}"] .content`)?.scrollTo(0,0);
+}
+function back(){const p=stack.pop()||'home';current=p;setScreen(p);
+  if(p==='notif'){renderNotifs(currentNotifTab);}
+  if(p==='home'){document.getElementById('feed-list').innerHTML=POSTS.map(postCard).join('');}
+  if(p==='profile'){document.getElementById('prof-list').innerHTML=POSTS.slice(0,3).map(postCard).join('');}
+}
+
+/* tab 切换 */
+let currentNotifTab='all';
+document.getElementById('notif-tabs').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  document.querySelectorAll('#notif-tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  currentNotifTab=b.dataset.t; renderNotifs(currentNotifTab);
+});
+document.getElementById('feed-seg').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  document.querySelectorAll('#feed-seg button').forEach(x=>x.classList.toggle('on',x===b));
+  if(b.dataset.f==='following'){
+    document.getElementById('feed-list').innerHTML=`<div class="empty">你还没有关注任何人。<br>在帖子或搜索里点关注，他们会出现这里。</div>`;
+  } else {
+    document.getElementById('feed-list').innerHTML=POSTS.map(postCard).join('');
+  }
+});
+
+/* 帖子详情 */
+function openDetail(i){
+  const p=POSTS.find(x=>x.i===i)||REPLIES.find(x=>x.i===i);
+  const [n,h]=NAMES[p.u];
+  document.getElementById('detail-content').innerHTML=`
+    <div class="post" style="cursor:default">
+      ${ava(p.u)}
+      <div class="body">
+        <div class="who"><b>${n}</b> <span class="h">@${h}</span><span class="dot">·</span><span class="t">${p.t}</span></div>
+        <div class="txt">${p.text}</div>
+        ${p.img?'<div class="media"></div>':''}
+        <div style="color:var(--tx3);font-size:13px;margin-top:10px">${p.t} · 23:45</div>
+        <div style="display:flex;gap:16px;border-top:1px solid var(--bd);border-bottom:1px solid var(--bd);padding:8px 0;margin-top:8px;color:var(--tx2);font-size:13px"><span><b style="color:var(--tx)">${p.rc}</b> 回复</span><span><b style="color:var(--tx)">${p.like}</b> 喜欢</span><span><b style="color:var(--tx)">${p.rp}</b> 转发</span></div>
+        <div class="actions"><div class="a" onclick="openReply(${p.i})">${ACT.reply.svg}<span>${p.rc}</span></div><div class="a">${ACT.repost.svg}<span>${p.rp}</span></div><div class="a" onclick="toggleLike(this)">${ACT.like.svg}<span>${p.like}</span></div><div class="a">${svgShare()}<span>${p.sh}</span></div></div>
+      </div>
+    </div>
+    <div class="sect-h">回复 · ${REPLIES.length}</div>
+    ${REPLIES.map(r=>{const[nn,hh]=NAMES[r.u];return `<div class="reply-card" onclick="openDetail(${r.i})">${ava(r.u)}<div class="body"><div class="who"><b>${nn}</b> <span class="h">@${hh}</span><span class="dot">·</span><span class="t">${r.t}</span></div><div class="txt">${r.text}</div><div class="actions"><div class="a">${ACT.reply.svg}<span>${r.rc}</span></div><div class="a">${ACT.repost.svg}<span>${r.rp}</span></div><div class="a" onclick="toggleLike(this)">${ACT.like.svg}<span>${r.like}</span></div><div class="a">${svgShare()}<span>${r.sh}</span></div></div></div></div>`}).join('')}
+  `;
+  go('detail');
+}
+
+/* 搜索 */
+function onSearch(q){
+  const c=document.getElementById('search-content');
+  if(!q.trim()){c.innerHTML=`<div class="empty">搜索 Costr 上的用户或帖子。<br>试试搜「Costr」「通知」。</div>`;return;}
+  const users=NAMES.filter(([n,h])=>n.includes(q)||h.includes(q));
+  const posts=POSTS.filter(p=>p.text.includes(q)).concat(REPLIES.filter(r=>r.text.includes(q)));
+  let h='';
+  if(users.length){h+=`<div class="sect-h">用户</div>`+users.map(([n,hh])=>{const u=NAMES.findIndex(x=>x[0]===n);return `<div class="user-row" onclick="go('profile')"><div class="ava" style="background:${color(u)}">${initials(n)}</div><div class="nm"><b>${n}</b><div class="h">@${hh}</div></div></div>`}).join('')}
+  if(posts.length){h+=`<div class="sect-h">帖子</div>`+posts.map(p=>postCard(p)).join('')}
+  if(!users.length&&!posts.length)h=`<div class="empty">没找到「${q}」相关的内容。</div>`;
+  c.innerHTML=h;
+}
+
+/* 发帖 */
+function openCompose(){
+  document.getElementById('compose-sheet').classList.add('show');
+  document.getElementById('compose-text').focus();
+}
+function openReply(i){
+  const p=POSTS.find(x=>x.i===i)||REPLIES.find(x=>x.i===i);
+  const [n,h]=NAMES[p.u];
+  document.getElementById('compose-ctxt').innerHTML=`回复 <b>@${h}</b> · ${p.text.slice(0,20)}…`;
+  document.getElementById('compose-sheet').classList.add('show');
+}
+function onComposeInput(v){
+  const n=v.length;
+  document.getElementById('char-count').textContent=n;
+  document.getElementById('post-btn').disabled = n===0||n>280;
+}
+function submitPost(){
+  document.getElementById('compose-sheet').classList.remove('show');
+  const v=document.getElementById('compose-text').value;
+  document.getElementById('compose-text').value='';
+  document.getElementById('char-count').textContent=0;
+  document.getElementById('post-btn').disabled=true;
+  document.getElementById('compose-ctxt').textContent='发一条新帖子';
+  alert('已广播（demo 占位）：「'+v.slice(0,30)+(v.length>30?'…':'')+'」');
+}
+document.getElementById('compose-sheet').addEventListener('click',e=>{
+  if(e.target.id==='compose-sheet') e.currentTarget.classList.remove('show');
+});
+
+/* onboarding */
+const OB_STEPS=[
+  {title:'发帖',text:'点右下角按钮发一条帖子。你发的会广播到全网，没有平台能审核你的号。',pos:{right:'12px',bottom:'96px'}},
+  {title:'通知',text:'点底栏的「通知」看你被 @、被回复、被喜欢。App 在后台不会偷偷盯着，省电。',pos:{left:'50px',bottom:'96px'}},
+  {title:'关注',text:'点别人的头像或名字进主页，关注后他们的帖子会出现在「首页·关注」里。',pos:{left:'50px',bottom:'96px'}},
+];
+let obStep=0;
+function nextOB(){obStep++;if(obStep>=OB_STEPS.length){closeOB();return;}showOB();}
+function showOB(){const s=OB_STEPS[obStep];document.getElementById('ob-title').textContent=s.title;document.getElementById('ob-text').textContent=s.text;const t=document.getElementById('ob-tip');t.style.left=s.pos.left||'';t.style.right=s.pos.right||'';t.style.bottom=s.pos.bottom||'';}
+function closeOB(){document.getElementById('ob').classList.remove('show');}
+function startOB(){obStep=0;showOB();document.getElementById('ob').classList.add('show');}
+
+/* 键盘 */
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){const sh=document.getElementById('compose-sheet');if(sh.classList.contains('show')){sh.classList.remove('show');return;}back();}
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
+  if(e.key==='1')go('home');
+  if(e.key==='2')go('search');
+  if(e.key==='3')go('notif');
+  if(e.key==='4')go('profile');
+  if(e.key==='c')openCompose();
+});
+
+/* 初始化 */
+document.getElementById('feed-list').innerHTML=POSTS.map(postCard).join('');
+renderNotifs('all');
+refreshBadge();
+// 首次打开演示 onboarding（点跳过或下一步关闭）
+setTimeout(startOB,400);
+</script>
+</body>
+</html>
