@@ -32,6 +32,8 @@ const List<String> defaultRelays = <String>[
   'wss://relay.ditto.pub/',
   'wss://relay.bostr.online/',
   'wss://nostr.wine/',
+  'wss://relay.nostr.net/',
+  'wss://relay.0xchat.com/',
 ];
 
 // Monotonic subId counter, namespaced for relay-log readability.
@@ -191,7 +193,21 @@ class TagFilterNotifier extends Notifier<String?> {
 final tagFilterProvider =
     NotifierProvider<TagFilterNotifier, String?>(TagFilterNotifier.new);
 
-// --- Following (NIP-02 kind-3) ----------------------------------------------
+// --- Following (NIP-02 kind-3) with local cache (Amethyst pattern) --------
+
+/// Locally cached kind-3 event (the user's contact list). Follow operations
+/// read from this cache — NOT from a relay re-fetch — to guarantee that
+/// following user B doesn't wipe user A (who was followed moments ago but
+/// the relay hasn't synced yet). Populated by [FollowingNotifier] on initial
+/// fetch; updated by [followUser] after each follow.
+class ContactListCacheNotifier extends Notifier<Event?> {
+  @override
+  Event? build() => null;
+  void set(Event? e) => state = e;
+}
+
+final contactListCacheProvider =
+    NotifierProvider<ContactListCacheNotifier, Event?>(ContactListCacheNotifier.new);
 
 class FollowingNotifier extends AsyncNotifier<List<String>> {
   StreamSubscription<Event>? _sub;
@@ -208,6 +224,8 @@ class FollowingNotifier extends AsyncNotifier<List<String>> {
 
     _sub = pool.events.listen((e) {
       if (e.isContactList && e.pubkey == pubkey && !completer.isCompleted) {
+        // Cache the full kind-3 event for followUser to use.
+        ref.read(contactListCacheProvider.notifier).set(e);
         completer.complete(e.pTagPubkeys);
       }
     });
@@ -224,8 +242,8 @@ class FollowingNotifier extends AsyncNotifier<List<String>> {
     });
 
     return completer.future.timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => const <String>[],
+      const Duration(seconds: 10),
+      onTimeout: () => ref.read(contactListCacheProvider)?.pTagPubkeys ?? const <String>[],
     );
   }
 }
@@ -252,12 +270,13 @@ final feedSubscriptionProvider = Provider<void>((ref) {
   if (mode == FeedMode.following && follows.isEmpty) return;
 
   final subId = nextSubId('feed');
-  // Global feed: bounded snapshot (closeOnEose) to avoid an unbounded live
-  // firehose overwhelming small hosts. Following feed: low volume, live.
+  // Keep subscription open (no closeOnEose) so live reactions (kind-7) +
+  // metadata (kind-0) continue arriving after the initial snapshot.
+  // EventStore cap (5000) bounds memory; throttled emission bounds CPU.
   pool.request(
     subId,
     buildFeedFilter(mode, follows),
-    closeOnEose: mode == FeedMode.global,
+    closeOnEose: false,
   );
   ref.onDispose(() => pool.closeSubscription(subId));
 });
@@ -272,12 +291,15 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   final lang = ref.watch(languageFilterProvider);
   final tag = ref.watch(tagFilterProvider);
 
-  Iterable<Event> events = mode == FeedMode.global
-      ? all
-      : all.where((e) {
-          final follows = ref.watch(followingStateProvider).value ?? const <String>[];
-          return follows.contains(e.pubkey);
-        });
+  // Only kind-1 text notes appear in the feed. Kind-0 (metadata) and
+  // kind-7 (reactions) are stored for lookups but NOT rendered as posts.
+  Iterable<Event> events = all.where((e) => e.isTextNote);
+
+  if (mode == FeedMode.following) {
+    final follows = ref.watch(followingStateProvider).value ?? const <String>[];
+    final set = follows.toSet();
+    events = events.where((e) => set.contains(e.pubkey));
+  }
 
   if (lang != LanguageFilter.all) {
     final want = switch (lang) {
@@ -729,84 +751,33 @@ final repliesProvider =
 /// Follow [pubkey] (NIP-02). Fetches the current user's kind-3 event (to
 /// preserve existing entries' relay/petname), signs an updated kind-3 with the
 /// new pubkey added, publishes, and refreshes [followingStateProvider].
-/// Returns the relay verdict.
-///
-/// Safety: if the existing kind-3 can't be confirmed (timeout before all relays
-/// EOSE), ABORTS without publishing — never publishes a kind-3 with only the
-/// new pubkey, which would wipe the user's existing follows.
+/// Follow [pubkey] (NIP-02). Uses the LOCALLY CACHED kind-3 (Amethyst pattern)
+/// — NOT a relay re-fetch — so that following B after A doesn't wipe A.
+/// The cache is populated by [FollowingNotifier] on initial load and updated
+/// here after each follow (optimistic update).
 Future<RelayOk> followUser(WidgetRef ref, String pubkey, {String? category}) async {
   final identity = ref.read(identityProvider).value;
   if (identity == null) {
     return const RelayOk('', false, '未登录');
   }
   final pool = ref.read(relayPoolProvider);
-  // Fetch the current kind-3 event (full, to preserve relay/petname). Wait for
-  // the event OR all relays' EOSE (genuine first-follow = no kind-3 anywhere);
-  // do NOT closeOnEose (which now waits for all anyway) — manage the wait here
-  // so we can abort on timeout.
-  final completer = Completer<Event?>();
-  late StreamSubscription<Event> evSub;
-  late StreamSubscription<String> eoseSub;
-  evSub = pool.events.listen((e) {
-    if (e.isContactList &&
-        e.pubkey == identity.pubkeyHex &&
-        !completer.isCompleted) {
-      completer.complete(e);
-    }
-  });
-  final subId = nextSubId('kind3-now');
-  final connectedCount = pool.states
-      .where((s) => s.status == RelayStatus.connected)
-      .length;
-  var eoses = 0;
-  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    eoses++;
-    // All connected relays EOSE'd without delivering the kind-3 → genuine
-    // first-follow (no existing list to preserve).
-    if (eoses >= connectedCount && !completer.isCompleted) {
-      completer.complete(null);
-    }
-  });
-  pool.request(
-    subId,
-    <String, dynamic>{
-      'authors': [identity.pubkeyHex],
-      'kinds': [Event.kindContactList],
-      'limit': 1,
-    },
-    closeOnEose: false,
-  );
-  Event? current;
-  bool certain = false;
-  try {
-    current = await completer.future.timeout(
-      const Duration(seconds: 10),
-      onTimeout: () {
-        certain = false;
-        return null;
-      },
-    );
-    certain = true; // resolved by event or all-EOSE
-  } finally {
-    await evSub.cancel();
-    await eoseSub.cancel();
-    pool.closeSubscription(subId);
-  }
-  if (!certain) {
-    return const RelayOk('', false, '无法确认现有关注列表（中继未及时响应），已取消关注以防清空。请重试。');
-  }
 
+  // Read the cached kind-3 — NOT a relay re-fetch. If null (first-ever follow
+  // with no existing list on any relay), NostrActions.follow handles null
+  // gracefully (publishes a kind-3 with only the new pubkey).
+  final current = ref.read(contactListCacheProvider);
   final signed = NostrActions(identity).follow(current, pubkey);
   final ok = await pool.publishAndWait(signed);
-    // Optimistically add to the EventStore (so the local feed + UI reflect the
-    // follow immediately, before relay confirmation).
-    if (ok.ok) {
-      ref.invalidate(followingStateProvider);
-    }
 
-  // If a category is set, also add to the NIP-51 kind-30000 categorized list.
-  if (category != null && category.isNotEmpty && ok.ok) {
-    await _addToCategoryList(ref, identity, pubkey, category);
+  if (ok.ok) {
+    // Optimistically update the local cache + follows list.
+    ref.read(contactListCacheProvider.notifier).set(signed);
+    ref.invalidate(followingStateProvider);
+
+    // If a category is set, also add to the NIP-51 kind-30000 categorized list.
+    if (category != null && category.isNotEmpty) {
+      await _addToCategoryList(ref, identity, pubkey, category);
+    }
   }
   return ok;
 }
