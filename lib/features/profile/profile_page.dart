@@ -12,6 +12,7 @@ import 'package:markdown/markdown.dart' hide Text;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/providers.dart';
+import '../../app/theme.dart';
 import '../../models/event.dart';
 import '../../models/metadata.dart';
 import '../../nostr/identity.dart';
@@ -101,7 +102,7 @@ class _ProfileBody extends ConsumerWidget {
         children: [
           _PostsTab(pubkey: pubkey),
           _RepliesTab(pubkey: pubkey),
-          _FollowsTab(pubkey: pubkey),
+          _FollowsTab(pubkey: pubkey, isSelf: isSelf),
           _FollowersTab(pubkey: pubkey, isSelf: isSelf),
         ],
       ),
@@ -557,8 +558,11 @@ class _RepliesTabState extends ConsumerState<_RepliesTab> {
 }
 
 class _FollowsTab extends ConsumerStatefulWidget {
-  const _FollowsTab({required this.pubkey});
+  const _FollowsTab({required this.pubkey, required this.isSelf});
   final String pubkey;
+  /// Only the logged-in user has a local followed-tags list (DESIGN §8), so
+  /// the 关注的人 / 关注的标签 sub-tab only shows on the user's own profile.
+  final bool isSelf;
 
   @override
   ConsumerState<_FollowsTab> createState() => _FollowsTabState();
@@ -569,6 +573,8 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
   String _query = '';
   /// Selected group name, or null for "全部" (segmented view). See DESIGN §8.
   String? _selectedGroup;
+  /// Sub-tab: 关注的人 (default) / 关注的标签 (self only).
+  bool _showTags = false;
   Timer? _debounce;
 
   @override
@@ -607,8 +613,25 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final async = ref.watch(userGroupedFollowsProvider(widget.pubkey));
     final theme = Theme.of(context);
+    return Column(
+      children: [
+        if (widget.isSelf)
+          _FollowSubTabs(
+            showTags: _showTags,
+            onSelected: (v) => setState(() => _showTags = v),
+          ),
+        Expanded(
+          child: widget.isSelf && _showTags
+              ? _buildTags(theme)
+              : _buildPeople(theme),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPeople(ThemeData theme) {
+    final async = ref.watch(userGroupedFollowsProvider(widget.pubkey));
     return Column(
       children: [
         _SearchBar(controller: _controller, hint: '过滤已关注…', onChanged: _onChanged),
@@ -677,6 +700,51 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
           ),
         ),
       ],
+    );
+  }
+
+  /// 关注的标签 — local-only list (DESIGN §8). Tap a tag → jump to the home
+  /// feed filtered by that tag. Empty state explains where tags come from.
+  Widget _buildTags(ThemeData theme) {
+    final tagsAsync = ref.watch(followedTagsProvider);
+    return tagsAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (Object e, _) => Center(child: Text('加载失败：$e')),
+      data: (List<String> tags) {
+        if (tags.isEmpty) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+              child: Text(
+                '还没关注的标签。\n在帖子正文里的 #标签 上点击，即可在首页按标签过滤；'
+                '关注标签的功能后续会补上。',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: CostrColors.text2, height: 1.6),
+              ),
+            ),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final tag in tags)
+                ActionChip(
+                  label: Text('#$tag'),
+                  shape: const StadiumBorder(),
+                  side: BorderSide(color: theme.colorScheme.outline),
+                  backgroundColor: theme.colorScheme.surface,
+                  onPressed: () {
+                    ref.read(tagFilterProvider.notifier).set(tag);
+                    context.go('/feed');
+                  },
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -756,6 +824,65 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Sub-tab bar for the 关注 tab: 关注的人 / 关注的标签 (DESIGN §8 /
+/// ui_demo.html `.sub-tabs`). Only mounted on the logged-in user's own
+/// profile (see _FollowsTab.isSelf).
+class _FollowSubTabs extends StatelessWidget {
+  const _FollowSubTabs({
+    required this.showTags,
+    required this.onSelected,
+  });
+  final bool showTags;
+  final ValueChanged<bool> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget tab(String label, bool on) {
+      return Expanded(
+        child: GestureDetector(
+          onTap: on ? null : () => onSelected(!showTags),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: on ? theme.colorScheme.primary : Colors.transparent,
+                  width: 3,
+                ),
+              ),
+            ),
+            child: Text(
+              label,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: on
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.secondary,
+                fontWeight: on ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border:
+            Border(bottom: BorderSide(color: theme.colorScheme.outline)),
+      ),
+      child: Row(
+        children: [
+          tab('关注的人', !showTags),
+          tab('关注的标签', showTags),
+        ],
+      ),
     );
   }
 }

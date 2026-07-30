@@ -334,6 +334,56 @@ class TagFilterNotifier extends Notifier<String?> {
 final tagFilterProvider =
     NotifierProvider<TagFilterNotifier, String?>(TagFilterNotifier.new);
 
+// --- Followed hashtags (local-only, DESIGN §8: stored in config table) ----
+
+/// The user's followed hashtag list. Persisted to the local `config` table
+/// under key `followed_tags` (JSON array of lowercased tag names) — NOT
+/// published to any relay. Tapping a followed tag in the profile 关注 tab
+/// jumps to the home feed filtered by that tag via [tagFilterProvider].
+class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
+  static const _key = 'followed_tags';
+
+  @override
+  Future<List<String>> build() async {
+    final cache = await ref.read(localCacheProvider.future);
+    final raw = await cache.readConfig(_key);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      return (jsonDecode(raw) as List).cast<String>();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> add(String tag) async {
+    final t = tag.toLowerCase().replaceAll('#', '').trim();
+    if (t.isEmpty) return;
+    final cur = state.value ?? const <String>[];
+    if (cur.contains(t)) return;
+    final next = [...cur, t];
+    await _save(next);
+    state = AsyncData(next);
+  }
+
+  Future<void> remove(String tag) async {
+    final t = tag.toLowerCase().replaceAll('#', '').trim();
+    final cur = state.value ?? const <String>[];
+    if (!cur.contains(t)) return;
+    final next = cur.where((e) => e != t).toList();
+    await _save(next);
+    state = AsyncData(next);
+  }
+
+  Future<void> _save(List<String> tags) async {
+    final cache = await ref.read(localCacheProvider.future);
+    await cache.writeConfig(_key, jsonEncode(tags));
+  }
+}
+
+final followedTagsProvider =
+    AsyncNotifierProvider<FollowedTagsNotifier, List<String>>(
+        FollowedTagsNotifier.new);
+
 // --- Following (NIP-02 kind-3) with local cache (Amethyst pattern) --------
 
 /// Locally cached kind-3 event (the user's contact list). Follow operations
@@ -917,7 +967,7 @@ final reactionsProvider =
 });
 
 /// Replies (kind-1) to an event. REQ {kinds:[1], "#e":[eventId]}.
-/// Returns List<Event> sorted newest-first.
+/// Returns `List<Event>` sorted newest-first.
 final repliesProvider =
     FutureProvider.family<List<Event>, String>((ref, eventId) async {
   final pool = ref.watch(relayPoolProvider);
