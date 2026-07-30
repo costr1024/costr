@@ -279,6 +279,30 @@
   .grp-chips::-webkit-scrollbar{display:none}
   .gchip{flex:none;border:1px solid var(--bd);background:var(--bg);color:var(--tx2);font:600 13px var(--font);border-radius:999px;padding:6px 12px;cursor:pointer}
   .gchip.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  /* 语言过滤 popover */
+  .lang-menu{position:absolute;display:none;z-index:25;background:#fff;border:1px solid var(--bd);
+    border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px;min-width:120px}
+  .lang-menu button{display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;border:none;
+    background:none;font:500 14px var(--font);color:var(--tx);cursor:pointer;border-radius:8px;text-align:left}
+  .lang-menu button:hover{background:var(--bg2)}
+  .lang-menu button.on{color:var(--brand);font-weight:700}
+  .lang-menu button .check{margin-left:auto;color:var(--brand);visibility:hidden}
+  .lang-menu button.on .check{visibility:visible}
+  /* 回复上下文行（X 风格：回复 @用户 + 竖线） */
+  .reply-ctx{display:flex;align-items:center;gap:4px;font-size:13px;color:var(--tx3);margin-bottom:2px;padding-left:4px}
+  .reply-ctx b{color:var(--tx2);font-weight:600}
+  .reply-ctx svg{width:14px;height:14px;flex:none}
+  /* 关注页二级 tab */
+  .sub-tabs{display:flex;border-bottom:1px solid var(--bd)}
+  .sub-tabs button{flex:1;padding:10px 0;text-align:center;background:none;border:none;font:600 14px var(--font);color:var(--tx3);cursor:pointer;position:relative}
+  .sub-tabs button.on{color:var(--tx)}
+  .sub-tabs button.on::after{content:"";position:absolute;left:50%;bottom:-1px;transform:translateX(-50%);width:36px;height:3px;background:var(--brand);border-radius:3px}
+  /* 关注的标签 chip 网格 */
+  .tag-grid{display:flex;flex-wrap:wrap;gap:8px;padding:16px}
+  .tag-chip{display:inline-flex;align-items:center;gap:4px;background:var(--bg2);border:1px solid var(--bd);
+    border-radius:999px;padding:8px 14px;font:600 14px var(--font);color:var(--tx);cursor:pointer}
+  .tag-chip:hover{background:#e7eaec}
+  .tag-chip .cnt{color:var(--tx3);font-size:12px;font-weight:400}
 </style>
 </head>
 <body>
@@ -336,6 +360,9 @@
       </div>
       <div class="tb-right">
         <span class="relay"><span class="dotg"></span>3/3</span>
+        <button class="iconbtn" onclick="toggleLangMenu(event)" title="语言过滤">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>
+        </button>
         <button class="iconbtn" onclick="go('search')" title="搜索">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
@@ -643,6 +670,8 @@
 
   <!-- 通用 popover：表情选择器 / 转发·引用菜单 -->
   <div class="popover" id="popover"></div>
+  <!-- 语言过滤菜单 -->
+  <div class="lang-menu" id="lang-menu"></div>
 
  </div>
 </div>
@@ -852,7 +881,58 @@ document.addEventListener('click',e=>{
   if(!pop.contains(e.target)) hidePopover();
 });
 
-/* ---------- 渲染通知 ---------- */
+/* ---------- 语言过滤 ---------- */
+let langFilter='all';
+const LANGS=[{v:'all',l:'全部语言'},{v:'zh',l:'中文'},{v:'en',l:'英文'},{v:'ja',l:'日文'}];
+function toggleLangMenu(e){
+  e.stopPropagation();
+  const pop=document.getElementById('lang-menu');
+  if(pop.style.display==='block'){pop.style.display='none';return;}
+  pop.innerHTML=LANGS.map(l=>`<button class="${langFilter===l.v?'on':''}" onclick="setLang('${l.v}')">${l.l}<span class="check">✓</span></button>`).join('');
+  const btn=e.currentTarget.getBoundingClientRect();
+  const sc=document.getElementById('screen').getBoundingClientRect();
+  pop.style.left=(btn.left-sc.left+btn.width/2-60)+'px';
+  pop.style.top=(btn.bottom-sc.top+4)+'px';
+  pop.style.display='block';
+}
+function setLang(v){langFilter=v;document.getElementById('lang-menu').style.display='none';
+  const label=LANGS.find(l=>l.v===v).l;
+  renderFeed();
+}
+document.addEventListener('click',()=>{const m=document.getElementById('lang-menu');if(m)m.style.display='none';});
+
+/* 回复帖在 feed 中的上下文行（X 风格） */
+function replyCtx(replyToUser){
+  const [n,h]=NAMES[replyToUser];
+  return `<div class="reply-ctx">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H4v6h5l-1 4 5-5V7zM20 7h-5v6h5l-1 4 5-5V7z"/></svg>
+    回复 <b>@${h}</b>
+  </div>`;
+}
+
+/* 关注的标签列表数据 */
+const FOLLOWED_TAGS=[
+  {tag:'nostr',count:1240},
+  {tag:'costr',count:312},
+  {tag:'flutter',count:89},
+  {tag:'比特币',count:456},
+  {tag:'去中心化',count:203},
+  {tag:'闪电网络',count:78},
+];
+
+/* 关注页二级 tab：关注的人 / 关注的标签 */
+let followSubTab='people';
+function renderFollowSubTabs(){
+  const filter=document.getElementById('prof-filter');
+  const searchSVG='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#536471" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>';
+  if(followSubTab==='people'){
+    const chips=['全部'].concat(GROUPS).map(g=>`<button class="gchip ${profGroup===g?'on':''}" onclick="profGroup='${g}';renderProfileList()">${g}</button>`).join('');
+    filter.innerHTML=`<div class="sub-tabs"><button class="on" onclick="followSubTab='people';renderFollowSubTabs()">关注的人</button><button onclick="followSubTab='tags';renderFollowSubTabs()">关注的标签</button></div><div class="sub-search"><div class="in">${searchSVG}<input value="${profQuery}" placeholder="搜索你关注的人" oninput="profQuery=this.value;renderProfileList()"></div></div><div class="grp-chips">${chips}</div>`;
+  } else {
+    filter.innerHTML=`<div class="sub-tabs"><button onclick="followSubTab='people';renderFollowSubTabs()">关注的人</button><button class="on" onclick="followSubTab='tags';renderFollowSubTabs()">关注的标签</button></div>`;
+  }
+  renderProfileList();
+}
 function notifItem(n){
   const act=ACT[n.type];
   const names=n.users.map(u=>NAMES[u][0]).join('、');
@@ -993,8 +1073,8 @@ function renderProfile(){
     const ph=profTab==='posts'?'搜索阿橘的帖子':'搜索阿橘的回帖';
     filter.innerHTML=`<div class="sub-search"><div class="in">${searchSVG}<input value="${profQuery}" placeholder="${ph}" oninput="profQuery=this.value;renderProfileList()"></div></div>`;
   } else if(profTab==='following'){
-    const chips=['全部'].concat(GROUPS).map(g=>`<button class="gchip ${profGroup===g?'on':''}" onclick="profGroup='${g}';renderProfile()">${g}</button>`).join('');
-    filter.innerHTML=`<div class="sub-search"><div class="in">${searchSVG}<input value="${profQuery}" placeholder="搜索你关注的人" oninput="profQuery=this.value;renderProfileList()"></div></div><div class="grp-chips">${chips}</div>`;
+    renderFollowSubTabs();
+    return;
   } else {
     filter.innerHTML=`<div class="sub-search"><div class="in">${searchSVG}<input value="${profQuery}" placeholder="搜索关注你的人" oninput="profQuery=this.value;renderProfileList()"></div></div>`;
   }
@@ -1012,10 +1092,13 @@ function renderProfileList(){
     if(q)items=items.filter(r=>r.text.includes(q));
     list.innerHTML=items.length?items.map(r=>{const[nn,hh]=NAMES[r.u];return `<div class="reply-card" onclick="openDetail(${r.i})">${ava(r.u)}<div class="body"><div class="who"><b>${nn}</b> <span class="h">@${hh}</span><span class="dot">·</span><span class="t">${r.t}</span></div><div class="txt">${r.text}</div><div id="act-${r.i}">${actionsHTML(r)}</div></div></div>`}).join(''):`<div class="empty">阿橘还没有匹配「${q}」的回帖。</div>`;
   } else if(profTab==='following'){
+    if(followSubTab==='tags'){
+      list.innerHTML=`<div class="tag-grid">${FOLLOWED_TAGS.map(t=>`<div class="tag-chip" onclick="go('home');document.getElementById('search-input').value='#${t.tag}';onSearch('#${t.tag}')">#${t.tag} <span class="cnt">${t.count}</span></div>`).join('')}</div>`;
+      return;
+    }
     let items=FOLLOW_LIST.filter(f=>!q || NAMES[f.u][0].includes(q)||NAMES[f.u][1].includes(q));
     if(profGroup!=='全部')items=items.filter(f=>f.group===profGroup);
     if(!items.length){list.innerHTML=`<div class="empty">没有匹配的关注。</div>`;return;}
-    // 全部：按分组展示；指定分组：单列
     if(profGroup==='全部'){
       let h='';
       for(const g of GROUPS){
@@ -1023,7 +1106,6 @@ function renderProfileList(){
         if(!grp.length)continue;
         h+=`<div class="sect-h">${g} · ${grp.length}</div>`+grp.map(f=>followRow(f.u,'已关注','on')).join('');
       }
-      // 未匹配分组的兜底
       list.innerHTML=h;
     } else {
       list.innerHTML=items.map(f=>followRow(f.u,'已关注','on')).join('');
