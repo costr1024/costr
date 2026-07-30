@@ -70,8 +70,9 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     final linkified = event.content.replaceAllMapped(
       _pubkeyEntityRegex,
       (Match m) {
-        final entity = m.group(0)!;
-        final pk = pubkeysByEntity[entity];
+        final entity = m.group(1)!;
+        final full = m.group(0)!;
+        final pk = pubkeysByEntity[full];
         final label = (pk != null ? nameByPubkey[pk] : null) ?? shortenEntity(entity);
         return '[@$label](nostr:$entity)';
       },
