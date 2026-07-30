@@ -1,7 +1,10 @@
-/// X-style action row: 回复 / 转发 / reaction / 引用 / 分享.
+/// X-style action row: 回复 / 转发 / reaction / 收藏 / 分享.
 ///
-/// - 回复 / 引用 → push Compose with a replyTo / quoteOf context.
-/// - 转发 → sign NIP-18 kind-6 + publish (with confirm).
+/// - 回复 → push Compose with a replyTo context.
+/// - 转发 → pop a 二选一 menu (DESIGN §3.5): 转发 (NIP-18 kind-6, direct,
+///   no comment) or 引用 (kind-1 with a `nostr:note1` quote → push Compose
+///   with a quoteOf context). No hidden one-tap repost — the menu makes the
+///   choice explicit to avoid misclicks.
 /// - reaction → bottom-sheet emoji picker (NIP-25 kind-7, supports NIP-30
 ///   custom-emoji via NostrActions.reaction(customShortcode/customUrl)).
 /// - 分享 → copy `https://njump.me/<note1>` (Amethyst-style).
@@ -40,17 +43,12 @@ class PostActions extends ConsumerWidget {
         _Action(
           icon: Icons.repeat_rounded,
           color: fg,
-          onTap: () => _repost(context, ref),
+          onTap: () => _showRepostMenu(context, ref),
         ),
         _Action(
           icon: Icons.favorite_border,
           color: fg,
           onTap: () => _pickReaction(context, ref),
-        ),
-        _Action(
-          icon: Icons.format_quote_rounded,
-          color: fg,
-          onTap: () => context.push('/compose', extra: {'quoteOf': event}),
         ),
         _Action(
           icon: Icons.bookmark_border,
@@ -64,6 +62,40 @@ class PostActions extends ConsumerWidget {
         ),
       ],
     );
+  }
+
+  /// 二选一 menu (DESIGN §3.5 / ui_demo.html `openRepostMenu`): 转发 (direct
+  /// NIP-18 kind-6) or 引用 (kind-1 quoting this note → Compose).
+  Future<void> _showRepostMenu(BuildContext context, WidgetRef ref) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (BuildContext ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.repeat_rounded),
+              title: const Text('转发'),
+              subtitle: const Text('直接转发到你的主页，不带评论'),
+              onTap: () => Navigator.pop(ctx, 'repost'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.format_quote_rounded),
+              title: const Text('引用'),
+              subtitle: const Text('带你的评论引用这条帖子'),
+              onTap: () => Navigator.pop(ctx, 'quote'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == 'repost') {
+      if (context.mounted) await _repost(context, ref);
+    } else if (choice == 'quote') {
+      if (context.mounted) {
+        context.push('/compose', extra: {'quoteOf': event});
+      }
+    }
   }
 
   Future<void> _repost(BuildContext context, WidgetRef ref) async {
