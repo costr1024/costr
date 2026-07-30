@@ -35,6 +35,8 @@ class Avatar extends ConsumerWidget {
         fit: BoxFit.cover,
         placeholder: (BuildContext _, String _) => fallback,
         errorWidget: (BuildContext _, String _, Object _) => fallback,
+        fadeInDuration: const Duration(milliseconds: 0),
+        fadeOutDuration: const Duration(milliseconds: 0),
       ),
     );
   }

@@ -68,7 +68,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       appBar: AppBar(
         title: const CostrWordmark(logoSize: 26, fontSize: 19),
         actions: [
-          _LanguageDropdown(value: lang),
+          _LanguageGlobeButton(value: lang),
           _RelayStatusChip(relays: relays.value ?? const []),
         ],
       ),
@@ -149,28 +149,34 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-class _LanguageDropdown extends ConsumerWidget {
-  const _LanguageDropdown({required this.value});
+class _LanguageGlobeButton extends ConsumerWidget {
+  const _LanguageGlobeButton({required this.value});
   final LanguageFilter value;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: DropdownButton<LanguageFilter>(
-        value: value,
-        underline: const SizedBox.shrink(),
-        icon: const Icon(Icons.language, size: 20),
-        items: const [
-          DropdownMenuItem(value: LanguageFilter.all, child: Text('全部')),
-          DropdownMenuItem(value: LanguageFilter.zh, child: Text('中文')),
-          DropdownMenuItem(value: LanguageFilter.en, child: Text('英文')),
-          DropdownMenuItem(value: LanguageFilter.ja, child: Text('日文')),
-        ],
-        onChanged: (LanguageFilter? f) {
-          if (f != null) ref.read(languageFilterProvider.notifier).set(f);
-        },
-      ),
+    return PopupMenuButton<String>(
+      icon: Icon(Icons.language, size: 20, color: CostrColors.text2),
+      tooltip: '语言',
+      onSelected: (String v) {
+        final f = LanguageFilter.values.firstWhere((e) => e.name == v);
+        ref.read(languageFilterProvider.notifier).set(f);
+      },
+      itemBuilder: (_) {
+        final langs = <(String, LanguageFilter)>[
+          ('全部', LanguageFilter.all),
+          ('中文', LanguageFilter.zh),
+          ('英文', LanguageFilter.en),
+          ('日文', LanguageFilter.ja),
+        ];
+        return langs.map((e) => PopupMenuItem<String>(
+          value: e.$2.name,
+          child: Row(children: [
+            Text(e.$1),
+            if (e.$2 == value) ...[const Spacer(), Icon(Icons.check, size: 16, color: CostrColors.brand)],
+          ]),
+        )).toList();
+      },
     );
   }
 }
