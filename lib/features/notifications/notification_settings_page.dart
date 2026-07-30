@@ -68,12 +68,24 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-    child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: CostrColors.text3)),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        color: CostrColors.text3,
+      ),
+    ),
   );
 }
 
 class _SwitchRow extends StatelessWidget {
-  const _SwitchRow({required this.title, required this.subtitle, required this.value, required this.onChanged});
+  const _SwitchRow({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
   final String title;
   final String subtitle;
   final bool value;
@@ -83,7 +95,9 @@ class _SwitchRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(border: Border(top: BorderSide(color: CostrColors.border))),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: CostrColors.border)),
+      ),
       child: Row(
         children: [
           Expanded(
@@ -92,11 +106,18 @@ class _SwitchRow extends StatelessWidget {
               children: [
                 Text(title, style: const TextStyle(fontSize: 15)),
                 const SizedBox(height: 2),
-                Text(subtitle, style: TextStyle(fontSize: 12, color: CostrColors.text2)),
+                Text(
+                  subtitle,
+                  style: TextStyle(fontSize: 12, color: CostrColors.text2),
+                ),
               ],
             ),
           ),
-          Switch(value: value, onChanged: onChanged, activeThumbColor: CostrColors.green),
+          Switch(
+            value: value,
+            onChanged: onChanged,
+            activeThumbColor: CostrColors.green,
+          ),
         ],
       ),
     );
@@ -111,13 +132,18 @@ class _InfoRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(border: Border(top: BorderSide(color: CostrColors.border))),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: CostrColors.border)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title, style: const TextStyle(fontSize: 15)),
           const SizedBox(height: 2),
-          Text(subtitle, style: TextStyle(fontSize: 12, color: CostrColors.text2)),
+          Text(
+            subtitle,
+            style: TextStyle(fontSize: 12, color: CostrColors.text2),
+          ),
         ],
       ),
     );

@@ -14,7 +14,8 @@ class _FakeRelay implements RelayConnection {
   final String url;
   final StreamController<Event> _events = StreamController<Event>.broadcast();
   final StreamController<String> _eose = StreamController<String>.broadcast();
-  final StreamController<String> _notices = StreamController<String>.broadcast();
+  final StreamController<String> _notices =
+      StreamController<String>.broadcast();
   final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
   final StreamController<String> _auths = StreamController<String>.broadcast();
 
@@ -81,14 +82,14 @@ class _FakeRelay implements RelayConnection {
 }
 
 Event _event(String id, {String content = 'x'}) => Event(
-      id: id,
-      pubkey: 'p' * 64,
-      createdAt: 1,
-      kind: 1,
-      tags: const [],
-      content: content,
-      sig: 's' * 128,
-    );
+  id: id,
+  pubkey: 'p' * 64,
+  createdAt: 1,
+  kind: 1,
+  tags: const [],
+  content: content,
+  sig: 's' * 128,
+);
 
 void main() {
   group('RelayPool', () {
@@ -107,12 +108,29 @@ void main() {
       final b = _FakeRelay('wss://b');
       final pool = RelayPool([a, b]);
       await pool.connect();
-      pool.request('costr:feed:1', {'kinds': [1], 'limit': 200});
+      pool.request('costr:feed:1', {
+        'kinds': [1],
+        'limit': 200,
+      });
       expect(a.sent, [
-        ['REQ', 'costr:feed:1', {'kinds': [1], 'limit': 200}]
+        [
+          'REQ',
+          'costr:feed:1',
+          {
+            'kinds': [1],
+            'limit': 200,
+          },
+        ],
       ]);
       expect(b.sent, [
-        ['REQ', 'costr:feed:1', {'kinds': [1], 'limit': 200}]
+        [
+          'REQ',
+          'costr:feed:1',
+          {
+            'kinds': [1],
+            'limit': 200,
+          },
+        ],
       ]);
       await pool.dispose();
     });
@@ -121,7 +139,8 @@ void main() {
       final a = _FakeRelay('wss://relay.bostr.online/');
       final pool = RelayPool([a]);
       final id = Identity.fromPrivkeyHex(
-          '0000000000000000000000000000000000000000000000000000000000000001');
+        '0000000000000000000000000000000000000000000000000000000000000001',
+      );
       pool.identityGetter = () => id;
       await pool.connect();
 
@@ -139,7 +158,10 @@ void main() {
       ]);
       expect((ev['sig'] as String).length, 128);
       expect(
-        id.verifyEventSignature(id: ev['id'] as String, sig: ev['sig'] as String),
+        id.verifyEventSignature(
+          id: ev['id'] as String,
+          sig: ev['sig'] as String,
+        ),
         isTrue,
       );
       await pool.dispose();
@@ -149,7 +171,9 @@ void main() {
       final a = _FakeRelay('wss://a');
       final pool = RelayPool([a]);
       await pool.connect();
-      pool.request('s', {'kinds': [1]});
+      pool.request('s', {
+        'kinds': [1],
+      });
       pool.closeSubscription('s');
       expect(a.sent.last, ['CLOSE', 's']);
       await pool.dispose();
@@ -177,14 +201,22 @@ void main() {
       final a = _FakeRelay('wss://a');
       final pool = RelayPool([a]);
       await pool.connect();
-      pool.request('costr:feed:9', {'kinds': [1]});
+      pool.request('costr:feed:9', {
+        'kinds': [1],
+      });
       a.sent.clear();
 
       // Simulate a drop + reconnect.
       a.markDisconnected();
       await a.connect(); // reconnect triggers onConnected → _resendActive
       expect(a.sent, [
-        ['REQ', 'costr:feed:9', {'kinds': [1]}]
+        [
+          'REQ',
+          'costr:feed:9',
+          {
+            'kinds': [1],
+          },
+        ],
       ]);
       await pool.dispose();
     });
@@ -193,12 +225,21 @@ void main() {
       final a = _FakeRelay('wss://a');
       final pool = RelayPool([a]);
       // Issue a sub while a is NOT connected (don't call pool.connect first).
-      pool.request('costr:feed:5', {'kinds': [1]});
+      pool.request('costr:feed:5', {
+        'kinds': [1],
+      });
       expect(a.sent, isEmpty); // a wasn't connected, so nothing sent yet
 
-      await pool.connect(); // wires onConnected; a.connect() → onConnected → resend active
+      await pool
+          .connect(); // wires onConnected; a.connect() → onConnected → resend active
       expect(a.sent, [
-        ['REQ', 'costr:feed:5', {'kinds': [1]}]
+        [
+          'REQ',
+          'costr:feed:5',
+          {
+            'kinds': [1],
+          },
+        ],
       ]);
       await pool.dispose();
     });
@@ -208,11 +249,10 @@ void main() {
       final b = _FakeRelay('wss://b');
       final pool = RelayPool([a, b]);
       await pool.connect();
-      pool.request(
-        'costr:feed:7',
-        {'kinds': [1], 'limit': 200},
-        closeOnEose: true,
-      );
+      pool.request('costr:feed:7', {
+        'kinds': [1],
+        'limit': 200,
+      }, closeOnEose: true);
 
       // First EOSE (from a) does NOT close — b hasn't EOSE'd yet.
       a.emitEose('costr:feed:7');

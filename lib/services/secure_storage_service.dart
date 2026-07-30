@@ -42,10 +42,7 @@ class FileSecretStore {
       if (raw.trim().isEmpty) return <String, String>{};
       final m = jsonDecode(raw);
       if (m is! Map) return <String, String>{};
-      return {
-        for (final e in m.entries)
-          e.key.toString(): e.value.toString(),
-      };
+      return {for (final e in m.entries) e.key.toString(): e.value.toString()};
     } catch (e) {
       debugPrint('[costr] file secret store read failed: $e');
       return <String, String>{};
@@ -101,11 +98,12 @@ class FileSecretStore {
 
 class SecureStorageService {
   SecureStorageService(this._secure, {String? fileDir})
-      : _file = FileSecretStore(fileDir ?? _defaultFileDir);
+    : _file = FileSecretStore(fileDir ?? _defaultFileDir);
 
   final FlutterSecureStorage _secure;
   final FileSecretStore _file;
-  bool _secureOk = true; // false once libsecret has failed → skip further tries.
+  bool _secureOk =
+      true; // false once libsecret has failed → skip further tries.
 
   static const String _nsecKey = 'costr.identity.nsec';
 
@@ -120,7 +118,9 @@ class SecureStorageService {
         final v = await _secure.read(key: _nsecKey);
         return v;
       } catch (e, s) {
-        debugPrint('[costr] secureStorage.read failed, using file fallback: $e');
+        debugPrint(
+          '[costr] secureStorage.read failed, using file fallback: $e',
+        );
         if (kDebugMode) debugPrint('$s');
         _secureOk = false;
       }
@@ -136,7 +136,9 @@ class SecureStorageService {
         await _file.delete(_nsecKey);
         return;
       } catch (e, s) {
-        debugPrint('[costr] secureStorage.write failed, using file fallback: $e');
+        debugPrint(
+          '[costr] secureStorage.write failed, using file fallback: $e',
+        );
         if (kDebugMode) debugPrint('$s');
         _secureOk = false;
       }

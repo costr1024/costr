@@ -86,7 +86,15 @@ void main() {
     });
 
     test('fromMessage dispatches array vs object', () {
-      final arr = <dynamic>['a' * 64, 'b' * 64, 1, 1, <dynamic>[], 'c', 'd' * 128];
+      final arr = <dynamic>[
+        'a' * 64,
+        'b' * 64,
+        1,
+        1,
+        <dynamic>[],
+        'c',
+        'd' * 128,
+      ];
       final obj = <String, dynamic>{
         'id': 'a' * 64,
         'pubkey': 'b' * 64,
@@ -103,10 +111,24 @@ void main() {
 
     test('mediaAttachments parses NIP-92 imeta tags (x/y and dim)', () {
       final list = <dynamic>[
-        'id', 'pk', 1, 1,
+        'id',
+        'pk',
+        1,
+        1,
         <dynamic>[
-          <dynamic>['imeta', 'url https://x/a.jpg', 'm image/jpeg', 'x 1200', 'y 630'],
-          <dynamic>['imeta', 'url https://x/v.mp4', 'm video/mp4', 'dim 1920x1080'],
+          <dynamic>[
+            'imeta',
+            'url https://x/a.jpg',
+            'm image/jpeg',
+            'x 1200',
+            'y 630',
+          ],
+          <dynamic>[
+            'imeta',
+            'url https://x/v.mp4',
+            'm video/mp4',
+            'dim 1920x1080',
+          ],
           <dynamic>['other', 'ignore'],
         ],
         'content',
@@ -125,30 +147,40 @@ void main() {
       expect(media[1].height, 1080);
     });
 
-    test('MediaAttachment infers image/video from URL when mimetype absent', () {
-      const img = MediaAttachment(url: 'https://x/PHOTO.PNG?w=1');
-      const vid = MediaAttachment(url: 'https://x/clip.webm');
-      const other = MediaAttachment(url: 'https://x/page.html');
-      expect(img.isImage, isTrue);
-      expect(vid.isVideo, isTrue);
-      expect(other.isImage, isFalse);
-      expect(other.isVideo, isFalse);
-    });
+    test(
+      'MediaAttachment infers image/video from URL when mimetype absent',
+      () {
+        const img = MediaAttachment(url: 'https://x/PHOTO.PNG?w=1');
+        const vid = MediaAttachment(url: 'https://x/clip.webm');
+        const other = MediaAttachment(url: 'https://x/page.html');
+        expect(img.isImage, isTrue);
+        expect(vid.isVideo, isTrue);
+        expect(other.isImage, isFalse);
+        expect(other.isVideo, isFalse);
+      },
+    );
 
     test('mediaAttachments ignores malformed imeta without url', () {
       final list = <dynamic>[
-        'id', 'pk', 1, 1,
+        'id',
+        'pk',
+        1,
+        1,
         <dynamic>[
           <dynamic>['imeta', 'm image/jpeg', 'x 100'],
         ],
-        'c', 's',
+        'c',
+        's',
       ];
       expect(Event.fromList(list).mediaAttachments, isEmpty);
     });
 
     test('hashtags parses NIP-12 t-tags, lowercased + deduped', () {
       final list = <dynamic>[
-        'id', 'pk', 1, 1,
+        'id',
+        'pk',
+        1,
+        1,
         <dynamic>[
           <dynamic>['t', 'Nostr'],
           <dynamic>['t', 'nostr'], // dup after lowercasing
@@ -156,7 +188,8 @@ void main() {
           <dynamic>['e', 'refid'], // not a t tag
           <dynamic>['t', ''], // empty → ignored
         ],
-        'c', 's',
+        'c',
+        's',
       ];
       final ev = Event.fromList(list);
       expect(ev.hashtags, ['nostr', 'bitcoin']);
@@ -164,7 +197,11 @@ void main() {
 
     test('hashtags also extracts inline #hashtag from content', () {
       final list = <dynamic>[
-        'id', 'pk', 1, 1, <dynamic>[],
+        'id',
+        'pk',
+        1,
+        1,
+        <dynamic>[],
         'check this #Bitcoin out and #中文 too',
         's',
       ];
@@ -174,8 +211,13 @@ void main() {
 
     test('hashtags dedupes across t-tags and inline content', () {
       final list = <dynamic>[
-        'id', 'pk', 1, 1,
-        <dynamic>[<dynamic>['t', 'nostr']],
+        'id',
+        'pk',
+        1,
+        1,
+        <dynamic>[
+          <dynamic>['t', 'nostr'],
+        ],
         'posting about #nostr again',
         's',
       ];
@@ -184,7 +226,11 @@ void main() {
 
     test('hashtags ignores markdown headings and URL fragments', () {
       final list = <dynamic>[
-        'id', 'pk', 1, 1, <dynamic>[],
+        'id',
+        'pk',
+        1,
+        1,
+        <dynamic>[],
         '# A Heading\n\nsee https://example.com/page#section and #realtag',
         's',
       ];
@@ -195,9 +241,8 @@ void main() {
     });
 
     test('replyToId: reply marker > legacy positional > root marker', () {
-      Event ev(List tags) => Event.fromList(<dynamic>[
-        'id', 'pk', 1, 1, tags, 'c', 's',
-      ]);
+      Event ev(List tags) =>
+          Event.fromList(<dynamic>['id', 'pk', 1, 1, tags, 'c', 's']);
       expect(
         ev([
           ['e', 'root-id', 'wss://x', 'root'],

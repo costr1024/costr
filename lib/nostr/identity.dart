@@ -76,8 +76,7 @@ class Identity {
     List<List<String>> tags = const [],
     int? createdAt,
   }) {
-    final ts = createdAt ??
-        (DateTime.now().millisecondsSinceEpoch ~/ 1000);
+    final ts = createdAt ?? (DateTime.now().millisecondsSinceEpoch ~/ 1000);
     final wireTags = tags
         .map((t) => t.map((e) => e as dynamic).toList())
         .toList(growable: false);

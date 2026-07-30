@@ -25,11 +25,14 @@ class _NetworkVideoState extends State<NetworkVideo> {
   void initState() {
     super.initState();
     _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
-    _controller!.initialize().then((_) {
-      if (mounted) setState(() => _initialized = true);
-    }).catchError((Object _) {
-      if (mounted) setState(() => _error = true);
-    });
+    _controller!
+        .initialize()
+        .then((_) {
+          if (mounted) setState(() => _initialized = true);
+        })
+        .catchError((Object _) {
+          if (mounted) setState(() => _error = true);
+        });
   }
 
   @override

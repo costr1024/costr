@@ -360,8 +360,8 @@
       </div>
       <div class="tb-right">
         <span class="relay"><span class="dotg"></span>3/3</span>
-        <button class="iconbtn" onclick="toggleLangMenu(event)" title="语言过滤">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>
+        <button class="iconbtn" onclick="toggleLangMenu(event)" title="语言过滤" style="font-size:18px;line-height:1">
+          <span id="lang-flag">🌐</span>
         </button>
         <button class="iconbtn" onclick="go('search')" title="搜索">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -489,7 +489,7 @@
       <div class="set-group"><div class="h">账号</div>
         <div class="set-row" style="cursor:pointer" onclick="openSheet('logout-sheet')"><div class="l"><b style="color:var(--red)">退出登录</b><span>保留本地数据，下次可恢复</span></div><span style="color:var(--tx3)">›</span></div>
       </div>
-      <div style="padding:24px 16px;color:var(--tx3);font-size:12px;text-align:center">Costr v1 · 中文优先</div>
+      <div style="padding:24px 16px;color:var(--tx3);font-size:12px;text-align:center">Chinese Nostr · 更适合中文用户的 Nostr 开源社交客户端</div>
     </div>
   </section>
 
@@ -527,7 +527,25 @@
             <p>信息是公开的，但体验是安静的。<b>默认值就是最好的设置</b>，开箱即用，不用折腾一堆开关。</p>
           </div>
         </div>
-        <p class="ph">Costr · 更适合中文用户的 Nostr 开源社交客户端<br>Nostr 是一个去中心化的开放社交协议 · 代码开源，谁都能审计</p>
+        <!-- Nostr 协议原理图 + 通俗讲解 -->
+        <div style="margin:18px 0;border:1px solid var(--bd);border-radius:16px;padding:16px">
+          <div style="font-size:13px;font-weight:600;color:var(--tx2);margin-bottom:10px;text-align:center">Nostr 协议原理</div>
+          <svg viewBox="0 0 320 150" style="width:100%;height:150px">
+            <g stroke="var(--bd)" stroke-width="1">
+              <line x1="40" y1="25" x2="280" y2="25"/><line x1="40" y1="25" x2="280" y2="75"/><line x1="40" y1="25" x2="280" y2="125"/>
+              <line x1="40" y1="75" x2="280" y2="25"/><line x1="40" y1="75" x2="280" y2="75"/><line x1="40" y1="75" x2="280" y2="125"/>
+              <line x1="40" y1="125" x2="280" y2="25"/><line x1="40" y1="125" x2="280" y2="75"/><line x1="40" y1="125" x2="280" y2="125"/>
+            </g>
+            <g font-size="11" fill="var(--tx2)" text-anchor="middle">
+              <text x="20" y="29">📱你</text><text x="20" y="79">📱A</text><text x="20" y="129">📱B</text>
+              <text x="300" y="29">🖥中继1</text><text x="300" y="79">🖥中继2</text><text x="300" y="129">🖥中继3</text>
+            </g>
+          </svg>
+          <p style="font-size:12px;color:var(--tx3);text-align:center;margin:6px 0 0">每个 app 同时连多台中继；中继之间也会互相转发。没有中心服务器。</p>
+        </div>
+        <div class="card" style="background:var(--bg2)"><h3>你和中继服务器：多对多</h3><p>Costr（你的 app）同时连着全球多台中继。你发一条帖子，是同时广播给所有连上的中继，不是只发给其中一台。任何一台中继宕机、跑路，其他中继照常替你分发，帖子不会丢、不会断。</p></div>
+        <div class="card" style="background:var(--bg2)"><h3>用户和用户之间：不直连</h3><p>A 发帖并不直接发给 B：A 把帖子广播给自己连的中继群；B 订阅了自己感兴趣的内容（比如关注了 A），B 连的中继群一旦收到 A 的帖子就推给 B。中继之间也会互相转发，所以只要 A、B 之间有共同中继——或能通过转发链路到达——帖子就能送达。没有"中心"可被拦。</p></div>
+        <p class="ph">Costr · 更适合中文用户的 Nostr 开源社交客户端<br>Nostr 是一个去中心化开放社交协议<br>Costr 应用代码开源，谁都能审计</p>
       </div>
     </div>
   </section>
@@ -883,12 +901,13 @@ document.addEventListener('click',e=>{
 
 /* ---------- 语言过滤 ---------- */
 let langFilter='all';
-const LANGS=[{v:'all',l:'全部语言'},{v:'zh',l:'中文'},{v:'en',l:'英文'},{v:'ja',l:'日文'}];
+const LANGS=[{v:'all',l:'全部',f:'🌐'},{v:'zh',l:'中文',f:'🇨🇳'},{v:'en',l:'英文',f:'🇬🇧'},{v:'ja',l:'日文',f:'🇯🇵'}];
+function langFlag(){return LANGS.find(l=>l.v===langFilter).f;}
 function toggleLangMenu(e){
   e.stopPropagation();
   const pop=document.getElementById('lang-menu');
   if(pop.style.display==='block'){pop.style.display='none';return;}
-  pop.innerHTML=LANGS.map(l=>`<button class="${langFilter===l.v?'on':''}" onclick="setLang('${l.v}')">${l.l}<span class="check">✓</span></button>`).join('');
+  pop.innerHTML=LANGS.map(l=>`<button class="${langFilter===l.v?'on':''}" onclick="setLang('${l.v}')"><span class="flag">${l.f}</span>${l.l}<span class="check">✓</span></button>`).join('');
   const btn=e.currentTarget.getBoundingClientRect();
   const sc=document.getElementById('screen').getBoundingClientRect();
   pop.style.left=(btn.left-sc.left+btn.width/2-60)+'px';
@@ -896,7 +915,7 @@ function toggleLangMenu(e){
   pop.style.display='block';
 }
 function setLang(v){langFilter=v;document.getElementById('lang-menu').style.display='none';
-  const label=LANGS.find(l=>l.v===v).l;
+  document.getElementById('lang-flag').textContent=langFlag();
   renderFeed();
 }
 document.addEventListener('click',()=>{const m=document.getElementById('lang-menu');if(m)m.style.display='none';});
@@ -919,6 +938,9 @@ const FOLLOWED_TAGS=[
   {tag:'去中心化',count:203},
   {tag:'闪电网络',count:78},
 ];
+/* 关注标签：长按取消 / 手动添加（demo 占位，真实实现见 lib FollowedTagsNotifier，NIP-51 kind-30015 中继存储 + 本地缓存） */
+function unfollowTag(tag){ if(confirm('取消关注 #'+tag+'？')){ const i=FOLLOWED_TAGS.findIndex(t=>t.tag===tag); if(i>=0)FOLLOWED_TAGS.splice(i,1); renderProfileList(); } }
+function addFollowedTag(){ const t=prompt('关注标签',''); if(t){ FOLLOWED_TAGS.push({tag:t.replace(/^#/,''),count:0}); renderProfileList(); } }
 
 /* 关注页二级 tab：关注的人 / 关注的标签 */
 let followSubTab='people';
@@ -1093,7 +1115,7 @@ function renderProfileList(){
     list.innerHTML=items.length?items.map(r=>{const[nn,hh]=NAMES[r.u];return `<div class="reply-card" onclick="openDetail(${r.i})">${ava(r.u)}<div class="body"><div class="who"><b>${nn}</b> <span class="h">@${hh}</span><span class="dot">·</span><span class="t">${r.t}</span></div><div class="txt">${r.text}</div><div id="act-${r.i}">${actionsHTML(r)}</div></div></div>`}).join(''):`<div class="empty">阿橘还没有匹配「${q}」的回帖。</div>`;
   } else if(profTab==='following'){
     if(followSubTab==='tags'){
-      list.innerHTML=`<div class="tag-grid">${FOLLOWED_TAGS.map(t=>`<div class="tag-chip" onclick="go('home');document.getElementById('search-input').value='#${t.tag}';onSearch('#${t.tag}')">#${t.tag} <span class="cnt">${t.count}</span></div>`).join('')}</div>`;
+      list.innerHTML=`<div class="tag-grid"><div class="tag-chip" style="border-style:dashed" onclick="addFollowedTag()">+ 标签</div>${FOLLOWED_TAGS.map(t=>`<div class="tag-chip" title="长按取消关注" onclick="go('home');document.getElementById('search-input').value='#${t.tag}';onSearch('#${t.tag}')" oncontextmenu="unfollowTag('${t.tag}');return false">#${t.tag} <span class="cnt">${t.count}</span></div>`).join('')}</div>`;
       return;
     }
     let items=FOLLOW_LIST.filter(f=>!q || NAMES[f.u][0].includes(q)||NAMES[f.u][1].includes(q));

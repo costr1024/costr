@@ -26,7 +26,11 @@ final Uint8List _hkdfSalt = Uint8List.fromList(utf8.encode('nip44-v2'));
 
 /// Encrypt [plaintext] for [recipientPubkeyHex] using [privkeyHex]. Returns
 /// the base64 payload string.
-String nip44Encrypt(String privkeyHex, String recipientPubkeyHex, String plaintext) {
+String nip44Encrypt(
+  String privkeyHex,
+  String recipientPubkeyHex,
+  String plaintext,
+) {
   final convKey = _conversationKey(privkeyHex, recipientPubkeyHex);
   final nonce = _randomBytes(32);
   final expanded = _hkdfExpand(convKey, nonce, 76);
@@ -41,7 +45,11 @@ String nip44Encrypt(String privkeyHex, String recipientPubkeyHex, String plainte
 }
 
 /// Decrypt a base64 NIP-44 payload sent by [senderPubkeyHex] using [privkeyHex].
-String nip44Decrypt(String privkeyHex, String senderPubkeyHex, String payloadBase64) {
+String nip44Decrypt(
+  String privkeyHex,
+  String senderPubkeyHex,
+  String payloadBase64,
+) {
   final bytes = base64.decode(payloadBase64);
   if (bytes.isEmpty || bytes[0] != _version) {
     throw FormatException('unsupported nip44 version');
@@ -54,7 +62,10 @@ String nip44Decrypt(String privkeyHex, String senderPubkeyHex, String payloadBas
   final chachaKey = Uint8List.fromList(expanded.sublist(0, 32));
   final chachaNonce = Uint8List.fromList(expanded.sublist(32, 44));
   final macKey = Uint8List.fromList(expanded.sublist(44, 76));
-  final expectedMac = _hmac(macKey, Uint8List.fromList([...nonce, ...ciphertext]));
+  final expectedMac = _hmac(
+    macKey,
+    Uint8List.fromList([...nonce, ...ciphertext]),
+  );
   if (!_constEq(expectedMac, mac)) {
     throw FormatException('nip44 mac mismatch');
   }
@@ -72,8 +83,7 @@ Uint8List _ecdhSharedX(String privkeyHex, String pubkeyHex) {
   final priv = BigInt.parse(privkeyHex, radix: 16);
   // Recipient pubkey is x-only; lift via compressed (02 || x). The shared x is
   // the same regardless of y parity, so the even-y lift is fine.
-  final pubBytes = Uint8List.fromList(
-      <int>[0x02, ...HEX.decode(pubkeyHex)]);
+  final pubBytes = Uint8List.fromList(<int>[0x02, ...HEX.decode(pubkeyHex)]);
   final pubPoint = domain.curve.decodePoint(pubBytes)!;
   final shared = (pubPoint * priv)!;
   final xBytes = _bigIntToBytes(shared.x!.toBigInteger()!, 32);
@@ -106,8 +116,10 @@ Uint8List _hmac(Uint8List key, Uint8List data) {
 
 Uint8List _chacha20(Uint8List key, Uint8List nonce12, Uint8List data) {
   final cipher = pc.ChaCha7539Engine();
-  cipher.init(true, pc.ParametersWithIV<pc.KeyParameter>(
-      pc.KeyParameter(key), nonce12));
+  cipher.init(
+    true,
+    pc.ParametersWithIV<pc.KeyParameter>(pc.KeyParameter(key), nonce12),
+  );
   return cipher.process(data);
 }
 
@@ -135,7 +147,12 @@ String _unpad(Uint8List padded) {
 }
 
 List<int> _u16(int n) => [(n >> 8) & 0xff, n & 0xff];
-List<int> _u32(int n) => [(n >> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+List<int> _u32(int n) => [
+  (n >> 24) & 0xff,
+  (n >> 16) & 0xff,
+  (n >> 8) & 0xff,
+  n & 0xff,
+];
 
 int _calcPaddedLen(int unpadded) {
   if (unpadded <= 32) return 32;

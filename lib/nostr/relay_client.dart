@@ -22,10 +22,12 @@ class RelayOk {
   final String id;
   final bool ok;
   final String? reason;
+
   /// Which relay sent this ack (for per-relay retry / NIP-42 auth flow).
   final String? url;
   @override
-  String toString() => 'RelayOk($url: ${ok ? 'OK' : 'rejected'}${reason == null || reason!.isEmpty ? '' : ' — $reason'})';
+  String toString() =>
+      'RelayOk($url: ${ok ? 'OK' : 'rejected'}${reason == null || reason!.isEmpty ? '' : ' — $reason'})';
 }
 
 /// Frame types a relay can push. v1 only consumes EVENT and EOSE; NOTICE and
@@ -93,7 +95,8 @@ class RelayClient implements RelayConnection {
   // Long-lived broadcast controllers — survive reconnect (regression fix R3).
   final StreamController<Event> _events = StreamController<Event>.broadcast();
   final StreamController<String> _eose = StreamController<String>.broadcast();
-  final StreamController<String> _notices = StreamController<String>.broadcast();
+  final StreamController<String> _notices =
+      StreamController<String>.broadcast();
   final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
   final StreamController<String> _auths = StreamController<String>.broadcast();
 
@@ -143,13 +146,10 @@ class RelayClient implements RelayConnection {
   void _scheduleReconnect() {
     if (_disposed) return;
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(
-      Duration(milliseconds: _backoffMs),
-      () {
-        _backoffMs = (_backoffMs * 2).clamp(1000, 30000);
-        connect();
-      },
-    );
+    _reconnectTimer = Timer(Duration(milliseconds: _backoffMs), () {
+      _backoffMs = (_backoffMs * 2).clamp(1000, 30000);
+      connect();
+    });
   }
 
   void _onData(dynamic data) {

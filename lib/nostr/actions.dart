@@ -18,7 +18,11 @@ class NostrActions {
   /// computed from the parent's tags) and a reply marker (the parent), plus a
   /// `p` tag for the parent's author. [extraTags] (e.g. imeta for attachments)
   /// are appended.
-  Event reply(Event parent, String content, {List<List<String>> extraTags = const []}) {
+  Event reply(
+    Event parent,
+    String content, {
+    List<List<String>> extraTags = const [],
+  }) {
     final rootId = parent.rootEventId;
     final tags = <List<String>>[
       ['e', rootId, '', 'root'],
@@ -66,7 +70,12 @@ class NostrActions {
   /// Add [pubkey] to a NIP-51 kind-30000 categorized people list (Follow set)
   /// with `d`=[category]. [current] is the existing kind-30000 event for that
   /// category (or null for a new list). Preserves existing p-tags.
-  Event followCategory(Event? current, String pubkey, String category, {String relay = ''}) {
+  Event followCategory(
+    Event? current,
+    String pubkey,
+    String category, {
+    String relay = '',
+  }) {
     final tags = <List<String>>[
       ['d', category],
     ];
@@ -87,6 +96,55 @@ class NostrActions {
     return id.signEvent(kind: 30000, content: '', tags: tags);
   }
 
+  /// Unfollow [pubkey] (NIP-02 kind 3). Publishes the FULL updated p-tag list
+  /// minus [pubkey]. [currentKind3] is the user's existing kind-3 event, or
+  /// null (no-op publish of an empty list). Existing entries' relay/petname
+  /// are preserved.
+  Event unfollow(Event? currentKind3, String pubkey) {
+    final tags = <List<String>>[];
+    if (currentKind3 != null) {
+      for (final t in currentKind3.tags) {
+        if (t.length < 2 || t[0] != 'p' || t[1] is! String) continue;
+        final pk = t[1] as String;
+        if (pk == pubkey) continue;
+        final r = (t.length >= 3 && t[2] is String) ? (t[2] as String) : '';
+        final petname = (t.length >= 4 && t[3] is String)
+            ? (t[3] as String)
+            : '';
+        tags.add(petname.isEmpty ? ['p', pk, r] : ['p', pk, r, petname]);
+      }
+    }
+    return id.signEvent(kind: 3, content: '', tags: tags);
+  }
+
+  /// Build a NIP-51 kind-30015 Interests list (followed hashtags). [current]
+  /// is the user's existing kind-30015 default list (d-tag "") or null.
+  /// Preserves existing `t` tags; adds [add] if non-null and not already
+  /// present; removes [remove] if present. Values are lowercased (NIP-12).
+  /// The default list carries d="" so it is a single replaceable event per
+  /// user — the user's set of followed hashtags, synced across relays.
+  Event interests(Event? current, {String? add, String? remove}) {
+    String norm(String s) => s.toLowerCase().replaceAll('#', '').trim();
+    final tags = <List<String>>[
+      ['d', ''],
+    ];
+    final seen = <String>{};
+    if (current != null) {
+      for (final t in current.tags) {
+        if (t.length < 2 || t[0] != 't' || t[1] is! String) continue;
+        final v = norm(t[1] as String);
+        if (v.isEmpty) continue;
+        if (remove != null && v == remove) continue;
+        if (seen.add(v)) tags.add(['t', v]);
+      }
+    }
+    if (add != null) {
+      final v = norm(add);
+      if (v.isNotEmpty && seen.add(v)) tags.add(['t', v]);
+    }
+    return id.signEvent(kind: 30015, content: '', tags: tags);
+  }
+
   /// Publish updated profile metadata (NIP-01 kind 0). [contentJson] is the
   /// stringified JSON of the metadata object.
   Event setMetadata(String contentJson) {
@@ -96,7 +154,11 @@ class NostrActions {
   /// Quote (kind-1 referencing [quoted]). The user's [content] is followed by a
   /// `nostr:note1…` reference; an `e` mention tag + `p` tag reference the quote.
   /// [extraTags] (e.g. imeta) are appended.
-  Event quote(Event quoted, String content, {List<List<String>> extraTags = const []}) {
+  Event quote(
+    Event quoted,
+    String content, {
+    List<List<String>> extraTags = const [],
+  }) {
     final ref = 'nostr:${hexToNote(quoted.id)}';
     final full = content.isEmpty ? ref : '$content\n\n$ref';
     final tags = <List<String>>[
@@ -119,7 +181,9 @@ class NostrActions {
         final pk = t[1] as String;
         if (pk == newPubkey) continue; // re-added below with the new relay hint
         final r = (t.length >= 3 && t[2] is String) ? (t[2] as String) : '';
-        final petname = (t.length >= 4 && t[3] is String) ? (t[3] as String) : '';
+        final petname = (t.length >= 4 && t[3] is String)
+            ? (t[3] as String)
+            : '';
         tags.add(petname.isEmpty ? ['p', pk, r] : ['p', pk, r, petname]);
         seen.add(pk);
       }
@@ -148,8 +212,11 @@ class NostrActions {
     final privateTags = <List<String>>[];
     if (current != null && current.content.isNotEmpty) {
       try {
-        final decoded =
-            nip44Decrypt(id.privkeyHex, id.pubkeyHex, current.content);
+        final decoded = nip44Decrypt(
+          id.privkeyHex,
+          id.pubkeyHex,
+          current.content,
+        );
         final arr = jsonDecode(decoded);
         if (arr is List) {
           for (final t in arr) {
@@ -169,17 +236,24 @@ class NostrActions {
       }
       // Re-encrypt the (unchanged) private list back into content.
       if (privateTags.isNotEmpty) {
-        content =
-            nip44Encrypt(id.privkeyHex, id.pubkeyHex, jsonEncode(privateTags));
+        content = nip44Encrypt(
+          id.privkeyHex,
+          id.pubkeyHex,
+          jsonEncode(privateTags),
+        );
       }
     } else {
       // Add to the private list (dedup) + re-encrypt.
-      if (!privateTags
-          .any((t) => t.length >= 2 && t[0] == 'e' && t[1] == eventId)) {
+      if (!privateTags.any(
+        (t) => t.length >= 2 && t[0] == 'e' && t[1] == eventId,
+      )) {
         privateTags.add(['e', eventId]);
       }
-      content =
-          nip44Encrypt(id.privkeyHex, id.pubkeyHex, jsonEncode(privateTags));
+      content = nip44Encrypt(
+        id.privkeyHex,
+        id.pubkeyHex,
+        jsonEncode(privateTags),
+      );
     }
     return id.signEvent(kind: 10003, content: content, tags: tags);
   }

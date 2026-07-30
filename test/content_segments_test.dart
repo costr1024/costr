@@ -12,14 +12,18 @@ void main() {
     });
 
     test('contiguous images (whitespace between) → one group', () {
-      final segs = tokenizeContent('![](https://x/a.jpg) ![](https://x/b.jpg)\n![](https://x/c.png)');
+      final segs = tokenizeContent(
+        '![](https://x/a.jpg) ![](https://x/b.jpg)\n![](https://x/c.png)',
+      );
       // one ImageGroupSeg with 3 urls (leading text empty → no TextSeg)
       expect(segs.length, 1);
       expect((segs[0] as ImageGroupSeg).urls.length, 3);
     });
 
     test('text between images → two separate groups + text between', () {
-      final segs = tokenizeContent('![](https://x/a.jpg)\nlook here\n![](https://x/b.jpg)');
+      final segs = tokenizeContent(
+        '![](https://x/a.jpg)\nlook here\n![](https://x/b.jpg)',
+      );
       // [ImageGroup(1), TextSeg, ImageGroup(1)]
       expect(segs.length, 3);
       expect(segs[0], isA<ImageGroupSeg>());
@@ -29,7 +33,9 @@ void main() {
     });
 
     test('a video URL breaks the image group (full-width video)', () {
-      final segs = tokenizeContent('![](https://x/a.jpg)![](https://x/v.mp4)![](https://x/b.jpg)');
+      final segs = tokenizeContent(
+        '![](https://x/a.jpg)![](https://x/v.mp4)![](https://x/b.jpg)',
+      );
       // [ImageGroup(1: a), SingleVideo(v), ImageGroup(1: b)] — all contiguous
       // (no text between), but the video is a separate SingleVideoSeg.
       expect(segs.length, 3);
@@ -40,7 +46,9 @@ void main() {
     });
 
     test('9+ images group together (no cap, actual count)', () {
-      final segs = tokenizeContent(List.generate(12, (i) => '![](https://x/\$i.jpg)').join(' '));
+      final segs = tokenizeContent(
+        List.generate(12, (i) => '![](https://x/\$i.jpg)').join(' '),
+      );
       expect(segs.length, 1);
       expect((segs[0] as ImageGroupSeg).urls.length, 12);
     });
@@ -52,7 +60,9 @@ void main() {
     });
 
     test('leading text + contiguous group + trailing text', () {
-      final segs = tokenizeContent('intro\n![](https://x/a.jpg)![](https://x/b.jpg)\noutro');
+      final segs = tokenizeContent(
+        'intro\n![](https://x/a.jpg)![](https://x/b.jpg)\noutro',
+      );
       // [TextSeg(intro), ImageGroup(2), TextSeg(outro)]
       expect(segs.length, 3);
       expect(segs[0], isA<TextSeg>());

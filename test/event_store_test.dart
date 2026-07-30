@@ -3,14 +3,14 @@ import 'package:costr/models/event.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Event _e(String id, int createdAt) => Event(
-      id: id,
-      pubkey: 'p' * 64,
-      createdAt: createdAt,
-      kind: 1,
-      tags: const [],
-      content: 'c',
-      sig: 's' * 128,
-    );
+  id: id,
+  pubkey: 'p' * 64,
+  createdAt: createdAt,
+  kind: 1,
+  tags: const [],
+  content: 'c',
+  sig: 's' * 128,
+);
 
 void main() {
   group('EventStore', () {

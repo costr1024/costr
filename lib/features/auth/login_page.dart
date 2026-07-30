@@ -31,7 +31,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   }
 
   Future<void> _importKey(String nsec) async {
-    if (nsec.isEmpty) { _snack('请输入 nsec1 开头的私钥'); return; }
+    if (nsec.isEmpty) {
+      _snack('请输入 nsec1 开头的私钥');
+      return;
+    }
     setState(() => _busy = true);
     try {
       await ref.read(identityProvider.notifier).login(nsec);
@@ -75,7 +78,11 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 // --- Login entry view ---
 
 class _LoginView extends ConsumerStatefulWidget {
-  const _LoginView({required this.busy, required this.onImport, required this.onShowCreate});
+  const _LoginView({
+    required this.busy,
+    required this.onImport,
+    required this.onShowCreate,
+  });
   final bool busy;
   final void Function(String nsec) onImport;
   final VoidCallback onShowCreate;
@@ -90,7 +97,10 @@ class _LoginViewState extends ConsumerState<_LoginView> {
   bool _obscure = true;
 
   @override
-  void dispose() { _controller.dispose(); super.dispose(); }
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -102,8 +112,10 @@ class _LoginViewState extends ConsumerState<_LoginView> {
         const SizedBox(height: 16),
         Text('欢迎来到 Costr', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 6),
-        Text('更适合中文用户的 Nostr 开源社交客户端',
-          style: Theme.of(context).textTheme.bodySmall),
+        Text(
+          '更适合中文用户的 Nostr 开源社交客户端',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
         const SizedBox(height: 28),
         if (!_showImport) ...[
           FilledButton.icon(
@@ -124,14 +136,18 @@ class _LoginViewState extends ConsumerState<_LoginView> {
             ),
           ),
           const SizedBox(height: 16),
-          Text('没有用户名密码——你的账号就是一把钥匙，本机生成、只存本机。',
+          Text(
+            '没有用户名密码——你的账号就是一把钥匙，本机生成、只存本机。',
             style: Theme.of(context).textTheme.labelSmall,
-            textAlign: TextAlign.center),
+            textAlign: TextAlign.center,
+          ),
         ] else ...[
           Align(
             alignment: Alignment.centerLeft,
-            child: Text('粘贴你的私钥',
-              style: Theme.of(context).textTheme.titleMedium),
+            child: Text(
+              '粘贴你的私钥',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
           ),
           const SizedBox(height: 8),
           TextField(
@@ -151,8 +167,11 @@ class _LoginViewState extends ConsumerState<_LoginView> {
           ),
           const SizedBox(height: 12),
           FilledButton(
-            onPressed: widget.busy ? null : () => widget.onImport(_controller.text.trim()),
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48),
+            onPressed: widget.busy
+                ? null
+                : () => widget.onImport(_controller.text.trim()),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
             ),
             child: Text(widget.busy ? '登录中…' : '登录'),
           ),
@@ -173,7 +192,8 @@ class _CreateAccountWizard extends ConsumerStatefulWidget {
   const _CreateAccountWizard();
 
   @override
-  ConsumerState<_CreateAccountWizard> createState() => _CreateAccountWizardState();
+  ConsumerState<_CreateAccountWizard> createState() =>
+      _CreateAccountWizardState();
 }
 
 class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
@@ -191,7 +211,10 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
   }
 
   @override
-  void dispose() { _nickController.dispose(); super.dispose(); }
+  void dispose() {
+    _nickController.dispose();
+    super.dispose();
+  }
 
   String _generatePrivKeyHex() {
     final r = DateTime.now().microsecondsSinceEpoch;
@@ -228,7 +251,9 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('创建失败：$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('创建失败：$e')));
         setState(() => _busy = false);
       }
     }
@@ -238,7 +263,8 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
     await Clipboard.setData(ClipboardData(text: _newNsec));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已复制私钥'), duration: Duration(seconds: 1)));
+        const SnackBar(content: Text('已复制私钥'), duration: Duration(seconds: 1)),
+      );
     }
   }
 
@@ -282,8 +308,8 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
                     border: Border(
                       bottom: BorderSide(
                         color: i <= _step
-                          ? CostrColors.brand
-                          : CostrColors.border,
+                            ? CostrColors.brand
+                            : CostrColors.border,
                         width: 2,
                       ),
                     ),
@@ -294,7 +320,9 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
                     style: TextStyle(
                       fontSize: 12,
                       color: i <= _step ? CostrColors.brand : CostrColors.text3,
-                      fontWeight: i == _step ? FontWeight.w600 : FontWeight.normal,
+                      fontWeight: i == _step
+                          ? FontWeight.w600
+                          : FontWeight.normal,
                     ),
                   ),
                 ),
@@ -314,8 +342,10 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
     return [
       Text('先备份你的私钥', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 4),
-      Text('私钥以 nsec1 开头 · 只存在本机，不上传任何服务器。',
-        style: Theme.of(context).textTheme.bodySmall),
+      Text(
+        '私钥以 nsec1 开头 · 只存在本机，不上传任何服务器。',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
       const SizedBox(height: 12),
       Container(
         padding: const EdgeInsets.all(12),
@@ -369,8 +399,10 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
     return [
       Text('设置昵称和头像', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 4),
-      Text('昵称和头像公开可见，以后随时能改。不填也行。',
-        style: Theme.of(context).textTheme.bodySmall),
+      Text(
+        '昵称和头像公开可见，以后随时能改。不填也行。',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
       const SizedBox(height: 16),
       CircleAvatar(
         radius: 40,
@@ -405,7 +437,8 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
     return [
       const SizedBox(height: 24),
       Container(
-        width: 64, height: 64,
+        width: 64,
+        height: 64,
         decoration: const BoxDecoration(
           color: CostrColors.green,
           shape: BoxShape.circle,
@@ -413,21 +446,25 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
         child: const Icon(Icons.check, color: Colors.white, size: 32),
       ),
       const SizedBox(height: 16),
-      Text('账号创建完成',
+      Text(
+        '账号创建完成',
         style: Theme.of(context).textTheme.titleMedium,
-        textAlign: TextAlign.center),
+        textAlign: TextAlign.center,
+      ),
       const SizedBox(height: 4),
       Text(
         _nickController.text.trim().isNotEmpty
-          ? '欢迎，${_nickController.text.trim()}！'
-          : '欢迎来到 Costr！',
+            ? '欢迎，${_nickController.text.trim()}！'
+            : '欢迎来到 Costr！',
         style: Theme.of(context).textTheme.bodyMedium,
         textAlign: TextAlign.center,
       ),
       const SizedBox(height: 8),
-      Text('你的私钥只存在这台手机里，随时能在「设置 → 账号」里查看。',
+      Text(
+        '你的私钥只存在这台手机里，随时能在「设置 → 账号」里查看。',
         style: Theme.of(context).textTheme.labelSmall,
-        textAlign: TextAlign.center),
+        textAlign: TextAlign.center,
+      ),
       const SizedBox(height: 16),
       FilledButton(
         onPressed: _busy ? null : _finish,

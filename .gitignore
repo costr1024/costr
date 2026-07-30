@@ -75,3 +75,6 @@ secrets/
 # Claude Code (keep .claude/settings.json tracked, ignore local overrides)
 .claude/settings.local.json
 .claude/projects/
+
+# Kotlin compiler sessions (local cache)
+/android/.kotlin/

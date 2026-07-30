@@ -62,8 +62,8 @@ class _QuotedParent extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Text('回复的帖子加载中…', style: theme.textTheme.labelSmall),
       ),
-      error: (Object e, _) => Text('父帖加载失败：$e',
-          style: theme.textTheme.labelSmall),
+      error: (Object e, _) =>
+          Text('父帖加载失败：$e', style: theme.textTheme.labelSmall),
       data: (Event? parent) {
         if (parent == null) {
           return Padding(

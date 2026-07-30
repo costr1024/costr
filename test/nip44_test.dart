@@ -36,8 +36,10 @@ void main() {
       final bytes = base64.decode(payload).toList();
       bytes[bytes.length - 1] ^= 0x01;
       final tampered = base64.encode(bytes);
-      expect(() => nip44Decrypt(sec2, pub1, tampered),
-          throwsA(isA<FormatException>()));
+      expect(
+        () => nip44Decrypt(sec2, pub1, tampered),
+        throwsA(isA<FormatException>()),
+      );
     });
   });
 }

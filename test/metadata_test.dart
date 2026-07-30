@@ -6,15 +6,20 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('Metadata', () {
     test('parses a standard kind-0 content object', () {
-      final m = Metadata.fromJson(jsonDecode(jsonEncode({
-        'name': 'alice',
-        'display_name': 'Alice Liddell',
-        'picture': 'https://example.com/alice.png',
-        'about': 'curious',
-        'website': 'https://alice.example',
-        'banner': 'https://example.com/banner.png',
-        'nip05': 'alice@example.com',
-      })) as Map<String, dynamic>);
+      final m = Metadata.fromJson(
+        jsonDecode(
+              jsonEncode({
+                'name': 'alice',
+                'display_name': 'Alice Liddell',
+                'picture': 'https://example.com/alice.png',
+                'about': 'curious',
+                'website': 'https://alice.example',
+                'banner': 'https://example.com/banner.png',
+                'nip05': 'alice@example.com',
+              }),
+            )
+            as Map<String, dynamic>,
+      );
       expect(m.name, 'alice');
       expect(m.displayName, 'Alice Liddell');
       expect(m.picture, 'https://example.com/alice.png');

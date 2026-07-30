@@ -45,13 +45,24 @@ String mimeForExt(String? ext) {
   final dot = e.lastIndexOf('.');
   if (dot >= 0) e = e.substring(dot + 1);
   const map = <String, String>{
-    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
-    'gif': 'image/gif', 'webp': 'image/webp', 'bmp': 'image/bmp',
-    'mp4': 'video/mp4', 'webm': 'video/webm', 'mov': 'video/quicktime',
-    'm4v': 'video/x-m4v', 'mkv': 'video/x-matroska',
-    'pdf': 'application/pdf', 'zip': 'application/zip',
-    'txt': 'text/plain', 'md': 'text/markdown',
-    'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'ogg': 'audio/ogg',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'bmp': 'image/bmp',
+    'mp4': 'video/mp4',
+    'webm': 'video/webm',
+    'mov': 'video/quicktime',
+    'm4v': 'video/x-m4v',
+    'mkv': 'video/x-matroska',
+    'pdf': 'application/pdf',
+    'zip': 'application/zip',
+    'txt': 'text/plain',
+    'md': 'text/markdown',
+    'mp3': 'audio/mpeg',
+    'wav': 'audio/wav',
+    'ogg': 'audio/ogg',
   };
   return map[e] ?? 'application/octet-stream';
 }
@@ -114,8 +125,7 @@ Event _buildAuthEvent(
   String mimetype,
   String note,
 ) {
-  final exp =
-      (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600; // +1h
+  final exp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600; // +1h
   return id.signEvent(
     kind: 24242,
     content: note,

@@ -17,6 +17,7 @@ import '../features/notifications/notification_settings_page.dart';
 import '../features/notifications/notifications_page.dart';
 import '../features/profile/edit_profile_page.dart';
 import '../features/profile/profile_page.dart';
+import '../features/settings/account_settings_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/search/search_page.dart';
 import '../models/event.dart';
@@ -25,8 +26,9 @@ import '../widgets/onboarding_overlay.dart';
 import 'providers.dart';
 import 'theme.dart';
 
-final GlobalKey<NavigatorState> rootNavigator =
-    GlobalKey<NavigatorState>(debugLabel: 'root');
+final GlobalKey<NavigatorState> rootNavigator = GlobalKey<NavigatorState>(
+  debugLabel: 'root',
+);
 
 final routerProvider = Provider<GoRouter>((ref) {
   final refresh = GoRouterRefreshNotifier();
@@ -69,47 +71,51 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/u/:pubkey',
-        builder: (BuildContext context, GoRouterState state) => ProfilePage(
-          pubkey: state.pathParameters['pubkey'],
-        ),
+        builder: (BuildContext context, GoRouterState state) =>
+            ProfilePage(pubkey: state.pathParameters['pubkey']),
       ),
       GoRoute(
         path: '/n/:id',
-        builder: (BuildContext context, GoRouterState state) => PostDetailPage(
-          id: state.pathParameters['id']!,
-        ),
+        builder: (BuildContext context, GoRouterState state) =>
+            PostDetailPage(id: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/profile/edit',
-        builder: (BuildContext context, GoRouterState state) => const EditProfilePage(),
+        builder: (BuildContext context, GoRouterState state) =>
+            const EditProfilePage(),
       ),
       GoRoute(
         path: '/settings',
-        builder: (BuildContext context, GoRouterState state) => const SettingsPage(),
+        builder: (BuildContext context, GoRouterState state) =>
+            const SettingsPage(),
       ),
       GoRoute(
         path: '/about',
-        builder: (BuildContext context, GoRouterState state) => const AboutPage(),
+        builder: (BuildContext context, GoRouterState state) =>
+            const AboutPage(),
       ),
       GoRoute(
         path: '/settings/notifications',
-        builder: (BuildContext context, GoRouterState state) => const NotificationSettingsPage(),
+        builder: (BuildContext context, GoRouterState state) =>
+            const NotificationSettingsPage(),
       ),
       GoRoute(
         path: '/settings/account',
-        builder: (BuildContext context, GoRouterState state) => const _PlaceholderPage(title: '账号与身份'),
+        builder: (BuildContext context, GoRouterState state) =>
+            const AccountSettingsPage(),
       ),
       GoRoute(
         path: '/settings/relays',
-        builder: (BuildContext context, GoRouterState state) => const _PlaceholderPage(title: '服务器节点'),
+        builder: (BuildContext context, GoRouterState state) =>
+            const _PlaceholderPage(title: '服务器节点'),
       ),
       StatefulShellRoute.indexedStack(
-        builder: (
-          BuildContext context,
-          GoRouterState state,
-          StatefulNavigationShell navigationShell,
-        ) =>
-            AppShell(navigationShell: navigationShell),
+        builder:
+            (
+              BuildContext context,
+              GoRouterState state,
+              StatefulNavigationShell navigationShell,
+            ) => AppShell(navigationShell: navigationShell),
         branches: <StatefulShellBranch>[
           // Tab 1: 首页 (Feed)
           StatefulShellBranch(
@@ -236,8 +242,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             ],
           ),
         ),
-        if (_showOnboarding)
-          OnboardingOverlay(onDone: _finishOnboarding),
+        if (_showOnboarding) OnboardingOverlay(onDone: _finishOnboarding),
       ],
     );
   }
@@ -250,7 +255,12 @@ class _PlaceholderPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text(title)),
-    body: Center(child: Text('$title（即将支持）', style: Theme.of(context).textTheme.bodyMedium)),
+    body: Center(
+      child: Text(
+        '$title（即将支持）',
+        style: Theme.of(context).textTheme.bodyMedium,
+      ),
+    ),
   );
 }
 

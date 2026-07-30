@@ -34,10 +34,7 @@ void main() {
 
     test('fromPrivkeyHex rejects bad-length / non-hex input', () {
       expect(() => Identity.fromPrivkeyHex('00'), throwsFormatException);
-      expect(
-        () => Identity.fromPrivkeyHex('g' * 64),
-        throwsFormatException,
-      );
+      expect(() => Identity.fromPrivkeyHex('g' * 64), throwsFormatException);
     });
 
     test('toString redacts the private key and nsec', () {

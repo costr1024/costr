@@ -34,11 +34,11 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final events = ref.read(currentFeedEventsProvider);
     if (events.isEmpty) return;
     final mode = ref.read(feedModeProvider);
-    final follows =
-        ref.read(followingStateProvider).value ?? const <String>[];
+    final follows = ref.read(followingStateProvider).value ?? const <String>[];
     if (mode == FeedMode.following && follows.isEmpty) return;
-    final oldest =
-        events.map((e) => e.createdAt).reduce((a, b) => a < b ? a : b);
+    final oldest = events
+        .map((e) => e.createdAt)
+        .reduce((a, b) => a < b ? a : b);
     final filter = buildFeedFilter(mode, follows);
     filter['until'] = oldest - 1;
     setState(() => _loadingMore = true);
@@ -59,7 +59,8 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final tagFilter = ref.watch(tagFilterProvider);
 
     final followingLoading = mode == FeedMode.following && following.isLoading;
-    final followingEmpty = mode == FeedMode.following &&
+    final followingEmpty =
+        mode == FeedMode.following &&
         following.hasValue &&
         (following.value ?? const []).isEmpty;
 
@@ -82,7 +83,9 @@ class _FeedPageState extends ConsumerState<FeedPage> {
               ],
               selected: {mode},
               onSelectionChanged: (Set<FeedMode> s) {
-                if (s.isNotEmpty) ref.read(feedModeProvider.notifier).set(s.first);
+                if (s.isNotEmpty) {
+                  ref.read(feedModeProvider.notifier).set(s.first);
+                }
               },
             ),
           ),
@@ -91,15 +94,10 @@ class _FeedPageState extends ConsumerState<FeedPage> {
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: InputChip(
-                  label: Text('#$tagFilter'),
-                  visualDensity: VisualDensity.compact,
-                  onDeleted: () => ref.read(tagFilterProvider.notifier).clear(),
-                ),
+                child: _TagFilterBar(tag: tagFilter),
               ),
             ),
-          if (followingLoading || _loadingMore)
-            const LinearProgressIndicator(),
+          if (followingLoading || _loadingMore) const LinearProgressIndicator(),
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refresh,
@@ -111,7 +109,8 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                       onNotification: (ScrollNotification n) {
                         if (n is ScrollEndNotification &&
                             n.metrics.pixels >=
-                                n.metrics.maxScrollExtent - _loadMoreThreshold) {
+                                n.metrics.maxScrollExtent -
+                                    _loadMoreThreshold) {
                           _loadMore();
                         }
                         return false;
@@ -141,9 +140,7 @@ class _EmptyState extends StatelessWidget {
         : '暂无帖子。\n下拉刷新或等待中继数据。';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 80, horizontal: 24),
-      child: Center(
-        child: Text(text, textAlign: TextAlign.center),
-      ),
+      child: Center(child: Text(text, textAlign: TextAlign.center)),
     );
   }
 }
@@ -154,28 +151,100 @@ class _LanguageGlobeButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // The button itself shows the current selection's flag so the active
+    // language is visible at a glance (not just a generic globe).
+    final rec = _entries.firstWhere(
+      (e) => e.$2 == value,
+      orElse: () => ('全部', LanguageFilter.all, '🌐'),
+    );
     return PopupMenuButton<String>(
-      icon: Icon(Icons.language, size: 20, color: CostrColors.text2),
-      tooltip: '语言',
+      icon: Text(rec.$3, style: const TextStyle(fontSize: 18)),
+      tooltip: '语言：${rec.$1}',
       onSelected: (String v) {
         final f = LanguageFilter.values.firstWhere((e) => e.name == v);
         ref.read(languageFilterProvider.notifier).set(f);
       },
-      itemBuilder: (_) {
-        final langs = <(String, LanguageFilter)>[
-          ('全部', LanguageFilter.all),
-          ('中文', LanguageFilter.zh),
-          ('英文', LanguageFilter.en),
-          ('日文', LanguageFilter.ja),
-        ];
-        return langs.map((e) => PopupMenuItem<String>(
-          value: e.$2.name,
-          child: Row(children: [
-            Text(e.$1),
-            if (e.$2 == value) ...[const Spacer(), Icon(Icons.check, size: 16, color: CostrColors.brand)],
-          ]),
-        )).toList();
-      },
+      itemBuilder: (_) => _entries
+          .map(
+            (e) => PopupMenuItem<String>(
+              value: e.$2.name,
+              child: Row(
+                children: [
+                  Text(e.$3, style: const TextStyle(fontSize: 16)),
+                  const SizedBox(width: 8),
+                  Text(e.$1),
+                  if (e.$2 == value) ...[
+                    const Spacer(),
+                    const Icon(Icons.check, size: 16, color: CostrColors.brand),
+                  ],
+                ],
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  static const List<(String, LanguageFilter, String)> _entries = [
+    ('全部', LanguageFilter.all, '🌐'),
+    ('中文', LanguageFilter.zh, '🇨🇳'),
+    ('英文', LanguageFilter.en, '🇬🇧'),
+    ('日文', LanguageFilter.ja, '🇯🇵'),
+  ];
+}
+
+/// The active tag-filter bar: `#tag` + a star to follow/unfollow the tag
+/// (NIP-51 kind-30015) + a clear (✕) button. Shown at the top of the home
+/// feed when a tag filter is active — the most discoverable entry point for
+/// "follow this tag".
+class _TagFilterBar extends ConsumerWidget {
+  const _TagFilterBar({required this.tag});
+  final String tag;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final followed = (ref.watch(followedTagsProvider).value ?? const <String>[])
+        .contains(tag);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('#$tag', style: theme.textTheme.labelLarge),
+          IconButton(
+            tooltip: followed ? '已关注，点击取消' : '关注此标签',
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: Icon(
+              followed ? Icons.star_rounded : Icons.star_border_rounded,
+              color: followed ? theme.colorScheme.primary : null,
+            ),
+            onPressed: () {
+              if (followed) {
+                ref.read(followedTagsProvider.notifier).remove(tag);
+              } else {
+                ref.read(followedTagsProvider.notifier).add(tag);
+              }
+            },
+          ),
+          IconButton(
+            tooltip: '清除',
+            iconSize: 16,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: const Icon(Icons.close),
+            onPressed: () => ref.read(tagFilterProvider.notifier).clear(),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -187,8 +256,9 @@ class _RelayStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (relays.isEmpty) return const SizedBox.shrink();
-    final connectedCount =
-        relays.where((r) => r.status == RelayStatus.connected).length;
+    final connectedCount = relays
+        .where((r) => r.status == RelayStatus.connected)
+        .length;
     final allConnected = connectedCount == relays.length;
     return Padding(
       padding: const EdgeInsets.only(right: 8),

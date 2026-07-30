@@ -24,14 +24,19 @@ import '../utils/nip19.dart';
 import 'network_video.dart';
 
 /// Matches nostr: prefix + npub1/nprofile1 entity (consumes the nostr: prefix
-/// so it doesn't linger as orphan text before the link).
-final RegExp _pubkeyEntityRegex =
-    RegExp(r'(?:nostr:)?(nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}');
+/// so it doesn't linger as orphan text before the link). Group 1 captures the
+/// FULL bare entity (with its data) so the link href carries the whole entity,
+/// not just the `npub1`/`nprofile1` prefix.
+final RegExp _pubkeyEntityRegex = RegExp(
+  r'(?:nostr:)?((?:nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
+);
 final RegExp _mdImageRegex = RegExp(r'!\[([^\]]*)\]\(([^)\s]+)\)');
+
 /// Bare media URLs in content (image/video/file extensions) — stripped from
 /// text segments so they don't show as plain text; rendered via imeta extra.
 final RegExp _bareMediaUrl = RegExp(
-    r'https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|pdf|zip|txt|md|mp3|wav|ogg)');
+  r'https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|pdf|zip|txt|md|mp3|wav|ogg)',
+);
 
 /// Posts with content longer than this many chars collapse to [_kCollapsedMaxHeight]
 /// until expanded.
@@ -39,7 +44,11 @@ const int _kCollapseThreshold = 400;
 const double _kCollapsedMaxHeight = 220;
 
 class MarkdownContent extends ConsumerStatefulWidget {
-  const MarkdownContent({super.key, required this.event, this.initiallyExpanded = false});
+  const MarkdownContent({
+    super.key,
+    required this.event,
+    this.initiallyExpanded = false,
+  });
 
   final Event event;
   final bool initiallyExpanded;
@@ -57,7 +66,8 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     // 1. Linkify npub/nprofile mentions.
     final pubkeysByEntity = <String, String?>{};
     for (final m in _pubkeyEntityRegex.allMatches(event.content)) {
-      final entity = m.group(0)!;
+      // group(1) = full bare entity (no nostr: prefix).
+      final entity = m.group(1)!;
       pubkeysByEntity.putIfAbsent(entity, () => entityToPubkeyHex(entity));
     }
     final nameByPubkey = <String, String>{};
@@ -67,16 +77,15 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       final name = meta?.bestName;
       if (name != null && name.isNotEmpty) nameByPubkey[pk] = name;
     }
-    final linkified = event.content.replaceAllMapped(
-      _pubkeyEntityRegex,
-      (Match m) {
-        final entity = m.group(1)!;
-        final full = m.group(0)!;
-        final pk = pubkeysByEntity[full];
-        final label = (pk != null ? nameByPubkey[pk] : null) ?? shortenEntity(entity);
-        return '[@$label](nostr:$entity)';
-      },
-    );
+    final linkified = event.content.replaceAllMapped(_pubkeyEntityRegex, (
+      Match m,
+    ) {
+      final entity = m.group(1)!;
+      final pk = pubkeysByEntity[entity];
+      final label =
+          (pk != null ? nameByPubkey[pk] : null) ?? shortenEntity(entity);
+      return '[@$label](nostr:$entity)';
+    });
 
     // 2. Tokenize into segments: text / image-group (contiguous) / single video.
     final segments = tokenizeContent(linkified);
@@ -92,7 +101,8 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
           MarkdownBody(
             data: cleaned,
             extensionSet: ExtensionSet.gitHubFlavored,
-            sizedImageBuilder: (MarkdownImageConfig _) => const SizedBox.shrink(),
+            sizedImageBuilder: (MarkdownImageConfig _) =>
+                const SizedBox.shrink(),
             onTapLink: (String text, String? href, String? title) {
               if (href == null) return;
               if (href.startsWith('nostr:')) {
@@ -100,7 +110,10 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
                 final pk = entityToPubkeyHex(entity);
                 if (pk != null) context.push('/u/$pk');
               } else if (href.startsWith('http')) {
-                launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
+                launchUrl(
+                  Uri.parse(href),
+                  mode: LaunchMode.externalApplication,
+                );
               }
             },
             styleSheet: MarkdownStyleSheet.fromTheme(theme),
@@ -119,7 +132,10 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     final extra = event.mediaAttachments
         .where((m) => !event.content.contains('](${m.url})'))
         .toList();
-    final extraImages = extra.where((m) => m.isImage).map((m) => m.url).toList();
+    final extraImages = extra
+        .where((m) => m.isImage)
+        .map((m) => m.url)
+        .toList();
     final extraVideos = extra.where((m) => m.isVideo).toList();
     if (extraImages.isNotEmpty) {
       children.add(const SizedBox(height: 8));
@@ -129,17 +145,18 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       children.add(const SizedBox(height: 8));
       children.add(NetworkVideo(url: v.url, width: v.width, height: v.height));
     }
-    final extraFiles =
-        extra.where((m) => !m.isImage && !m.isVideo).toList();
+    final extraFiles = extra.where((m) => !m.isImage && !m.isVideo).toList();
     if (extraFiles.isNotEmpty) {
       children.add(const SizedBox(height: 8));
-      children.add(Wrap(
-        spacing: 8,
-        runSpacing: 6,
-        children: [
-          for (final f in extraFiles) _FileChip(name: _fileName(f.url)),
-        ],
-      ));
+      children.add(
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final f in extraFiles) _FileChip(name: _fileName(f.url)),
+          ],
+        ),
+      );
     }
 
     final isLong = event.content.length > _kCollapseThreshold;
@@ -178,10 +195,7 @@ class _CollapseBox extends StatelessWidget {
           child,
           Align(
             alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: onToggle,
-              child: const Text('收起'),
-            ),
+            child: TextButton(onPressed: onToggle, child: const Text('收起')),
           ),
         ],
       );
@@ -212,10 +226,7 @@ class _CollapseBox extends StatelessWidget {
                 colors: [surface.withValues(alpha: 0), surface],
               ),
             ),
-            child: TextButton(
-              onPressed: onToggle,
-              child: const Text('展开'),
-            ),
+            child: TextButton(onPressed: onToggle, child: const Text('展开')),
           ),
         ),
       ],
@@ -249,8 +260,11 @@ class _FileChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.insert_drive_file_outlined,
-                size: 18, color: theme.colorScheme.primary),
+            Icon(
+              Icons.insert_drive_file_outlined,
+              size: 18,
+              color: theme.colorScheme.primary,
+            ),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
@@ -316,9 +330,21 @@ List<ContentSeg> tokenizeContent(String content) {
 }
 
 abstract class ContentSeg {}
-class TextSeg extends ContentSeg { TextSeg(this.text); final String text; }
-class ImageGroupSeg extends ContentSeg { ImageGroupSeg(this.urls); final List<String> urls; }
-class SingleVideoSeg extends ContentSeg { SingleVideoSeg(this.url); final String url; }
+
+class TextSeg extends ContentSeg {
+  TextSeg(this.text);
+  final String text;
+}
+
+class ImageGroupSeg extends ContentSeg {
+  ImageGroupSeg(this.urls);
+  final List<String> urls;
+}
+
+class SingleVideoSeg extends ContentSeg {
+  SingleVideoSeg(this.url);
+  final String url;
+}
 
 // --- image grid + single image --------------------------------------------
 
@@ -371,8 +397,10 @@ class _SingleImage extends StatelessWidget {
         imageUrl: url,
         width: double.infinity,
         fit: BoxFit.contain,
-        placeholder: (BuildContext _, String _) => const _Placeholder(aspect: 16 / 9),
-        errorWidget: (BuildContext _, String _, Object _) => const _ErrorBox(aspect: 16 / 9),
+        placeholder: (BuildContext _, String _) =>
+            const _Placeholder(aspect: 16 / 9),
+        errorWidget: (BuildContext _, String _, Object _) =>
+            const _ErrorBox(aspect: 16 / 9),
       ),
     );
   }
@@ -383,17 +411,17 @@ class _Placeholder extends StatelessWidget {
   final double aspect;
   @override
   Widget build(BuildContext context) => AspectRatio(
-        aspectRatio: aspect,
-        child: Container(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          alignment: Alignment.center,
-          child: const SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
+    aspectRatio: aspect,
+    child: Container(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+    ),
+  );
 }
 
 class _ErrorBox extends StatelessWidget {
@@ -401,11 +429,11 @@ class _ErrorBox extends StatelessWidget {
   final double aspect;
   @override
   Widget build(BuildContext context) => AspectRatio(
-        aspectRatio: aspect,
-        child: Container(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          alignment: Alignment.center,
-          child: const Icon(Icons.broken_image_outlined),
-        ),
-      );
+    aspectRatio: aspect,
+    child: Container(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      alignment: Alignment.center,
+      child: const Icon(Icons.broken_image_outlined),
+    ),
+  );
 }

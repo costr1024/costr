@@ -58,11 +58,15 @@ String? nprofileToPubkeyHex(String nprofile) {
 }
 
 /// Decode any NIP-19 pubkey entity (`npub1` or `nprofile1`) to pubkey hex.
-/// Returns null for non-pubkey entities (note1) or invalid input.
+/// Strips an optional `nostr:` prefix (mentions in post content are often
+/// written as `nostr:npub1…` / `nostr:nprofile1…`, per NIP-27). Returns null
+/// for non-pubkey entities (note1) or invalid input.
 String? entityToPubkeyHex(String entity) {
-  final l = entity.toLowerCase();
-  if (l.startsWith('npub1')) return npubToHex(entity);
-  if (l.startsWith('nprofile1')) return nprofileToPubkeyHex(entity);
+  var e = entity;
+  if (e.toLowerCase().startsWith('nostr:')) e = e.substring(6);
+  final l = e.toLowerCase();
+  if (l.startsWith('npub1')) return npubToHex(e);
+  if (l.startsWith('nprofile1')) return nprofileToPubkeyHex(e);
   return null;
 }
 

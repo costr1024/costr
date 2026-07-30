@@ -14,6 +14,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/event.dart';
 import '../models/metadata.dart';
+import '../utils/nip19.dart';
 import '../nostr/actions.dart';
 import '../nostr/event_store.dart';
 import '../nostr/identity.dart';
@@ -24,7 +25,6 @@ import '../services/secure_storage_service.dart';
 import '../utils/language.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
-
 
 /// Default relays. bostr requires NIP-42 auth to write (read-only for us);
 /// ditto/damus/nos.lol accept writes and are broadly queried, so posts reach
@@ -99,8 +99,9 @@ class IdentityNotifier extends AsyncNotifier<Identity?> {
   }
 }
 
-final identityProvider =
-    AsyncNotifierProvider<IdentityNotifier, Identity?>(IdentityNotifier.new);
+final identityProvider = AsyncNotifierProvider<IdentityNotifier, Identity?>(
+  IdentityNotifier.new,
+);
 
 // --- Relay pool --------------------------------------------------------------
 
@@ -209,7 +210,9 @@ class EventStoreNotifier extends Notifier<List<Event>> {
     final db = _cache;
     if (db == null) return;
     try {
-      final isReplaceable = e.kind == 0 || e.kind == 3 ||
+      final isReplaceable =
+          e.kind == 0 ||
+          e.kind == 3 ||
           (e.kind >= 10000 && e.kind < 20000) ||
           (e.kind >= 30000 && e.kind < 40000);
       if (!isReplaceable) {
@@ -289,8 +292,9 @@ Event _cacheRowToEvent(cache.EventRow row) {
   );
 }
 
-final eventStoreProvider =
-    NotifierProvider<EventStoreNotifier, List<Event>>(EventStoreNotifier.new);
+final eventStoreProvider = NotifierProvider<EventStoreNotifier, List<Event>>(
+  EventStoreNotifier.new,
+);
 
 // --- Feed mode --------------------------------------------------------------
 
@@ -318,14 +322,15 @@ class FeedModeNotifier extends Notifier<FeedMode> {
     state = mode;
     // Persist (fire-and-forget; SQLite write is ms-fast).
     final value = mode == FeedMode.following ? 'following' : 'global';
-    ref.read(localCacheProvider.future).then(
-          (cache) => cache.writeConfig('feed_mode', value),
-        );
+    ref
+        .read(localCacheProvider.future)
+        .then((cache) => cache.writeConfig('feed_mode', value));
   }
 }
 
-final feedModeProvider =
-    NotifierProvider<FeedModeNotifier, FeedMode>(FeedModeNotifier.new);
+final feedModeProvider = NotifierProvider<FeedModeNotifier, FeedMode>(
+  FeedModeNotifier.new,
+);
 
 // --- Feed filters: language + hashtag ---------------------------------------
 
@@ -362,15 +367,16 @@ class LanguageFilterNotifier extends Notifier<LanguageFilter> {
       LanguageFilter.ja => 'ja',
       LanguageFilter.all => 'all',
     };
-    ref.read(localCacheProvider.future).then(
-          (cache) => cache.writeConfig('language_filter', value),
-        );
+    ref
+        .read(localCacheProvider.future)
+        .then((cache) => cache.writeConfig('language_filter', value));
   }
 }
 
 final languageFilterProvider =
     NotifierProvider<LanguageFilterNotifier, LanguageFilter>(
-        LanguageFilterNotifier.new);
+      LanguageFilterNotifier.new,
+    );
 
 class TagFilterNotifier extends Notifier<String?> {
   @override
@@ -379,58 +385,204 @@ class TagFilterNotifier extends Notifier<String?> {
   void clear() => state = null;
 }
 
-final tagFilterProvider =
-    NotifierProvider<TagFilterNotifier, String?>(TagFilterNotifier.new);
+final tagFilterProvider = NotifierProvider<TagFilterNotifier, String?>(
+  TagFilterNotifier.new,
+);
 
-// --- Followed hashtags (local-only, DESIGN §8: stored in config table) ----
+// --- Followed hashtags (NIP-51 kind-30015 Interests, relay-synced + cached) --
 
-/// The user's followed hashtag list. Persisted to the local `config` table
-/// under key `followed_tags` (JSON array of lowercased tag names) — NOT
-/// published to any relay. Tapping a followed tag in the profile 关注 tab
-/// jumps to the home feed filtered by that tag via [tagFilterProvider].
+/// In-memory cache of the user's kind-30015 default Interests event, held for
+/// the session so add/remove can read the current list without a relay
+/// round-trip (same pattern as [contactListCacheProvider] for kind-3).
+class FollowedTagsCacheNotifier extends Notifier<Event?> {
+  @override
+  Event? build() => null;
+  void set(Event? e) => state = e;
+}
+
+final followedTagsCacheProvider =
+    NotifierProvider<FollowedTagsCacheNotifier, Event?>(
+      FollowedTagsCacheNotifier.new,
+    );
+
+/// The user's followed hashtags. Source of truth is the user's NIP-51
+/// kind-30015 default Interests list (d-tag "", `t` tags = followed hashtags),
+/// published to relays. A local SQLite copy ([LocalCache.queryInterests])
+/// hydrates instantly on cold start before the relay responds. add/remove
+/// sign an updated kind-30015 via [NostrActions.interests], publish, and
+/// optimistically update the in-memory + SQLite cache.
 class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
-  static const _key = 'followed_tags';
+  StreamSubscription<Event>? _sub;
+  StreamSubscription<String>? _eoseSub;
 
   @override
   Future<List<String>> build() async {
+    final identity = await ref.watch(identityProvider.future);
+    if (identity == null) return const <String>[];
+
+    final pubkey = identity.pubkeyHex;
     final cache = await ref.read(localCacheProvider.future);
-    final raw = await cache.readConfig(_key);
-    if (raw == null || raw.isEmpty) return const [];
+
+    // 1. Hydrate from SQLite (instant cold-start, before relay responds).
+    Event? cached;
     try {
-      return (jsonDecode(raw) as List).cast<String>();
-    } catch (_) {
-      return const [];
+      final row = await cache.queryInterests(pubkey);
+      if (row != null) cached = _replaceableToEvent(row);
+    } catch (_) {}
+    if (cached != null) {
+      ref.read(followedTagsCacheProvider.notifier).set(cached);
     }
+
+    // 2. Fetch the newest kind-30015 (default list, d "") from relays.
+    final pool = ref.read(relayPoolProvider);
+    Event? newest;
+    final completer = Completer<void>();
+    _sub = pool.events.listen((e) {
+      if (e.kind != 30015 || e.pubkey != pubkey) return;
+      if (!_isDefaultInterests(e)) return; // ignore named interest sets
+      if (newest == null || e.createdAt > newest!.createdAt) newest = e;
+    });
+    final subId = nextSubId('interests');
+    final connectedCount = pool.states
+        .where((s) => s.status == RelayStatus.connected)
+        .length;
+    var eoses = 0;
+    _eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+      eoses++;
+      if (eoses >= connectedCount && !completer.isCompleted) {
+        completer.complete();
+      }
+    });
+    pool.request(subId, <String, dynamic>{
+      'authors': [pubkey],
+      'kinds': [30015],
+      'limit': 5,
+    }, closeOnEose: true);
+    await completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {},
+    );
+    _sub?.cancel();
+    _sub = null;
+    _eoseSub?.cancel();
+    _eoseSub = null;
+    pool.closeSubscription(subId);
+
+    // 3. If the relay returned a newer list, persist + update the cache.
+    if (newest != null &&
+        (cached == null || newest!.createdAt > cached.createdAt)) {
+      await _persist(cache, newest!);
+      ref.read(followedTagsCacheProvider.notifier).set(newest);
+      return _tagsOf(newest);
+    }
+    return _tagsOf(cached);
   }
 
-  Future<void> add(String tag) async {
-    final t = tag.toLowerCase().replaceAll('#', '').trim();
-    if (t.isEmpty) return;
-    final cur = state.value ?? const <String>[];
-    if (cur.contains(t)) return;
-    final next = [...cur, t];
-    await _save(next);
+  /// Default list = d tag is "" or absent (named interest sets are ignored).
+  static bool _isDefaultInterests(Event e) {
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
+        return (t[1] as String).isEmpty;
+      }
+    }
+    return true;
+  }
+
+  static Event _replaceableToEvent(cache.ReplaceableEvent row) => Event(
+    id: row.id,
+    pubkey: row.pubkey,
+    createdAt: row.createdAt,
+    kind: row.kind,
+    tags: (jsonDecode(row.tagsJson) as List).cast<List<dynamic>>(),
+    content: row.content,
+    sig: row.sig,
+  );
+
+  static List<String> _tagsOf(Event? e) {
+    if (e == null) return const <String>[];
+    final out = <String>[];
+    final seen = <String>{};
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 't' && t[1] is String) {
+        final v = (t[1] as String).toLowerCase();
+        if (v.isNotEmpty && seen.add(v)) out.add(v);
+      }
+    }
+    return out;
+  }
+
+  Future<void> _persist(cache.LocalCache db, Event e) async {
+    try {
+      await db.writeEvent(
+        id: e.id,
+        pubkey: e.pubkey,
+        kind: e.kind,
+        createdAt: e.createdAt,
+        content: e.content,
+        sig: e.sig,
+        raw: jsonEncode(e.toWireObject()),
+        tagsJson: jsonEncode(e.tags),
+        tags: e.tags,
+      );
+    } catch (_) {}
+  }
+
+  Future<bool> _mutate({String? add, String? remove}) async {
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return false;
+    final current = ref.read(followedTagsCacheProvider);
+    final signed = NostrActions(
+      identity,
+    ).interests(current, add: add, remove: remove);
+    final next = _tagsOf(signed);
+    // Optimistic update so the UI reflects the change immediately.
     state = AsyncData(next);
+    ref.read(followedTagsCacheProvider.notifier).set(signed);
+
+    final pool = ref.read(relayPoolProvider);
+    final ok = await pool.publishAndWait(signed);
+    if (ok.ok) {
+      final cache = await ref.read(localCacheProvider.future);
+      await _persist(cache, signed);
+      return true;
+    }
+    // Revert on failure.
+    state = AsyncData(_tagsOf(current));
+    ref.read(followedTagsCacheProvider.notifier).set(current);
+    return false;
   }
 
-  Future<void> remove(String tag) async {
+  Future<bool> add(String tag) async {
     final t = tag.toLowerCase().replaceAll('#', '').trim();
-    final cur = state.value ?? const <String>[];
-    if (!cur.contains(t)) return;
-    final next = cur.where((e) => e != t).toList();
-    await _save(next);
-    state = AsyncData(next);
+    if (t.isEmpty) return false;
+    if ((state.value ?? const <String>[]).contains(t)) return true;
+    return _mutate(add: t);
   }
 
-  Future<void> _save(List<String> tags) async {
-    final cache = await ref.read(localCacheProvider.future);
-    await cache.writeConfig(_key, jsonEncode(tags));
+  Future<bool> remove(String tag) async {
+    final t = tag.toLowerCase().replaceAll('#', '').trim();
+    if (t.isEmpty) return false;
+    if (!(state.value ?? const <String>[]).contains(t)) return true;
+    return _mutate(remove: t);
   }
 }
 
 final followedTagsProvider =
     AsyncNotifierProvider<FollowedTagsNotifier, List<String>>(
-        FollowedTagsNotifier.new);
+      FollowedTagsNotifier.new,
+    );
+
+/// Approximate post count for a hashtag from the in-memory store (global
+/// firehose, capped). Shown on followed-tag chips (DESIGN §8 "#tag + 帖子数").
+/// Not a precise global tally — a sample of what's currently cached locally.
+final tagPostCountProvider = Provider.family<int, String>((ref, tag) {
+  final store = ref.watch(eventStoreProvider);
+  var n = 0;
+  for (final e in store) {
+    if (e.isTextNote && e.hashtags.contains(tag)) n++;
+  }
+  return n;
+});
 
 // --- Following (NIP-02 kind-3) with local cache (Amethyst pattern) --------
 
@@ -446,7 +598,9 @@ class ContactListCacheNotifier extends Notifier<Event?> {
 }
 
 final contactListCacheProvider =
-    NotifierProvider<ContactListCacheNotifier, Event?>(ContactListCacheNotifier.new);
+    NotifierProvider<ContactListCacheNotifier, Event?>(
+      ContactListCacheNotifier.new,
+    );
 
 /// The user's social graph: follows + followers + self. Used by
 /// EventStoreNotifier._persist to decide which events to cache to SQLite
@@ -472,8 +626,9 @@ class SocialGraphNotifier extends Notifier<Set<String>> {
   }
 }
 
-final socialGraphProvider =
-    NotifierProvider<SocialGraphNotifier, Set<String>>(SocialGraphNotifier.new);
+final socialGraphProvider = NotifierProvider<SocialGraphNotifier, Set<String>>(
+  SocialGraphNotifier.new,
+);
 
 class FollowingNotifier extends AsyncNotifier<List<String>> {
   StreamSubscription<Event>? _sub;
@@ -509,13 +664,16 @@ class FollowingNotifier extends AsyncNotifier<List<String>> {
 
     return completer.future.timeout(
       const Duration(seconds: 10),
-      onTimeout: () => ref.read(contactListCacheProvider)?.pTagPubkeys ?? const <String>[],
+      onTimeout: () =>
+          ref.read(contactListCacheProvider)?.pTagPubkeys ?? const <String>[],
     );
   }
 }
 
 final followingStateProvider =
-    AsyncNotifierProvider<FollowingNotifier, List<String>>(FollowingNotifier.new);
+    AsyncNotifierProvider<FollowingNotifier, List<String>>(
+      FollowingNotifier.new,
+    );
 
 // --- Feed subscription lifecycle (REQ/CLOSE on mode/follows change) --------
 
@@ -525,8 +683,7 @@ final followingStateProvider =
 final feedSubscriptionProvider = Provider<void>((ref) {
   final mode = ref.watch(feedModeProvider);
   final identity = ref.watch(identityProvider).value;
-  final follows =
-      ref.watch(followingStateProvider).value ?? const <String>[];
+  final follows = ref.watch(followingStateProvider).value ?? const <String>[];
   final pool = ref.watch(relayPoolProvider);
 
   if (identity == null) return;
@@ -539,11 +696,7 @@ final feedSubscriptionProvider = Provider<void>((ref) {
   // Keep subscription open (no closeOnEose) so live reactions (kind-7) +
   // metadata (kind-0) continue arriving after the initial snapshot.
   // EventStore cap (5000) bounds memory; throttled emission bounds CPU.
-  pool.request(
-    subId,
-    buildFeedFilter(mode, follows),
-    closeOnEose: false,
-  );
+  pool.request(subId, buildFeedFilter(mode, follows), closeOnEose: false);
   ref.onDispose(() => pool.closeSubscription(subId));
 });
 
@@ -584,8 +737,10 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
 
 /// Find an event by id: hit SQLite first (O(1) PK), then in-memory store,
 /// else fetch via REQ {ids:[id]}.
-final eventByIdProvider =
-    FutureProvider.family<Event?, String>((ref, id) async {
+final eventByIdProvider = FutureProvider.family<Event?, String>((
+  ref,
+  id,
+) async {
   // 1. SQLite (O(1) PK lookup).
   final cache = ref.watch(localCacheProvider).value;
   if (cache != null) {
@@ -607,7 +762,9 @@ final eventByIdProvider =
     if (e.id == id && !completer.isCompleted) completer.complete(e);
   });
   final subId = nextSubId('note');
-  pool.request(subId, <String, dynamic>{'ids': [id]}, closeOnEose: true);
+  pool.request(subId, <String, dynamic>{
+    'ids': [id],
+  }, closeOnEose: true);
   ref.onDispose(() {
     sub.cancel();
     pool.closeSubscription(subId);
@@ -620,8 +777,10 @@ final eventByIdProvider =
 
 /// A user's public kind-1 notes (posts + replies), newest-first. SQLite first
 /// (instant), then relay REQ for fresh data. Used by the profile page.
-final userPostsProvider =
-    FutureProvider.family<List<Event>, String>((ref, pubkey) async {
+final userPostsProvider = FutureProvider.family<List<Event>, String>((
+  ref,
+  pubkey,
+) async {
   // 1. SQLite cache (instant).
   final cache = ref.watch(localCacheProvider).value;
   final cached = <Event>[];
@@ -646,24 +805,17 @@ final userPostsProvider =
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
     if (!completer.isCompleted) completer.complete();
   });
-  pool.request(
-    subId,
-    <String, dynamic>{
-      'authors': [pubkey],
-      'kinds': [1],
-      'limit': 100,
-    },
-    closeOnEose: true,
-  );
+  pool.request(subId, <String, dynamic>{
+    'authors': [pubkey],
+    'kinds': [1],
+    'limit': 100,
+  }, closeOnEose: true);
   ref.onDispose(() {
     evSub.cancel();
     eoseSub.cancel();
     pool.closeSubscription(subId);
   });
-  await completer.future.timeout(
-    const Duration(seconds: 10),
-    onTimeout: () {},
-  );
+  await completer.future.timeout(const Duration(seconds: 10), onTimeout: () {});
   // Merge cached + fresh, dedup by id, newest-first.
   final all = <Event>[...collected, ...cached];
   final seenMerge = <String>{};
@@ -677,8 +829,10 @@ final userPostsProvider =
 
 /// A user's follows (NIP-02 kind-3 p-tags) for the profile 关注 tab. Fetches
 /// the user's kind-3 (replace-by-author) and resolves on EOSE / timeout.
-final userFollowsProvider =
-    FutureProvider.family<List<String>, String>((ref, pubkey) async {
+final userFollowsProvider = FutureProvider.family<List<String>, String>((
+  ref,
+  pubkey,
+) async {
   final pool = ref.watch(relayPoolProvider);
   final completer = Completer<List<String>>();
   late StreamSubscription<Event> evSub;
@@ -692,15 +846,11 @@ final userFollowsProvider =
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
     if (!completer.isCompleted) completer.complete(const <String>[]);
   });
-  pool.request(
-    subId,
-    <String, dynamic>{
-      'authors': [pubkey],
-      'kinds': [Event.kindContactList],
-      'limit': 1,
-    },
-    closeOnEose: true,
-  );
+  pool.request(subId, <String, dynamic>{
+    'authors': [pubkey],
+    'kinds': [Event.kindContactList],
+    'limit': 1,
+  }, closeOnEose: true);
   ref.onDispose(() {
     evSub.cancel();
     eoseSub.cancel();
@@ -715,8 +865,10 @@ final userFollowsProvider =
 /// A user's followers (NIP-12: REQ kind-3 events whose `p` tags reference the
 /// user — the AUTHORS of those contact lists are the followers). Resolves on
 /// all-relays EOSE / timeout.
-final userFollowersProvider =
-    FutureProvider.family<List<String>, String>((ref, pubkey) async {
+final userFollowersProvider = FutureProvider.family<List<String>, String>((
+  ref,
+  pubkey,
+) async {
   final pool = ref.watch(relayPoolProvider);
   final collected = <String>[];
   final seen = <String>{};
@@ -729,31 +881,25 @@ final userFollowersProvider =
     }
   });
   final subId = nextSubId('followers');
-  final connectedCount =
-      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  final connectedCount = pool.states
+      .where((s) => s.status == RelayStatus.connected)
+      .length;
   var eoses = 0;
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
     eoses++;
     if (eoses >= connectedCount && !completer.isCompleted) completer.complete();
   });
-  pool.request(
-    subId,
-    <String, dynamic>{
-      'kinds': [Event.kindContactList],
-      '#p': [pubkey],
-      'limit': 500,
-    },
-    closeOnEose: true,
-  );
+  pool.request(subId, <String, dynamic>{
+    'kinds': [Event.kindContactList],
+    '#p': [pubkey],
+    'limit': 500,
+  }, closeOnEose: true);
   ref.onDispose(() {
     evSub.cancel();
     eoseSub.cancel();
     pool.closeSubscription(subId);
   });
-  await completer.future.timeout(
-    const Duration(seconds: 12),
-    onTimeout: () {},
-  );
+  await completer.future.timeout(const Duration(seconds: 12), onTimeout: () {});
   // Add followers to the social graph so their events get cached too.
   ref.read(socialGraphProvider.notifier).addFollowers(collected);
   return collected;
@@ -773,103 +919,131 @@ class FollowGroup {
 /// per custom group (d-tag name) with the pubkeys in that group.
 /// pubkeys in custom groups are also kept in 默认分组 only if not in any group.
 final userGroupedFollowsProvider =
-    FutureProvider.family<List<FollowGroup>, String>(
-        (ref, pubkey) async {
-  final pool = ref.watch(relayPoolProvider);
+    FutureProvider.family<List<FollowGroup>, String>((ref, pubkey) async {
+      final pool = ref.watch(relayPoolProvider);
 
-  // 1. Fetch kind-3 (master follow list) p-tags.
-  final kind3Completer = Completer<List<String>>();
-  late StreamSubscription<Event> evSub1;
-  late StreamSubscription<String> eoseSub1;
-  evSub1 = pool.events.listen((e) {
-    if (e.isContactList && e.pubkey == pubkey && !kind3Completer.isCompleted) {
-      kind3Completer.complete(e.pTagPubkeys);
-    }
-  });
-  final sub1 = nextSubId('grouped-k3');
-  final conn1 = pool.states.where((s) => s.status == RelayStatus.connected).length;
-  var e1 = 0;
-  eoseSub1 = pool.eoseStream.where((s) => s == sub1).listen((_) {
-    e1++;
-    if (e1 >= conn1 && !kind3Completer.isCompleted) {
-      kind3Completer.complete(const <String>[]);
-    }
-  });
-  pool.request(sub1, {
-    'authors': [pubkey], 'kinds': [Event.kindContactList], 'limit': 1,
-  }, closeOnEose: true);
-  ref.onDispose(() { evSub1.cancel(); eoseSub1.cancel(); pool.closeSubscription(sub1); });
+      // 1. Fetch kind-3 (master follow list) p-tags.
+      final kind3Completer = Completer<List<String>>();
+      late StreamSubscription<Event> evSub1;
+      late StreamSubscription<String> eoseSub1;
+      evSub1 = pool.events.listen((e) {
+        if (e.isContactList &&
+            e.pubkey == pubkey &&
+            !kind3Completer.isCompleted) {
+          kind3Completer.complete(e.pTagPubkeys);
+        }
+      });
+      final sub1 = nextSubId('grouped-k3');
+      final conn1 = pool.states
+          .where((s) => s.status == RelayStatus.connected)
+          .length;
+      var e1 = 0;
+      eoseSub1 = pool.eoseStream.where((s) => s == sub1).listen((_) {
+        e1++;
+        if (e1 >= conn1 && !kind3Completer.isCompleted) {
+          kind3Completer.complete(const <String>[]);
+        }
+      });
+      pool.request(sub1, {
+        'authors': [pubkey],
+        'kinds': [Event.kindContactList],
+        'limit': 1,
+      }, closeOnEose: true);
+      ref.onDispose(() {
+        evSub1.cancel();
+        eoseSub1.cancel();
+        pool.closeSubscription(sub1);
+      });
 
-  // 2. Fetch all kind-30000 events (follow sets).
-  final k30000Events = <Event>[];
-  final k30000Completer = Completer<void>();
-  late StreamSubscription<Event> evSub2;
-  late StreamSubscription<String> eoseSub2;
-  evSub2 = pool.events.listen((e) {
-    if (e.kind == 30000 && e.pubkey == pubkey) k30000Events.add(e);
-  });
-  final sub2 = nextSubId('grouped-k30k');
-  var e2 = 0;
-  eoseSub2 = pool.eoseStream.where((s) => s == sub2).listen((_) {
-    e2++;
-    if (e2 >= conn1 && !k30000Completer.isCompleted) k30000Completer.complete();
-  });
-  pool.request(sub2, {
-    'authors': [pubkey], 'kinds': [30000],
-  }, closeOnEose: true);
-  ref.onDispose(() { evSub2.cancel(); eoseSub2.cancel(); pool.closeSubscription(sub2); });
+      // 2. Fetch all kind-30000 events (follow sets).
+      final k30000Events = <Event>[];
+      final k30000Completer = Completer<void>();
+      late StreamSubscription<Event> evSub2;
+      late StreamSubscription<String> eoseSub2;
+      evSub2 = pool.events.listen((e) {
+        if (e.kind == 30000 && e.pubkey == pubkey) k30000Events.add(e);
+      });
+      final sub2 = nextSubId('grouped-k30k');
+      var e2 = 0;
+      eoseSub2 = pool.eoseStream.where((s) => s == sub2).listen((_) {
+        e2++;
+        if (e2 >= conn1 && !k30000Completer.isCompleted) {
+          k30000Completer.complete();
+        }
+      });
+      pool.request(sub2, {
+        'authors': [pubkey],
+        'kinds': [30000],
+      }, closeOnEose: true);
+      ref.onDispose(() {
+        evSub2.cancel();
+        eoseSub2.cancel();
+        pool.closeSubscription(sub2);
+      });
 
-  // Wait for both.
-  final follows = await kind3Completer.future
-      .timeout(const Duration(seconds: 10), onTimeout: () => const <String>[]);
-  await k30000Completer.future
-      .timeout(const Duration(seconds: 10), onTimeout: () {});
+      // Wait for both.
+      final follows = await kind3Completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => const <String>[],
+      );
+      await k30000Completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {},
+      );
 
-  // 3. Build group → Set<pubkey> from kind-30000 events.
-  final groupNames = <String>[];
-  final groupPubkeys = <String, Set<String>>{};
-  for (final e in k30000Events) {
-    String? name;
-    final pks = <String>{};
-    for (final t in e.tags) {
-      if (t.length >= 2 && t[0] == 'd' && t[1] is String) name = t[1] as String;
-      if (t.length >= 2 && t[0] == 'p' && t[1] is String) pks.add(t[1] as String);
-    }
-    if (name != null && name.isNotEmpty) {
-      if (!groupNames.contains(name)) groupNames.add(name);
-      groupPubkeys.putIfAbsent(name, () => <String>{}).addAll(pks);
-    }
-  }
-
-  // 4. Group the follows.
-  final allGrouped = <String, bool>{};
-  final result = <FollowGroup>[];
-  // Default group: follows not in any custom group.
-  final defaultGroup = <String>[];
-  for (final pk in follows) {
-    var inAnyGroup = false;
-    for (final name in groupNames) {
-      if (groupPubkeys[name]!.contains(pk)) {
-        inAnyGroup = true;
-        break;
+      // 3. Build group → Set<pubkey> from kind-30000 events.
+      final groupNames = <String>[];
+      final groupPubkeys = <String, Set<String>>{};
+      for (final e in k30000Events) {
+        String? name;
+        final pks = <String>{};
+        for (final t in e.tags) {
+          if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
+            name = t[1] as String;
+          }
+          if (t.length >= 2 && t[0] == 'p' && t[1] is String) {
+            pks.add(t[1] as String);
+          }
+        }
+        if (name != null && name.isNotEmpty) {
+          if (!groupNames.contains(name)) groupNames.add(name);
+          groupPubkeys.putIfAbsent(name, () => <String>{}).addAll(pks);
+        }
       }
-    }
-    if (!inAnyGroup) defaultGroup.add(pk);
-    allGrouped[pk] = inAnyGroup;
-  }
-  result.add(FollowGroup('默认分组', defaultGroup));
-  // Custom groups: follows that are in this group.
-  for (final name in groupNames) {
-    final inGroup = follows.where((pk) => groupPubkeys[name]!.contains(pk)).toList();
-    if (inGroup.isNotEmpty) result.add(FollowGroup(name, inGroup));
-  }
-  return result;
-});
+
+      // 4. Group the follows.
+      final allGrouped = <String, bool>{};
+      final result = <FollowGroup>[];
+      // Default group: follows not in any custom group.
+      final defaultGroup = <String>[];
+      for (final pk in follows) {
+        var inAnyGroup = false;
+        for (final name in groupNames) {
+          if (groupPubkeys[name]!.contains(pk)) {
+            inAnyGroup = true;
+            break;
+          }
+        }
+        if (!inAnyGroup) defaultGroup.add(pk);
+        allGrouped[pk] = inAnyGroup;
+      }
+      result.add(FollowGroup('默认分组', defaultGroup));
+      // Custom groups: follows that are in this group.
+      for (final name in groupNames) {
+        final inGroup = follows
+            .where((pk) => groupPubkeys[name]!.contains(pk))
+            .toList();
+        if (inGroup.isNotEmpty) result.add(FollowGroup(name, inGroup));
+      }
+      return result;
+    });
 
 /// The logged-in user's existing follow-group names (NIP-51 kind-30000 `d`
 /// tags). Used by the follow-group picker to show existing + allow new.
-final userGroupNamesProvider = FutureProvider.family<List<String>, String>(
-    (ref, pubkey) async {
+final userGroupNamesProvider = FutureProvider.family<List<String>, String>((
+  ref,
+  pubkey,
+) async {
   final pool = ref.watch(relayPoolProvider);
   final collected = <String>[];
   final seen = <String>{};
@@ -887,18 +1061,18 @@ final userGroupNamesProvider = FutureProvider.family<List<String>, String>(
     }
   });
   final subId = nextSubId('groups');
-  final connectedCount =
-      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  final connectedCount = pool.states
+      .where((s) => s.status == RelayStatus.connected)
+      .length;
   var eoses = 0;
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
     eoses++;
     if (eoses >= connectedCount && !completer.isCompleted) completer.complete();
   });
-  pool.request(
-    subId,
-    <String, dynamic>{'authors': [pubkey], 'kinds': [30000]},
-    closeOnEose: true,
-  );
+  pool.request(subId, <String, dynamic>{
+    'authors': [pubkey],
+    'kinds': [30000],
+  }, closeOnEose: true);
   ref.onDispose(() {
     evSub.cancel();
     eoseSub.cancel();
@@ -908,7 +1082,53 @@ final userGroupNamesProvider = FutureProvider.family<List<String>, String>(
   return collected;
 });
 
-/// A user found by global search (pubkey + parsed kind-0 metadata).
+/// A user known locally (pubkey + parsed kind-0 metadata) — a candidate for
+/// @-mention autocomplete in the composer. Sourced from the in-memory
+/// EventStore's kind-0 events + the user's follows + self, so it needs no
+/// relay round-trip and updates as metadata streams in.
+class KnownUser {
+  const KnownUser(this.pubkey, this.meta);
+  final String pubkey;
+  final Metadata? meta;
+  String get label => meta?.bestName ?? shortenEntity(hexToNpub(pubkey));
+}
+
+/// All locally-known users for @-mention autocomplete. Derived from the
+/// EventStore (kind-0 metadata seen via the global feed) + the logged-in
+/// user's follows + self. No relay round-trip.
+final knownUsersProvider = Provider<List<KnownUser>>((ref) {
+  final store = ref.watch(eventStoreProvider);
+  final map = <String, KnownUser>{};
+  void add(String pk) {
+    if (pk.isEmpty) return;
+    map.putIfAbsent(pk, () => KnownUser(pk, _metaFromStore(store, pk)));
+  }
+
+  for (final e in store) {
+    if (e.kind == 0) add(e.pubkey);
+  }
+  for (final pk
+      in ref.watch(followingStateProvider).value ?? const <String>[]) {
+    add(pk);
+  }
+  final self = ref.watch(identityProvider).value?.pubkeyHex;
+  if (self != null) add(self);
+  return map.values.toList();
+});
+
+Metadata? _metaFromStore(List<Event> store, String pubkey) {
+  for (final e in store) {
+    if (e.kind == 0 && e.pubkey == pubkey) {
+      try {
+        final j = jsonDecode(e.content);
+        if (j is Map<String, dynamic>) return Metadata.fromJson(j);
+      } catch (_) {}
+    }
+  }
+  return null;
+}
+
+/// A user found by global search (NIP-50 `search` filter, kind 0 metadata).
 class UserResult {
   const UserResult(this.pubkey, this.metadata);
   final String pubkey;
@@ -917,8 +1137,10 @@ class UserResult {
 
 /// Global post search: SQLite FTS5 (instant local results) + NIP-50 relay
 /// search (fresh results from nostr.wine, 6s window). Merged + deduped.
-final searchPostsProvider =
-    FutureProvider.family<List<Event>, String>((ref, query) async {
+final searchPostsProvider = FutureProvider.family<List<Event>, String>((
+  ref,
+  query,
+) async {
   final q = query.trim();
   if (q.isEmpty) return const <Event>[];
   // 1. SQLite FTS5 (instant, local cached events).
@@ -940,11 +1162,11 @@ final searchPostsProvider =
     if (e.isTextNote && seen.add(e.id)) collected.add(e);
   });
   final subId = nextSubId('search');
-  pool.request(
-    subId,
-    <String, dynamic>{'search': q, 'kinds': [1], 'limit': 100},
-    closeOnEose: false,
-  );
+  pool.request(subId, <String, dynamic>{
+    'search': q,
+    'kinds': [1],
+    'limit': 100,
+  }, closeOnEose: false);
   ref.onDispose(() {
     evSub.cancel();
     pool.closeSubscription(subId);
@@ -962,8 +1184,10 @@ final searchPostsProvider =
 });
 
 /// Global user search (NIP-50 `search` filter, kind 0 metadata).
-final searchUsersProvider =
-    FutureProvider.family<List<UserResult>, String>((ref, query) async {
+final searchUsersProvider = FutureProvider.family<List<UserResult>, String>((
+  ref,
+  query,
+) async {
   final q = query.trim();
   if (q.isEmpty) return const <UserResult>[];
   final pool = ref.watch(relayPoolProvider);
@@ -981,11 +1205,11 @@ final searchUsersProvider =
     }
   });
   final subId = nextSubId('searchusers');
-  pool.request(
-    subId,
-    <String, dynamic>{'search': q, 'kinds': [0], 'limit': 50},
-    closeOnEose: false,
-  );
+  pool.request(subId, <String, dynamic>{
+    'search': q,
+    'kinds': [0],
+    'limit': 50,
+  }, closeOnEose: false);
   ref.onDispose(() {
     evSub.cancel();
     pool.closeSubscription(subId);
@@ -997,8 +1221,10 @@ final searchUsersProvider =
 /// Reactions (NIP-25 kind-7) for an event. Reads from the EventStore (kind-7
 /// events arrive as part of the global feed REQ {kinds:[1,7]}). No separate
 /// #e parameterized query needed (most relays don't support #e anyway).
-final reactionsProvider =
-    Provider.family<Map<String, int>, String>((ref, eventId) {
+final reactionsProvider = Provider.family<Map<String, int>, String>((
+  ref,
+  eventId,
+) {
   final store = ref.watch(eventStoreProvider);
   final counts = <String, int>{};
   for (final e in store) {
@@ -1016,8 +1242,10 @@ final reactionsProvider =
 
 /// Replies (kind-1) to an event. REQ {kinds:[1], "#e":[eventId]}.
 /// Returns `List<Event>` sorted newest-first.
-final repliesProvider =
-    FutureProvider.family<List<Event>, String>((ref, eventId) async {
+final repliesProvider = FutureProvider.family<List<Event>, String>((
+  ref,
+  eventId,
+) async {
   final pool = ref.watch(relayPoolProvider);
   final collected = <Event>[];
   final seen = <String>{};
@@ -1034,18 +1262,18 @@ final repliesProvider =
     }
   });
   final subId = nextSubId('replies');
-  final connectedCount =
-      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  final connectedCount = pool.states
+      .where((s) => s.status == RelayStatus.connected)
+      .length;
   var eoses = 0;
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
     eoses++;
     if (eoses >= connectedCount && !completer.isCompleted) completer.complete();
   });
-  pool.request(
-    subId,
-    <String, dynamic>{'kinds': [1], '#e': [eventId]},
-    closeOnEose: true,
-  );
+  pool.request(subId, <String, dynamic>{
+    'kinds': [1],
+    '#e': [eventId],
+  }, closeOnEose: true);
   ref.onDispose(() {
     evSub.cancel();
     eoseSub.cancel();
@@ -1063,7 +1291,11 @@ final repliesProvider =
 /// — NOT a relay re-fetch — so that following B after A doesn't wipe A.
 /// The cache is populated by [FollowingNotifier] on initial load and updated
 /// here after each follow (optimistic update).
-Future<RelayOk> followUser(WidgetRef ref, String pubkey, {String? category}) async {
+Future<RelayOk> followUser(
+  WidgetRef ref,
+  String pubkey, {
+  String? category,
+}) async {
   final identity = ref.read(identityProvider).value;
   if (identity == null) {
     return const RelayOk('', false, '未登录');
@@ -1090,17 +1322,49 @@ Future<RelayOk> followUser(WidgetRef ref, String pubkey, {String? category}) asy
   return ok;
 }
 
-/// Fetch the current kind-30000 list for [category] (d-tag) and publish an
+/// Unfollow [pubkey] (NIP-02). Reads the LOCALLY CACHED kind-3 (same safety as
+/// [followUser]), signs an updated kind-3 with the pubkey removed, publishes,
+/// and refreshes [followingStateProvider]. Aborts (no-op) if there's no cached
+/// kind-3 to read from.
+Future<RelayOk> unfollowUser(WidgetRef ref, String pubkey) async {
+  final identity = ref.read(identityProvider).value;
+  if (identity == null) {
+    return const RelayOk('', false, '未登录');
+  }
+  final current = ref.read(contactListCacheProvider);
+  if (current == null) {
+    return const RelayOk('', false, '未加载到关注列表，无法取消关注');
+  }
+  // No-op if not following anyway.
+  if (!current.pTagPubkeys.contains(pubkey)) {
+    return const RelayOk('', true, '未关注');
+  }
+  final pool = ref.read(relayPoolProvider);
+  final signed = NostrActions(identity).unfollow(current, pubkey);
+  final ok = await pool.publishAndWait(signed);
+  if (ok.ok) {
+    ref.read(contactListCacheProvider.notifier).set(signed);
+    ref.invalidate(followingStateProvider);
+  }
+  return ok;
+}
+
 /// updated one with [pubkey] added. Best-effort (category list failure doesn't
 /// fail the follow).
 Future<void> _addToCategoryList(
-    WidgetRef ref, Identity identity, String pubkey, String category) async {
+  WidgetRef ref,
+  Identity identity,
+  String pubkey,
+  String category,
+) async {
   final pool = ref.read(relayPoolProvider);
   final completer = Completer<Event?>();
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
   evSub = pool.events.listen((e) {
-    if (e.kind == 30000 && e.pubkey == identity.pubkeyHex && !completer.isCompleted) {
+    if (e.kind == 30000 &&
+        e.pubkey == identity.pubkeyHex &&
+        !completer.isCompleted) {
       // Check d-tag matches category.
       for (final t in e.tags) {
         if (t.length >= 2 && t[0] == 'd' && t[1] == category) {
@@ -1111,8 +1375,9 @@ Future<void> _addToCategoryList(
     }
   });
   final subId = nextSubId('cat-$category');
-  final connectedCount =
-      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  final connectedCount = pool.states
+      .where((s) => s.status == RelayStatus.connected)
+      .length;
   var eoses = 0;
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
     eoses++;
@@ -1120,16 +1385,12 @@ Future<void> _addToCategoryList(
       completer.complete(null);
     }
   });
-  pool.request(
-    subId,
-    <String, dynamic>{
-      'authors': [identity.pubkeyHex],
-      'kinds': [30000],
-      '#d': [category],
-      'limit': 1,
-    },
-    closeOnEose: false,
-  );
+  pool.request(subId, <String, dynamic>{
+    'authors': [identity.pubkeyHex],
+    'kinds': [30000],
+    '#d': [category],
+    'limit': 1,
+  }, closeOnEose: false);
   Event? current;
   try {
     current = await completer.future.timeout(
@@ -1141,8 +1402,9 @@ Future<void> _addToCategoryList(
     await eoseSub.cancel();
     pool.closeSubscription(subId);
   }
-  final signed =
-      NostrActions(identity).followCategory(current, pubkey, category);
+  final signed = NostrActions(
+    identity,
+  ).followCategory(current, pubkey, category);
   await pool.publishAndWait(signed);
 }
 
@@ -1152,7 +1414,10 @@ Future<void> _addToCategoryList(
 /// to self in content). Same safety as [followUser]: aborts if the current
 /// list can't be confirmed (never wipes bookmarks).
 Future<RelayOk> bookmarkEvent(
-    WidgetRef ref, String eventId, {required bool publicList}) async {
+  WidgetRef ref,
+  String eventId, {
+  required bool publicList,
+}) async {
   final identity = ref.read(identityProvider).value;
   if (identity == null) {
     return const RelayOk('', false, '未登录');
@@ -1162,13 +1427,16 @@ Future<RelayOk> bookmarkEvent(
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
   evSub = pool.events.listen((e) {
-    if (e.kind == 10003 && e.pubkey == identity.pubkeyHex && !completer.isCompleted) {
+    if (e.kind == 10003 &&
+        e.pubkey == identity.pubkeyHex &&
+        !completer.isCompleted) {
       completer.complete(e);
     }
   });
   final subId = nextSubId('bookmarks');
-  final connectedCount =
-      pool.states.where((s) => s.status == RelayStatus.connected).length;
+  final connectedCount = pool.states
+      .where((s) => s.status == RelayStatus.connected)
+      .length;
   var eoses = 0;
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
     eoses++;
@@ -1176,15 +1444,11 @@ Future<RelayOk> bookmarkEvent(
       completer.complete(null);
     }
   });
-  pool.request(
-    subId,
-    <String, dynamic>{
-      'authors': [identity.pubkeyHex],
-      'kinds': [10003],
-      'limit': 1,
-    },
-    closeOnEose: false,
-  );
+  pool.request(subId, <String, dynamic>{
+    'authors': [identity.pubkeyHex],
+    'kinds': [10003],
+    'limit': 1,
+  }, closeOnEose: false);
   Event? current;
   bool certain = false;
   try {
@@ -1204,15 +1468,19 @@ Future<RelayOk> bookmarkEvent(
   if (!certain) {
     return const RelayOk('', false, '无法确认现有书签列表（中继未及时响应），已取消以防清空。请重试。');
   }
-  final signed =
-      NostrActions(identity).bookmark(current, eventId, publicList: publicList);
+  final signed = NostrActions(
+    identity,
+  ).bookmark(current, eventId, publicList: publicList);
   return pool.publishAndWait(signed);
 }
 
 // --- NSFW settings (local, not synced to relays) ---------------------------
 
 class NsfwSettings {
-  const NsfwSettings({this.autoReveal = false, this.defaultComposeNsfw = false});
+  const NsfwSettings({
+    this.autoReveal = false,
+    this.defaultComposeNsfw = false,
+  });
   final bool autoReveal;
   final bool defaultComposeNsfw;
   NsfwSettings copyWith({bool? autoReveal, bool? defaultComposeNsfw}) =>
@@ -1256,19 +1524,24 @@ class NsfwSettingsNotifier extends Notifier<NsfwSettings> {
 }
 
 final nsfwSettingsProvider =
-    NotifierProvider<NsfwSettingsNotifier, NsfwSettings>(NsfwSettingsNotifier.new);
+    NotifierProvider<NsfwSettingsNotifier, NsfwSettings>(
+      NsfwSettingsNotifier.new,
+    );
 
 // --- Relay status -----------------------------------------------------------
 
-final relayStatusProvider =
-    StreamProvider<List<RelayState>>((ref) => ref.watch(relayPoolProvider).statusStream);
+final relayStatusProvider = StreamProvider<List<RelayState>>(
+  (ref) => ref.watch(relayPoolProvider).statusStream,
+);
 
 // --- User metadata (NIP-01 kind 0) ----------------------------------------
 
 /// Per-pubkey metadata cache. Checks SQLite first (O(1) PK lookup), then
 /// in-memory EventStore, then falls back to a dedicated REQ.
-final metadataProvider =
-    FutureProvider.family<Metadata?, String>((ref, pubkey) async {
+final metadataProvider = FutureProvider.family<Metadata?, String>((
+  ref,
+  pubkey,
+) async {
   // 1. SQLite (O(1) PK lookup — fastest, persisted).
   final cache = ref.watch(localCacheProvider).value;
   if (cache != null) {
@@ -1308,15 +1581,11 @@ final metadataProvider =
   });
 
   final subId = nextSubId('meta');
-  pool.request(
-    subId,
-    <String, dynamic>{
-      'authors': [pubkey],
-      'kinds': [0],
-      'limit': 1,
-    },
-    closeOnEose: true,
-  );
+  pool.request(subId, <String, dynamic>{
+    'authors': [pubkey],
+    'kinds': [0],
+    'limit': 1,
+  }, closeOnEose: true);
   ref.onDispose(() {
     sub.cancel();
     pool.closeSubscription(subId);

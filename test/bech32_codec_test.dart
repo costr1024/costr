@@ -22,16 +22,14 @@ void main() {
     });
 
     test('BIP-173 vector: split1check... round-trips', () {
-      const s =
-          'split1checkupstagehandshakeupstreamerranterredcaperred2y9e3w';
+      const s = 'split1checkupstagehandshakeupstreamerranterredcaperred2y9e3w';
       final d = decodeBech32(s);
       expect(d.hrp, 'split');
       expect(encodeBech32(d.hrp, d.data), s);
     });
 
     test('BIP-173 vector: abcdef1qpzry9... round-trips', () {
-      const s =
-          'abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw';
+      const s = 'abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw';
       final d = decodeBech32(s);
       expect(d.hrp, 'abcdef');
       expect(encodeBech32(d.hrp, d.data), s);
@@ -67,10 +65,7 @@ void main() {
     });
 
     test('mixed case is rejected', () {
-      expect(
-        () => decodeBech32('npub1A'),
-        throwsA(isA<Bech32Exception>()),
-      );
+      expect(() => decodeBech32('npub1A'), throwsA(isA<Bech32Exception>()));
     });
 
     test('no separator is rejected', () {
@@ -88,10 +83,7 @@ void main() {
     });
 
     test('too-short data is rejected', () {
-      expect(
-        () => decodeBech32('li1dgmt3'),
-        throwsA(isA<Bech32Exception>()),
-      );
+      expect(() => decodeBech32('li1dgmt3'), throwsA(isA<Bech32Exception>()));
     });
   });
 }

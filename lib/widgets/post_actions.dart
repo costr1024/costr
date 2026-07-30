@@ -25,7 +25,16 @@ class PostActions extends ConsumerWidget {
   final Event event;
 
   static const List<String> _emoji = [
-    '❤️', '🔥', '👍', '👎', '😮', '😂', '🎉', '🤔', '👏', '🙏',
+    '❤️',
+    '🔥',
+    '👍',
+    '👎',
+    '😮',
+    '😂',
+    '🎉',
+    '🤔',
+    '👏',
+    '🙏',
   ];
 
   @override
@@ -55,11 +64,7 @@ class PostActions extends ConsumerWidget {
           color: fg,
           onTap: () => _bookmark(context, ref),
         ),
-        _Action(
-          icon: Icons.ios_share,
-          color: fg,
-          onTap: () => _share(context),
-        ),
+        _Action(icon: Icons.ios_share, color: fg, onTap: () => _share(context)),
       ],
     );
   }
@@ -122,8 +127,7 @@ class PostActions extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('选择表情',
-                  style: Theme.of(ctx).textTheme.titleSmall),
+              Text('选择表情', style: Theme.of(ctx).textTheme.titleSmall),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -185,11 +189,18 @@ class PostActions extends ConsumerWidget {
       ),
     );
     if (choice == null) return;
-    final ok = await bookmarkEvent(ref, event.id, publicList: choice == 'public');
+    final ok = await bookmarkEvent(
+      ref,
+      event.id,
+      publicList: choice == 'public',
+    );
     if (context.mounted) {
-      _snack(context, ok.ok
-          ? '已收藏到${choice == 'public' ? '公开' : '私人'}书签'
-          : '收藏失败：${ok.reason}');
+      _snack(
+        context,
+        ok.ok
+            ? '已收藏到${choice == 'public' ? '公开' : '私人'}书签'
+            : '收藏失败：${ok.reason}',
+      );
     }
   }
 
@@ -199,8 +210,14 @@ class PostActions extends ConsumerWidget {
       builder: (BuildContext ctx) => AlertDialog(
         content: Text(message),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确认')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认'),
+          ),
         ],
       ),
     );

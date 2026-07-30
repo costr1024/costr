@@ -2,6 +2,7 @@ import 'package:costr/utils/bech32_codec.dart';
 import 'package:costr/utils/nip19.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hex/hex.dart';
+
 void main() {
   group('NIP-19 nsec/npub/note', () {
     const privHex =
@@ -48,7 +49,8 @@ void main() {
     });
 
     test('32-byte zero private key round-trips', () {
-      const zero = '0000000000000000000000000000000000000000000000000000000000000000';
+      const zero =
+          '0000000000000000000000000000000000000000000000000000000000000000';
       expect(nsecToHex(hexToNsec(zero)), zero);
     });
 
@@ -71,10 +73,14 @@ void main() {
     });
 
     test('entityToPubkeyHex handles npub / nprofile / else null', () {
-      const pub = '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
+      const pub =
+          '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
       final npub = hexToNpub(pub);
       expect(entityToPubkeyHex(npub), pub);
-      expect(entityToPubkeyHex('note1${'q' * 40}'), isNull); // note isn't a pubkey
+      expect(
+        entityToPubkeyHex('note1${'q' * 40}'),
+        isNull,
+      ); // note isn't a pubkey
     });
   });
 }

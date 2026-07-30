@@ -54,20 +54,9 @@ List<int> _hrpExpand(String hrp) {
 }
 
 List<int> _createChecksum(String hrp, List<int> data5) {
-  final values = <int>[
-    ..._hrpExpand(hrp),
-    ...data5,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-  ];
+  final values = <int>[..._hrpExpand(hrp), ...data5, 0, 0, 0, 0, 0, 0];
   final mod = _polymod(values) ^ 1;
-  return [
-    for (int i = 0; i < 6; i++) (mod >> (5 * (5 - i))) & 31,
-  ];
+  return [for (int i = 0; i < 6; i++) (mod >> (5 * (5 - i))) & 31];
 }
 
 bool _verifyChecksum(String hrp, List<int> data5, List<int> checksum) {
@@ -79,12 +68,7 @@ bool _verifyChecksum(String hrp, List<int> data5, List<int> checksum) {
 /// [fromBits] → [toBits]. [pad] true to zero-pad the final group (used for
 /// 8→5 on encode); false to reject non-zero padding (used for 5→8 on decode,
 /// where the original data was a whole number of bytes).
-List<int> _convertBits(
-  List<int> data,
-  int fromBits,
-  int toBits,
-  bool pad,
-) {
+List<int> _convertBits(List<int> data, int fromBits, int toBits, bool pad) {
   int acc = 0;
   int bits = 0;
   final out = <int>[];
@@ -133,10 +117,7 @@ String encodeBech32(String hrp, List<int> data) {
   }
   final data5 = _convertBits(data, 8, 5, true);
   final checksum = _createChecksum(hrp, data5);
-  final chars = [
-    ...data5,
-    ...checksum,
-  ].map((i) => _charset.codeUnitAt(i));
+  final chars = [...data5, ...checksum].map((i) => _charset.codeUnitAt(i));
   return "${hrp}1${String.fromCharCodes(chars)}";
 }
 

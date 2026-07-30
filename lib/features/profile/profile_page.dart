@@ -70,7 +70,11 @@ class ProfilePage extends ConsumerWidget {
 }
 
 class _ProfileBody extends ConsumerWidget {
-  const _ProfileBody({required this.pubkey, required this.isSelf, this.identity});
+  const _ProfileBody({
+    required this.pubkey,
+    required this.isSelf,
+    this.identity,
+  });
   final String pubkey;
   final bool isSelf;
   final Identity? identity;
@@ -84,14 +88,25 @@ class _ProfileBody extends ConsumerWidget {
       headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
         return <Widget>[
           SliverToBoxAdapter(
-              child: _Header(pubkey: pubkey, identity: identity, meta: meta, isSelf: isSelf)),
+            child: _Header(
+              pubkey: pubkey,
+              identity: identity,
+              meta: meta,
+              isSelf: isSelf,
+            ),
+          ),
           SliverPersistentHeader(
             pinned: true,
             delegate: _StickyTabBarDelegate(
               TabBar(
                 tabAlignment: TabAlignment.start,
                 isScrollable: true,
-                tabs: const [Tab(text: '帖子'), Tab(text: '回帖'), Tab(text: '关注'), Tab(text: '关注者')],
+                tabs: const [
+                  Tab(text: '帖子'),
+                  Tab(text: '回帖'),
+                  Tab(text: '关注'),
+                  Tab(text: '关注者'),
+                ],
               ),
               color: theme.colorScheme.surface,
             ),
@@ -112,7 +127,12 @@ class _ProfileBody extends ConsumerWidget {
 
 /// Banner + metadata header.
 class _Header extends ConsumerWidget {
-  const _Header({required this.pubkey, required this.identity, required this.meta, required this.isSelf});
+  const _Header({
+    required this.pubkey,
+    required this.identity,
+    required this.meta,
+    required this.isSelf,
+  });
   final String pubkey;
   final Identity? identity;
   final Metadata? meta;
@@ -142,7 +162,11 @@ class _Header extends ConsumerWidget {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF6750A4), Color(0xFF7B1FA2), Color(0xFF512DA8)],
+                colors: [
+                  Color(0xFF6750A4),
+                  Color(0xFF7B1FA2),
+                  Color(0xFF512DA8),
+                ],
               ),
             ),
           ),
@@ -156,29 +180,51 @@ class _Header extends ConsumerWidget {
                 child: Avatar(pubkey: pubkey, radius: 40),
               ),
               const SizedBox(height: 4),
-              // Row 1: nickname + follow button.
+              // Row 1 (X-style): display name (bold, wraps to 2 lines if long)
+              // with the @-handle (npub abbreviation) on the line below, and the
+              // action button (编辑资料 for self, 关注 for others) to the right.
+              // The name wraps instead of ellipsizing on one line, so long
+              // nicknames stay fully readable.
               Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Flexible(
-                    child: Text(
-                      meta?.bestName ?? '(未设置名字)',
-                      style: theme.textTheme.titleLarge,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          meta?.bestName ?? '(未设置名字)',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: true,
+                        ),
+                        _CopyableNprofile(pubkey: pubkey),
+                      ],
                     ),
                   ),
-                  _FollowButton(pubkey: pubkey),
+                  if (isSelf)
+                    FilledButton.tonalIcon(
+                      icon: const Icon(Icons.edit, size: 18),
+                      label: const Text('编辑资料'),
+                      onPressed: () => context.push('/profile/edit'),
+                    )
+                  else
+                    _FollowButton(pubkey: pubkey),
                 ],
               ),
-              const SizedBox(height: 4),
-              // Row 2: nprofile abbreviation (copyable).
-              _CopyableNprofile(pubkey: pubkey),
               // Row 3: NIP-05 (wraps if long).
               if (meta?.nip05 != null && meta!.nip05!.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    Icon(Icons.verified, size: 16, color: theme.colorScheme.primary),
+                    Icon(
+                      Icons.verified,
+                      size: 16,
+                      color: theme.colorScheme.primary,
+                    ),
                     const SizedBox(width: 4),
                     Flexible(
                       child: Text(
@@ -197,7 +243,11 @@ class _Header extends ConsumerWidget {
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    Icon(Icons.bolt, size: 16, color: theme.colorScheme.primary),
+                    Icon(
+                      Icons.bolt,
+                      size: 16,
+                      color: theme.colorScheme.primary,
+                    ),
                     const SizedBox(width: 4),
                     Flexible(
                       child: Text(
@@ -224,27 +274,7 @@ class _Header extends ConsumerWidget {
               const SizedBox(height: 12),
               // Profile stats: 关注/关注者 counts.
               _ProfileStats(pubkey: pubkey),
-              if (isSelf) ...[
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    FilledButton.tonalIcon(
-                      icon: const Icon(Icons.edit),
-                      label: const Text('编辑资料'),
-                      onPressed: () => context.push('/profile/edit'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton.tonalIcon(
-                      icon: const Icon(Icons.logout),
-                      label: const Text('登出'),
-                      onPressed: () async {
-                        await ref.read(identityProvider.notifier).logout();
-                        if (context.mounted) context.go('/login');
-                      },
-                    ),
-                  ],
-                ),
-              ],
+              const SizedBox(height: 12),
             ],
           ),
         ),
@@ -274,10 +304,12 @@ class _ProfileStats extends ConsumerWidget {
     );
     final followersCount = followersAsync.value?.length;
     final theme = Theme.of(context);
-    final numStyle =
-        theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700);
-    final lblStyle = theme.textTheme.bodyMedium
-        ?.copyWith(color: theme.colorScheme.secondary);
+    final numStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontWeight: FontWeight.w700,
+    );
+    final lblStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: theme.colorScheme.secondary,
+    );
     return Row(
       children: [
         _stat(followingCount, '关注', numStyle, lblStyle),
@@ -322,6 +354,7 @@ class _ProfileStats extends ConsumerWidget {
 class _FollowButton extends ConsumerStatefulWidget {
   const _FollowButton({required this.pubkey, this.followsMe = false});
   final String pubkey;
+
   /// True when this pubkey follows the logged-in user (→ show "回关" until
   /// mutual). Set by callers that know it (e.g. the logged-in user's followers
   /// tab). Default false → plain "关注".
@@ -338,21 +371,48 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
   Widget build(BuildContext context) {
     final follows = ref.watch(followingStateProvider).value ?? const <String>[];
     final followed = follows.contains(widget.pubkey);
-    final label = followed
-        ? '已关注'
-        : (widget.followsMe ? '回关' : '关注');
+    final label = followed ? '已关注' : (widget.followsMe ? '回关' : '关注');
     return FilledButton.tonalIcon(
       icon: Icon(followed ? Icons.check : Icons.person_add_outlined, size: 18),
       label: Text(label),
-      onPressed: _busy ? null : (followed ? null : _follow),
+      onPressed: _busy ? null : (followed ? _unfollow : _follow),
     );
+  }
+
+  Future<void> _unfollow() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        content: const Text('取消关注？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('取消关注'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busy = true);
+    final res = await unfollowUser(ref, widget.pubkey);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(res.ok ? '已取消关注' : '取消失败：${res.reason}')),
+    );
+    if (mounted) setState(() => _busy = false);
   }
 
   Future<void> _follow() async {
     // Fetch the logged-in user's existing custom group names.
     final identity = ref.read(identityProvider).value;
     if (identity == null) return;
-    final groups = ref.read(userGroupNamesProvider(identity.pubkeyHex)).value ?? const <String>[];
+    final groups =
+        ref.read(userGroupNamesProvider(identity.pubkeyHex)).value ??
+        const <String>[];
 
     // Show a category picker: 默认分组 + existing custom groups + 新建分组.
     final category = await showModalBottomSheet<String>(
@@ -393,8 +453,11 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
     );
     if (category == null) return; // dismissed
     setState(() => _busy = true);
-    final ok = await followUser(ref, widget.pubkey,
-        category: category.isEmpty ? null : category);
+    final ok = await followUser(
+      ref,
+      widget.pubkey,
+      category: category.isEmpty ? null : category,
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(ok.ok ? '已关注' : '关注失败：${ok.reason}')),
@@ -414,7 +477,10 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
           decoration: const InputDecoration(hintText: '分组名称'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, controller.text.trim()),
             child: const Text('确定'),
@@ -426,7 +492,8 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
 }
 
 /// Pinned TabBar sliver.
-class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {  _StickyTabBarDelegate(this.tabBar, {required this.color});
+class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {
+  _StickyTabBarDelegate(this.tabBar, {required this.color});
   final TabBar tabBar;
   final Color color;
 
@@ -436,7 +503,11 @@ class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {  _StickyTab
   double get maxExtent => tabBar.preferredSize.height;
 
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
     return Material(color: color, child: tabBar);
   }
 
@@ -477,7 +548,11 @@ class _PostsTabState extends ConsumerState<_PostsTab> {
     final async = ref.watch(userPostsProvider(widget.pubkey));
     return Column(
       children: [
-        _SearchBar(controller: _controller, hint: '搜索该用户的帖子…', onChanged: _onChanged),
+        _SearchBar(
+          controller: _controller,
+          hint: '搜索该用户的帖子…',
+          onChanged: _onChanged,
+        ),
         Expanded(
           child: async.when(
             loading: () => const Center(child: CircularProgressIndicator()),
@@ -486,12 +561,17 @@ class _PostsTabState extends ConsumerState<_PostsTab> {
               var posts = all.where((e) => !e.isReply).toList();
               if (_query.isNotEmpty) {
                 final q = _query.toLowerCase();
-                posts = posts.where((e) => e.content.toLowerCase().contains(q)).toList();
+                posts = posts
+                    .where((e) => e.content.toLowerCase().contains(q))
+                    .toList();
               }
-              if (posts.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无帖子' : '无匹配帖子'));
+              if (posts.isEmpty) {
+                return Center(child: Text(_query.isEmpty ? '暂无帖子' : '无匹配帖子'));
+              }
               return ListView.builder(
                 itemCount: posts.length,
-                itemBuilder: (BuildContext context, int i) => UserPostItem(event: posts[i]),
+                itemBuilder: (BuildContext context, int i) =>
+                    UserPostItem(event: posts[i]),
               );
             },
           ),
@@ -533,7 +613,11 @@ class _RepliesTabState extends ConsumerState<_RepliesTab> {
     final async = ref.watch(userPostsProvider(widget.pubkey));
     return Column(
       children: [
-        _SearchBar(controller: _controller, hint: '搜索该用户的回帖…', onChanged: _onChanged),
+        _SearchBar(
+          controller: _controller,
+          hint: '搜索该用户的回帖…',
+          onChanged: _onChanged,
+        ),
         Expanded(
           child: async.when(
             loading: () => const Center(child: CircularProgressIndicator()),
@@ -542,12 +626,17 @@ class _RepliesTabState extends ConsumerState<_RepliesTab> {
               var replies = all.where((e) => e.isReply).toList();
               if (_query.isNotEmpty) {
                 final q = _query.toLowerCase();
-                replies = replies.where((e) => e.content.toLowerCase().contains(q)).toList();
+                replies = replies
+                    .where((e) => e.content.toLowerCase().contains(q))
+                    .toList();
               }
-              if (replies.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无回帖' : '无匹配回帖'));
+              if (replies.isEmpty) {
+                return Center(child: Text(_query.isEmpty ? '暂无回帖' : '无匹配回帖'));
+              }
               return ListView.builder(
                 itemCount: replies.length,
-                itemBuilder: (BuildContext context, int i) => UserPostItem(event: replies[i]),
+                itemBuilder: (BuildContext context, int i) =>
+                    UserPostItem(event: replies[i]),
               );
             },
           ),
@@ -560,6 +649,7 @@ class _RepliesTabState extends ConsumerState<_RepliesTab> {
 class _FollowsTab extends ConsumerStatefulWidget {
   const _FollowsTab({required this.pubkey, required this.isSelf});
   final String pubkey;
+
   /// Only the logged-in user has a local followed-tags list (DESIGN §8), so
   /// the 关注的人 / 关注的标签 sub-tab only shows on the user's own profile.
   final bool isSelf;
@@ -571,8 +661,10 @@ class _FollowsTab extends ConsumerStatefulWidget {
 class _FollowsTabState extends ConsumerState<_FollowsTab> {
   final _controller = TextEditingController();
   String _query = '';
+
   /// Selected group name, or null for "全部" (segmented view). See DESIGN §8.
   String? _selectedGroup;
+
   /// Sub-tab: 关注的人 (default) / 关注的标签 (self only).
   bool _showTags = false;
   Timer? _debounce;
@@ -591,12 +683,17 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
     });
   }
 
-  List<String> _filterGroup(List<String> pubkeys, Map<String, Metadata?> metaCache) {
+  List<String> _filterGroup(
+    List<String> pubkeys,
+    Map<String, Metadata?> metaCache,
+  ) {
     if (_query.isEmpty) return pubkeys;
     final q = _query.toLowerCase();
     String? npubHex;
     if (q.startsWith('npub1')) {
-      try { npubHex = npubToHex(_query).toLowerCase(); } catch (_) {}
+      try {
+        npubHex = npubToHex(_query).toLowerCase();
+      } catch (_) {}
     }
     return pubkeys.where((pk) {
       if (pk.toLowerCase().contains(q)) return true;
@@ -634,7 +731,11 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
     final async = ref.watch(userGroupedFollowsProvider(widget.pubkey));
     return Column(
       children: [
-        _SearchBar(controller: _controller, hint: '过滤已关注…', onChanged: _onChanged),
+        _SearchBar(
+          controller: _controller,
+          hint: '过滤已关注…',
+          onChanged: _onChanged,
+        ),
         Expanded(
           child: async.when(
             loading: () => const Center(child: CircularProgressIndicator()),
@@ -670,18 +771,21 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
                       color: theme.colorScheme.surfaceContainerHighest,
                       child: Text(
                         '${g.name} (${filtered.length})',
-                        style: theme.textTheme.labelMedium
-                            ?.copyWith(fontWeight: FontWeight.w600),
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   );
                 }
                 for (final pk in filtered) {
-                  sections.add(_FollowRow(
-                    pubkey: pk,
-                    followsMe: false,
-                    onTap: () => context.push('/u/$pk'),
-                  ));
+                  sections.add(
+                    _FollowRow(
+                      pubkey: pk,
+                      followsMe: false,
+                      onTap: () => context.push('/u/$pk'),
+                    ),
+                  );
                 }
               }
               final chips = _GroupChipRow(
@@ -690,11 +794,13 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
                 onSelected: (v) => setState(() => _selectedGroup = v),
               );
               final empty = sections.isEmpty
-                  ? Center(
-                      child: Text(_query.isEmpty ? '暂无关注' : '无匹配'))
+                  ? Center(child: Text(_query.isEmpty ? '暂无关注' : '无匹配'))
                   : ListView(children: sections);
               return Column(
-                children: [chips, Expanded(child: empty)],
+                children: [
+                  chips,
+                  Expanded(child: empty),
+                ],
               );
             },
           ),
@@ -703,8 +809,10 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
     );
   }
 
-  /// 关注的标签 — local-only list (DESIGN §8). Tap a tag → jump to the home
-  /// feed filtered by that tag. Empty state explains where tags come from.
+  /// 关注的标签 — synced via NIP-51 kind-30015 (DESIGN §8 / ui_demo.html
+  /// `.tag-grid`). Each chip shows `#tag + 帖子数`; tap → jump to the home feed
+  /// filtered by that tag; long-press → confirm unfollow. The leading "+ 标签"
+  /// chip lets the user add a tag manually.
   Widget _buildTags(ThemeData theme) {
     final tagsAsync = ref.watch(followedTagsProvider);
     return tagsAsync.when(
@@ -716,8 +824,9 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
             child: Padding(
               padding: EdgeInsets.symmetric(horizontal: 32, vertical: 48),
               child: Text(
-                '还没关注的标签。\n在帖子正文里的 #标签 上点击，即可在首页按标签过滤；'
-                '关注标签的功能后续会补上。',
+                '还没关注的标签。\n'
+                '在帖子正文里长按 #标签 可关注；\n'
+                '在首页按某标签过滤时也能点星标关注。',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: CostrColors.text2, height: 1.6),
               ),
@@ -730,17 +839,10 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final tag in tags)
-                ActionChip(
-                  label: Text('#$tag'),
-                  shape: const StadiumBorder(),
-                  side: BorderSide(color: theme.colorScheme.outline),
-                  backgroundColor: theme.colorScheme.surface,
-                  onPressed: () {
-                    ref.read(tagFilterProvider.notifier).set(tag);
-                    context.go('/feed');
-                  },
-                ),
+              _AddTagChip(
+                onAdd: (t) => ref.read(followedTagsProvider.notifier).add(t),
+              ),
+              for (final tag in tags) _FollowedTagChip(tag: tag),
             ],
           ),
         );
@@ -782,7 +884,11 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
     final async = ref.watch(userFollowersProvider(widget.pubkey));
     return Column(
       children: [
-        _SearchBar(controller: _controller, hint: '过滤关注者…', onChanged: _onChanged),
+        _SearchBar(
+          controller: _controller,
+          hint: '过滤关注者…',
+          onChanged: _onChanged,
+        ),
         Expanded(
           child: async.when(
             loading: () => const Center(child: CircularProgressIndicator()),
@@ -797,21 +903,29 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
                 final q = _query.toLowerCase();
                 String? npubHex;
                 if (q.startsWith('npub1')) {
-                  try { npubHex = npubToHex(_query).toLowerCase(); } catch (_) {}
+                  try {
+                    npubHex = npubToHex(_query).toLowerCase();
+                  } catch (_) {}
                 }
                 list = followers.where((pk) {
                   if (pk.toLowerCase().contains(q)) return true;
-                  if (npubHex != null && pk.toLowerCase().contains(npubHex)) return true;
+                  if (npubHex != null && pk.toLowerCase().contains(npubHex)) {
+                    return true;
+                  }
                   final m = metaCache[pk];
                   if (m == null) return false;
                   if ((m.name ?? '').toLowerCase().contains(q)) return true;
-                  if ((m.displayName ?? '').toLowerCase().contains(q)) return true;
+                  if ((m.displayName ?? '').toLowerCase().contains(q)) {
+                    return true;
+                  }
                   if ((m.nip05 ?? '').toLowerCase().contains(q)) return true;
                   if ((m.about ?? '').toLowerCase().contains(q)) return true;
                   return false;
                 }).toList();
               }
-              if (list.isEmpty) return Center(child: Text(_query.isEmpty ? '暂无关注者' : '无匹配'));
+              if (list.isEmpty) {
+                return Center(child: Text(_query.isEmpty ? '暂无关注者' : '无匹配'));
+              }
               return ListView.builder(
                 itemCount: list.length,
                 itemBuilder: (BuildContext context, int i) => _FollowRow(
@@ -832,10 +946,7 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
 /// ui_demo.html `.sub-tabs`). Only mounted on the logged-in user's own
 /// profile (see _FollowsTab.isSelf).
 class _FollowSubTabs extends StatelessWidget {
-  const _FollowSubTabs({
-    required this.showTags,
-    required this.onSelected,
-  });
+  const _FollowSubTabs({required this.showTags, required this.onSelected});
   final bool showTags;
   final ValueChanged<bool> onSelected;
 
@@ -874,15 +985,9 @@ class _FollowSubTabs extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        border:
-            Border(bottom: BorderSide(color: theme.colorScheme.outline)),
+        border: Border(bottom: BorderSide(color: theme.colorScheme.outline)),
       ),
-      child: Row(
-        children: [
-          tab('关注的人', !showTags),
-          tab('关注的标签', showTags),
-        ],
-      ),
+      child: Row(children: [tab('关注的人', !showTags), tab('关注的标签', showTags)]),
     );
   }
 }
@@ -910,8 +1015,7 @@ class _GroupChipRow extends StatelessWidget {
         child: GestureDetector(
           onTap: () => onSelected(value),
           child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: on ? theme.colorScheme.primary : theme.colorScheme.surface,
               border: Border.all(
@@ -938,8 +1042,7 @@ class _GroupChipRow extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        border:
-            Border(bottom: BorderSide(color: theme.colorScheme.outline)),
+        border: Border(bottom: BorderSide(color: theme.colorScheme.outline)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: SingleChildScrollView(
@@ -955,9 +1058,118 @@ class _GroupChipRow extends StatelessWidget {
   }
 }
 
-/// Reusable search bar with a persistent controller (no cursor reset on rebuild).
+/// One followed-hashtag chip (DESIGN §8 / ui_demo.html `.tag-chip`): shows
+/// `#tag 帖子数`. Tap → filter the home feed by this tag; long-press → confirm
+/// unfollow. The post count is a local sample ([tagPostCountProvider]).
+class _FollowedTagChip extends ConsumerWidget {
+  const _FollowedTagChip({required this.tag});
+  final String tag;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final count = ref.watch(tagPostCountProvider(tag));
+    return GestureDetector(
+      onLongPress: () async {
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext ctx) => AlertDialog(
+            content: Text('取消关注 #$tag？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('取消关注'),
+              ),
+            ],
+          ),
+        );
+        if (ok == true) {
+          await ref.read(followedTagsProvider.notifier).remove(tag);
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('#$tag', style: theme.textTheme.labelLarge),
+            if (count > 0) ...[
+              const SizedBox(width: 4),
+              Text(
+                '$count',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      onTap: () {
+        ref.read(tagFilterProvider.notifier).set(tag);
+        context.go('/feed');
+      },
+    );
+  }
+}
+
+/// Leading chip for manually adding a followed tag.
+class _AddTagChip extends StatelessWidget {
+  const _AddTagChip({required this.onAdd});
+  final ValueChanged<String> onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ActionChip(
+      avatar: const Icon(Icons.add, size: 18),
+      label: const Text('标签'),
+      shape: const StadiumBorder(),
+      side: BorderSide(color: theme.colorScheme.outline),
+      backgroundColor: theme.colorScheme.surface,
+      onPressed: () async {
+        final controller = TextEditingController();
+        final tag = await showDialog<String>(
+          context: context,
+          builder: (BuildContext ctx) => AlertDialog(
+            title: const Text('关注标签'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '标签名，如 nostr'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+                child: const Text('关注'),
+              ),
+            ],
+          ),
+        );
+        if (tag != null && tag.isNotEmpty) onAdd(tag);
+      },
+    );
+  }
+}
+
 class _SearchBar extends StatelessWidget {
-  const _SearchBar({required this.controller, required this.hint, required this.onChanged});
+  const _SearchBar({
+    required this.controller,
+    required this.hint,
+    required this.onChanged,
+  });
   final TextEditingController controller;
   final String hint;
   final ValueChanged<String> onChanged;
@@ -973,7 +1185,10 @@ class _SearchBar extends StatelessWidget {
           prefixIcon: const Icon(Icons.search, size: 20),
           isDense: true,
           border: const OutlineInputBorder(),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 8,
+          ),
         ),
         onChanged: onChanged,
       ),
@@ -996,7 +1211,10 @@ class _CopyableNprofile extends StatelessWidget {
         await Clipboard.setData(ClipboardData(text: nprofile));
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('已复制 nprofile'), duration: Duration(seconds: 1)),
+            const SnackBar(
+              content: Text('已复制 nprofile'),
+              duration: Duration(seconds: 1),
+            ),
           );
         }
       },
@@ -1018,7 +1236,11 @@ class _CopyableNprofile extends StatelessWidget {
 }
 
 class _FollowRow extends ConsumerWidget {
-  const _FollowRow({required this.pubkey, required this.onTap, this.followsMe = false});
+  const _FollowRow({
+    required this.pubkey,
+    required this.onTap,
+    this.followsMe = false,
+  });
   final String pubkey;
   final VoidCallback onTap;
   final bool followsMe;
@@ -1057,16 +1279,23 @@ class _AboutTextState extends ConsumerState<_AboutText> {
   static const int _collapseThreshold = 200;
   static const double _collapsedHeight = 150;
 
-  static final RegExp _entityRegex =
-      RegExp(r'(?:nostr:)?(nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}');
-  static final RegExp _hashtagRegex = RegExp(r'(?<![\w/:.])#([\p{L}\p{N}_]+)', unicode: true);
+  static final RegExp _entityRegex = RegExp(
+    r'(?:nostr:)?((?:nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
+  );
+  static final RegExp _hashtagRegex = RegExp(
+    r'(?<![\w/:.])#([\p{L}\p{N}_]+)',
+    unicode: true,
+  );
 
   @override
   Widget build(BuildContext context) {
     // 1. Linkify npub/nprofile mentions.
     final pubkeysByEntity = <String, String?>{};
     for (final m in _entityRegex.allMatches(widget.text)) {
-      final entity = m.group(0)!;
+      // group(1) = the bare entity (no `nostr:` prefix); use it for both
+      // pubkey lookup and the link href so the href stays `nostr:<bare>`
+      // (no doubled prefix).
+      final entity = m.group(1)!;
       pubkeysByEntity.putIfAbsent(entity, () => entityToPubkeyHex(entity));
     }
     final nameByPubkey = <String, String>{};
@@ -1077,9 +1306,10 @@ class _AboutTextState extends ConsumerState<_AboutText> {
       if (name != null && name.isNotEmpty) nameByPubkey[pk] = name;
     }
     var processed = widget.text.replaceAllMapped(_entityRegex, (Match m) {
-      final entity = m.group(0)!;
+      final entity = m.group(1)!;
       final pk = pubkeysByEntity[entity];
-      final label = (pk != null ? nameByPubkey[pk] : null) ?? shortenEntity(entity);
+      final label =
+          (pk != null ? nameByPubkey[pk] : null) ?? shortenEntity(entity);
       return '[@$label](nostr:$entity)';
     });
     // 2. Linkify #hashtag → [#tag](costr:tag:tag)
@@ -1116,15 +1346,23 @@ class _AboutTextState extends ConsumerState<_AboutText> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           body,
-          if (isLong) Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(onPressed: () => setState(() => _expanded = false), child: const Text('收起')),
-          ),
+          if (isLong)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => setState(() => _expanded = false),
+                child: const Text('收起'),
+              ),
+            ),
         ],
       );
     }
-    // Collapsed: use SizedBox + ClipRect (robust — no SingleChildScrollView
-    // which can conflict with NestedScrollView's gesture handling).
+    // Collapsed: wrap the body in a NeverScrollable SingleChildScrollView
+    // inside ClipRect. ClipRect alone only clips PAINT — the markdown's
+    // internal Column still receives the bounded maxHeight and throws
+    // "RenderFlex overflowed by N pixels" when the about is long. The
+    // SingleChildScrollView gives the body unbounded height (no layout
+    // overflow) while ClipRect clips it to the collapsed height.
     final surface = theme.colorScheme.surface;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1133,15 +1371,23 @@ class _AboutTextState extends ConsumerState<_AboutText> {
           height: _collapsedHeight,
           child: Stack(
             children: [
-              ClipRect(child: body),
+              ClipRect(
+                child: SingleChildScrollView(
+                  physics: const NeverScrollableScrollPhysics(),
+                  child: body,
+                ),
+              ),
               Positioned(
-                left: 0, right: 0, bottom: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
                 child: Container(
                   alignment: Alignment.centerRight,
                   padding: const EdgeInsets.only(top: 24),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
                       colors: [surface.withValues(alpha: 0), surface],
                     ),
                   ),

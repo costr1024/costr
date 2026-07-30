@@ -54,8 +54,7 @@ class PostDetailPage extends ConsumerWidget {
                               const SizedBox(width: 10),
                               GestureDetector(
                                 onTap: () => context.push('/u/${event.pubkey}'),
-                                child: Avatar(
-                                    pubkey: event.pubkey, radius: 18),
+                                child: Avatar(pubkey: event.pubkey, radius: 18),
                               ),
                               const SizedBox(width: 10),
                               Flexible(
@@ -63,23 +62,29 @@ class PostDetailPage extends ConsumerWidget {
                                   onTap: () =>
                                       context.push('/u/${event.pubkey}'),
                                   child: Consumer(
-                                    builder: (BuildContext context,
-                                        WidgetRef ref, _) {
-                                      final meta = ref
-                                          .watch(metadataProvider(
-                                              event.pubkey))
-                                          .value;
-                                      return Text(
-                                        displayLabelFor(event.pubkey, meta),
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelMedium
-                                            ?.copyWith(
-                                                fontWeight: FontWeight.w600),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      );
-                                    },
+                                    builder:
+                                        (
+                                          BuildContext context,
+                                          WidgetRef ref,
+                                          _,
+                                        ) {
+                                          final meta = ref
+                                              .watch(
+                                                metadataProvider(event.pubkey),
+                                              )
+                                              .value;
+                                          return Text(
+                                            displayLabelFor(event.pubkey, meta),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelMedium
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          );
+                                        },
                                   ),
                                 ),
                               ),
@@ -87,7 +92,9 @@ class PostDetailPage extends ConsumerWidget {
                           ),
                           const SizedBox(height: 10),
                           MarkdownContent(
-                              event: event, initiallyExpanded: true),
+                            event: event,
+                            initiallyExpanded: true,
+                          ),
                           if (event.hashtags.isNotEmpty) ...[
                             const SizedBox(height: 8),
                             Wrap(

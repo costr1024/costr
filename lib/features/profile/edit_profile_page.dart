@@ -27,15 +27,16 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
   bool _saving = false;
   bool _uploading = false;
 
+  /// (key, label, helper hint) for each kind-0 metadata field.
   static const _fields = [
-    ('name', '用户名'),
-    ('display_name', '显示名'),
-    ('about', '个人简介'),
-    ('picture', '头像 URL'),
-    ('banner', '背景图 URL'),
-    ('website', '网站'),
-    ('nip05', 'NIP-05 验证'),
-    ('lud16', '闪电网络地址'),
+    ('name', '用户名', '别人 @ 你、列表里显示的名字'),
+    ('display_name', '显示名', '个人主页顶部的大名，可以更长'),
+    ('about', '个人简介', '一句话介绍你自己'),
+    ('picture', '头像 URL', '点上方头像上传，自动填入；也可手填'),
+    ('banner', '背景图 URL', '点最上方背景图上传，自动填入；也可手填'),
+    ('website', '网站', '你的主页或项目链接'),
+    ('nip05', 'NIP-05 验证', '如 you@domain.com，向中继证明这把钥匙归你'),
+    ('lud16', '闪电网络地址', '如 you@wallethost.com，收打赏用'),
   ];
 
   @override
@@ -47,15 +48,25 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
   }
 
   TextEditingController _controller(String key, String? initial) {
-    return _controllers.putIfAbsent(key, () => TextEditingController(text: initial ?? ''));
+    return _controllers.putIfAbsent(
+      key,
+      () => TextEditingController(text: initial ?? ''),
+    );
   }
 
   /// Pick an image, crop it, upload to Blossom, and fill the URL into the
   /// given field. [ratioX]/[ratioY] set the crop aspect ratio.
-  Future<void> _pickAndCropAndUpload(String fieldKey, {required double ratioX, required double ratioY}) async {
+  Future<void> _pickAndCropAndUpload(
+    String fieldKey, {
+    required double ratioX,
+    required double ratioY,
+  }) async {
     final identity = ref.read(identityProvider).value;
     if (identity == null) return;
-    final result = await FilePicker.platform.pickFiles(type: FileType.image, withData: true);
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
     if (result == null || result.files.isEmpty) return;
     final f = result.files.single;
     if (f.path == null) {
@@ -82,10 +93,21 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
       // Read cropped bytes.
       final bytes = await cropped.readAsBytes();
       final mime = mimeForExt(cropped.path.split('.').last);
-      final res = await blossomUpload(identity, bytes, mimetype: mime, note: 'costr $fieldKey');
+      final res = await blossomUpload(
+        identity,
+        bytes,
+        mimetype: mime,
+        note: 'costr $fieldKey',
+      );
       if (!mounted) return;
       if (res != null) {
-        _controller(fieldKey, _getMeta(ref.read(metadataProvider(identity.pubkeyHex)).value, fieldKey)).text = res.url;
+        _controller(
+          fieldKey,
+          _getMeta(
+            ref.read(metadataProvider(identity.pubkeyHex)).value,
+            fieldKey,
+          ),
+        ).text = res.url;
         _snack('${fieldKey == 'picture' ? '头像' : '背景图'}上传成功');
       } else {
         _snack('上传失败');
@@ -99,13 +121,18 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
 
   Future<void> _save() async {
     final identity = ref.read(identityProvider).value;
-    if (identity == null) { _snack('未登录'); return; }
+    if (identity == null) {
+      _snack('未登录');
+      return;
+    }
     setState(() => _saving = true);
     try {
       final data = <String, dynamic>{};
-      for (final (key, _) in _fields) {
+      for (final (key, _, _) in _fields) {
         final v = _controllers[key]?.text.trim() ?? '';
-        if (v.isNotEmpty) { data[key] = v; }
+        if (v.isNotEmpty) {
+          data[key] = v;
+        }
       }
       final contentJson = jsonEncode(data);
       final signed = NostrActions(identity).setMetadata(contentJson);
@@ -151,78 +178,211 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
           : Stack(
               children: [
                 SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
+                  padding: EdgeInsets.zero,
                   child: Column(
                     children: [
-                      // Avatar upload + preview.
-                      Row(
-                        children: [
-                          // Show current avatar (or default).
-                          _controller('picture', _getMeta(meta, 'picture')).text.isNotEmpty
-                              ? ClipOval(child: Image.network(
-                                  _controller('picture', _getMeta(meta, 'picture')).text,
-                                  width: 64, height: 64, fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) => Container(width: 64, height: 64, color: theme.colorScheme.surfaceContainerHighest, child: const Icon(Icons.broken_image)),
-                                ))
+                      // Banner preview at the very top — tappable to upload.
+                      // Reads the live banner controller so it updates right
+                      // after an upload (setState on _uploading rebuilds it).
+                      GestureDetector(
+                        onTap: _uploading
+                            ? null
+                            : () => _pickAndCropAndUpload(
+                                'banner',
+                                ratioX: 3,
+                                ratioY: 1,
+                              ),
+                        child: SizedBox(
+                          height: 120,
+                          width: double.infinity,
+                          child:
+                              _controller(
+                                'banner',
+                                _getMeta(meta, 'banner'),
+                              ).text.isNotEmpty
+                              ? Image.network(
+                                  _controller(
+                                    'banner',
+                                    _getMeta(meta, 'banner'),
+                                  ).text,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, _, _) => Container(
+                                    color: theme
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                    child: const Icon(
+                                      Icons.broken_image,
+                                      size: 32,
+                                    ),
+                                  ),
+                                )
                               : Container(
-                                  width: 64, height: 64,
-                                  decoration: const BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [Color(0xFF6750A4), Color(0xFF9C27B0)])),
-                                  child: const Center(child: Icon(Icons.person, color: Colors.white, size: 32)),
+                                  color:
+                                      theme.colorScheme.surfaceContainerHighest,
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: const [
+                                        Icon(
+                                          Icons.add_photo_alternate_outlined,
+                                          size: 32,
+                                        ),
+                                        SizedBox(height: 4),
+                                        Text('点此上传背景图'),
+                                      ],
+                                    ),
+                                  ),
                                 ),
-                          const SizedBox(width: 12),
-                          FilledButton.tonalIcon(
-                            icon: const Icon(Icons.upload, size: 18),
-                            label: const Text('上传头像'),
-                            onPressed: _uploading ? null : () => _pickAndCropAndUpload('picture', ratioX: 1, ratioY: 1),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      // Picture URL field (auto-filled on upload; also editable).
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: TextField(
-                          controller: _controller('picture', _getMeta(meta, 'picture')),
-                          decoration: const InputDecoration(labelText: '头像 URL', border: OutlineInputBorder(), isDense: true),
                         ),
                       ),
-                      // Banner upload.
-                      Row(
-                        children: [
-                          FilledButton.tonalIcon(
-                            icon: const Icon(Icons.upload, size: 18),
-                            label: const Text('上传背景图'),
-                            onPressed: _uploading ? null : () => _pickAndCropAndUpload('banner', ratioX: 3, ratioY: 1),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
                       Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: TextField(
-                          controller: _controller('banner', _getMeta(meta, 'banner')),
-                          decoration: const InputDecoration(labelText: '背景图 URL', border: OutlineInputBorder(), isDense: true),
-                        ),
-                      ),
-                      // Other text fields.
-                      for (final (key, label) in _fields.where((f) => f.$1 != 'picture' && f.$1 != 'banner'))
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: TextField(
-                            controller: _controller(key, _getMeta(meta, key)),
-                            decoration: InputDecoration(
-                              labelText: label,
-                              border: const OutlineInputBorder(),
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            // Avatar upload + preview.
+                            Row(
+                              children: [
+                                GestureDetector(
+                                  onTap: _uploading
+                                      ? null
+                                      : () => _pickAndCropAndUpload(
+                                          'picture',
+                                          ratioX: 1,
+                                          ratioY: 1,
+                                        ),
+                                  child:
+                                      _controller(
+                                        'picture',
+                                        _getMeta(meta, 'picture'),
+                                      ).text.isNotEmpty
+                                      ? ClipOval(
+                                          child: Image.network(
+                                            _controller(
+                                              'picture',
+                                              _getMeta(meta, 'picture'),
+                                            ).text,
+                                            width: 64,
+                                            height: 64,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, _, _) =>
+                                                Container(
+                                                  width: 64,
+                                                  height: 64,
+                                                  color: theme
+                                                      .colorScheme
+                                                      .surfaceContainerHighest,
+                                                  child: const Icon(
+                                                    Icons.broken_image,
+                                                  ),
+                                                ),
+                                          ),
+                                        )
+                                      : Container(
+                                          width: 64,
+                                          height: 64,
+                                          decoration: const BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            gradient: LinearGradient(
+                                              colors: [
+                                                Color(0xFF6750A4),
+                                                Color(0xFF9C27B0),
+                                              ],
+                                            ),
+                                          ),
+                                          child: const Center(
+                                            child: Icon(
+                                              Icons.person,
+                                              color: Colors.white,
+                                              size: 32,
+                                            ),
+                                          ),
+                                        ),
+                                ),
+                                const SizedBox(width: 12),
+                                FilledButton.tonalIcon(
+                                  icon: const Icon(Icons.upload, size: 18),
+                                  label: const Text('上传头像'),
+                                  onPressed: _uploading
+                                      ? null
+                                      : () => _pickAndCropAndUpload(
+                                          'picture',
+                                          ratioX: 1,
+                                          ratioY: 1,
+                                        ),
+                                ),
+                              ],
                             ),
-                            maxLines: key == 'about' ? 4 : 1,
-                          ),
+                            // Picture URL field (auto-filled on upload; also editable).
+                            for (final (key, label, hint) in _fields.where(
+                              (f) => f.$1 == 'picture',
+                            ))
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  top: 8,
+                                  bottom: 16,
+                                ),
+                                child: TextField(
+                                  controller: _controller(
+                                    key,
+                                    _getMeta(meta, key),
+                                  ),
+                                  decoration: InputDecoration(
+                                    labelText: label,
+                                    helperText: hint,
+                                    border: const OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                ),
+                              ),
+                            // Banner URL field.
+                            for (final (key, label, hint) in _fields.where(
+                              (f) => f.$1 == 'banner',
+                            ))
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: TextField(
+                                  controller: _controller(
+                                    key,
+                                    _getMeta(meta, key),
+                                  ),
+                                  decoration: InputDecoration(
+                                    labelText: label,
+                                    helperText: hint,
+                                    border: const OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                ),
+                              ),
+                            // Other text fields.
+                            for (final (key, label, hint) in _fields.where(
+                              (f) => f.$1 != 'picture' && f.$1 != 'banner',
+                            ))
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: TextField(
+                                  controller: _controller(
+                                    key,
+                                    _getMeta(meta, key),
+                                  ),
+                                  decoration: InputDecoration(
+                                    labelText: label,
+                                    helperText: hint,
+                                    border: const OutlineInputBorder(),
+                                  ),
+                                  maxLines: key == 'about' ? 4 : 1,
+                                ),
+                              ),
+                          ],
                         ),
+                      ),
                     ],
                   ),
                 ),
                 if (_uploading)
                   const Positioned(
-                    top: 0, left: 0, right: 0,
+                    top: 0,
+                    left: 0,
+                    right: 0,
                     child: LinearProgressIndicator(),
                   ),
               ],
@@ -233,15 +393,24 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
   String? _getMeta(Metadata? meta, String key) {
     if (meta == null) return null;
     switch (key) {
-      case 'name': return meta.name;
-      case 'display_name': return meta.displayName;
-      case 'about': return meta.about;
-      case 'picture': return meta.picture;
-      case 'banner': return meta.banner;
-      case 'website': return meta.website;
-      case 'nip05': return meta.nip05;
-      case 'lud16': return meta.lud16;
-      default: return null;
+      case 'name':
+        return meta.name;
+      case 'display_name':
+        return meta.displayName;
+      case 'about':
+        return meta.about;
+      case 'picture':
+        return meta.picture;
+      case 'banner':
+        return meta.banner;
+      case 'website':
+        return meta.website;
+      case 'nip05':
+        return meta.nip05;
+      case 'lud16':
+        return meta.lud16;
+      default:
+        return null;
     }
   }
 }

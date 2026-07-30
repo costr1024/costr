@@ -7,11 +7,14 @@ import 'package:flutter/material.dart';
 /// Size-configurable Costr logo mark (broadcast arcs + dot).
 /// On dark backgrounds use [CostrLogo.light] (white on dark).
 class CostrLogo extends StatelessWidget {
-  const CostrLogo({super.key, this.size = 28, this.color = const Color(0xFF0F1419)});
+  const CostrLogo({
+    super.key,
+    this.size = 28,
+    this.color = const Color(0xFF0F1419),
+  });
 
   /// White logo for dark backgrounds (FAB, splash, login).
-  const CostrLogo.light({super.key, this.size = 28})
-      : color = Colors.white;
+  const CostrLogo.light({super.key, this.size = 28}) : color = Colors.white;
 
   final double size;
   final Color color;
@@ -21,9 +24,7 @@ class CostrLogo extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(
-        painter: _LogoPainter(color: color),
-      ),
+      child: CustomPaint(painter: _LogoPainter(color: color)),
     );
   }
 }
@@ -47,17 +48,26 @@ class _LogoPainter extends CustomPainter {
     // Arc 1 (smallest)
     canvas.drawArc(
       Rect.fromCircle(center: Offset(cx, cy), radius: size.width * 0.12),
-      -0.5, 1.0, false, paint,
+      -0.5,
+      1.0,
+      false,
+      paint,
     );
     // Arc 2 (medium)
     canvas.drawArc(
       Rect.fromCircle(center: Offset(cx, cy), radius: size.width * 0.22),
-      -0.5, 1.0, false, paint,
+      -0.5,
+      1.0,
+      false,
+      paint,
     );
     // Arc 3 (largest)
     canvas.drawArc(
       Rect.fromCircle(center: Offset(cx, cy), radius: size.width * 0.32),
-      -0.5, 1.0, false, paint,
+      -0.5,
+      1.0,
+      false,
+      paint,
     );
 
     // Dot (the source — "you").

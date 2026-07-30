@@ -36,7 +36,9 @@ class Event {
     }
     final tags = list[4];
     if (tags is! List) {
-      throw FormatException('event tags must be a list, got ${tags.runtimeType}');
+      throw FormatException(
+        'event tags must be a list, got ${tags.runtimeType}',
+      );
     }
     return Event(
       id: list[0] as String,
@@ -55,7 +57,9 @@ class Event {
   factory Event.fromJson(Map<String, dynamic> m) {
     final tags = m['tags'];
     if (tags is! List) {
-      throw FormatException('event tags must be a list, got ${tags.runtimeType}');
+      throw FormatException(
+        'event tags must be a list, got ${tags.runtimeType}',
+      );
     }
     final sig = m['sig'];
     return Event(
@@ -210,12 +214,14 @@ class Event {
         }
       }
       if (url != null && url.isNotEmpty) {
-        out.add(MediaAttachment(
-          url: url,
-          mimeType: mimeType,
-          width: width,
-          height: height,
-        ));
+        out.add(
+          MediaAttachment(
+            url: url,
+            mimeType: mimeType,
+            width: width,
+            height: height,
+          ),
+        );
       }
     }
     return out;
@@ -237,9 +243,14 @@ class Event {
   /// NIP-01 canonical serialization for the event id: the JSON array
   /// `[0, pubkey, created_at, kind, tags, content]` (compact, no signature).
   String computeId() {
-    final serialized = jsonEncode(
-      <dynamic>[0, pubkey, createdAt, kind, tags, content],
-    );
+    final serialized = jsonEncode(<dynamic>[
+      0,
+      pubkey,
+      createdAt,
+      kind,
+      tags,
+      content,
+    ]);
     return sha256.convert(utf8.encode(serialized)).toString();
   }
 
@@ -247,14 +258,14 @@ class Event {
   /// "content","sig"}`. Modern relays (2026) require the EVENT message's
   /// event payload to be an object, not the legacy array form.
   Map<String, dynamic> toWireObject() => <String, dynamic>{
-        'id': id,
-        'pubkey': pubkey,
-        'created_at': createdAt,
-        'kind': kind,
-        'tags': tags,
-        'content': content,
-        'sig': sig,
-      };
+    'id': id,
+    'pubkey': pubkey,
+    'created_at': createdAt,
+    'kind': kind,
+    'tags': tags,
+    'content': content,
+    'sig': sig,
+  };
 
   @override
   String toString() => 'Event(kind=$kind, id=$id, content=$_preview)';

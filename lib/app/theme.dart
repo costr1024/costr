@@ -50,16 +50,12 @@ class AppTheme {
         elevation: 0,
         margin: EdgeInsets.zero,
         color: CostrColors.bg,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.zero,
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.zero),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: CostrColors.bg2,
         side: const BorderSide(color: CostrColors.border),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(999),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: CostrColors.bg,
@@ -76,7 +72,8 @@ class AppTheme {
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: CostrColors.bg,
         indicatorColor: Colors.transparent,
-        labelTextStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 10, color: CostrColors.text),
+        labelTextStyle: const WidgetStatePropertyAll(
+          TextStyle(fontSize: 10, color: CostrColors.text),
         ),
         height: 64,
         iconTheme: WidgetStateProperty.resolveWith((states) {
@@ -96,9 +93,7 @@ class AppTheme {
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
-        style: IconButton.styleFrom(
-          foregroundColor: CostrColors.text2,
-        ),
+        style: IconButton.styleFrom(foregroundColor: CostrColors.text2),
       ),
     );
   }

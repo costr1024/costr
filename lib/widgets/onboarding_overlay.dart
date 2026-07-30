@@ -22,7 +22,11 @@ class OnboardingOverlay extends StatefulWidget {
 }
 
 class _ObStep {
-  const _ObStep({required this.title, required this.text, required this.alignment});
+  const _ObStep({
+    required this.title,
+    required this.text,
+    required this.alignment,
+  });
   final String title;
   final String text;
   final Alignment alignment;
@@ -69,9 +73,7 @@ class _OnboardingOverlayState extends State<OnboardingOverlay> {
           Positioned.fill(
             child: GestureDetector(
               onTap: widget.onDone,
-              child: const ColoredBox(
-                color: Color(0x8C000000),
-              ),
+              child: const ColoredBox(color: Color(0x8C000000)),
             ),
           ),
           Align(
@@ -99,23 +101,34 @@ class _OnboardingOverlayState extends State<OnboardingOverlay> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: <Widget>[
-                        Text(s.title,
-                            style: const TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w600)),
+                        Text(
+                          s.title,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         GestureDetector(
                           onTap: widget.onDone,
-                          child: const Text('跳过',
-                              style: TextStyle(
-                                  color: Color(0xFF1D9BF0), fontSize: 13)),
+                          child: const Text(
+                            '跳过',
+                            style: TextStyle(
+                              color: Color(0xFF1D9BF0),
+                              fontSize: 13,
+                            ),
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 4),
-                    Text(s.text,
-                        style: const TextStyle(
-                            color: Color(0xFF536471),
-                            fontSize: 13,
-                            height: 1.5)),
+                    Text(
+                      s.text,
+                      style: const TextStyle(
+                        color: Color(0xFF536471),
+                        fontSize: 13,
+                        height: 1.5,
+                      ),
+                    ),
                     const SizedBox(height: 10),
                     Align(
                       alignment: Alignment.centerRight,

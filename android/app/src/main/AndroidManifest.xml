@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="costr"
+        android:label="Costr"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -47,4 +47,9 @@
             <data android:mimeType="text/plain"/>
         </intent>
     </queries>
+
+    <!-- local_auth: biometric / device-lock auth gate for revealing the
+         private key in account backup. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
 </manifest>

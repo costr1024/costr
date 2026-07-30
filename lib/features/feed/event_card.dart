@@ -79,13 +79,7 @@ class EventCard extends ConsumerWidget {
                         runSpacing: 4,
                         children: [
                           for (final tag in event.hashtags)
-                            ActionChip(
-                              label: Text('#$tag'),
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () => ref
-                                  .read(tagFilterProvider.notifier)
-                                  .set(tag),
-                            ),
+                            _HashtagChip(tag: tag),
                         ],
                       ),
                     ],
@@ -104,8 +98,10 @@ class EventCard extends ConsumerWidget {
   }
 
   static String _relativeTime(int createdAt) {
-    final eventTime =
-        DateTime.fromMillisecondsSinceEpoch(createdAt * 1000, isUtc: true);
+    final eventTime = DateTime.fromMillisecondsSinceEpoch(
+      createdAt * 1000,
+      isUtc: true,
+    );
     final delta = DateTime.now().difference(eventTime);
     if (delta.isNegative) return '刚刚';
     final mins = delta.inMinutes;
@@ -134,7 +130,10 @@ class _ReplyContext extends ConsumerWidget {
     String? parentPubkey;
     final store = ref.read(eventStoreProvider);
     for (final e in store) {
-      if (e.id == parent) { parentPubkey = e.pubkey; break; }
+      if (e.id == parent) {
+        parentPubkey = e.pubkey;
+        break;
+      }
     }
     if (parentPubkey == null) {
       return Padding(
@@ -143,7 +142,10 @@ class _ReplyContext extends ConsumerWidget {
           children: [
             Icon(Icons.reply, size: 14, color: CostrColors.text3),
             const SizedBox(width: 4),
-            Text('回复', style: TextStyle(fontSize: 13, color: CostrColors.text3)),
+            Text(
+              '回复',
+              style: TextStyle(fontSize: 13, color: CostrColors.text3),
+            ),
           ],
         ),
       );
@@ -160,8 +162,14 @@ class _ReplyContext extends ConsumerWidget {
           children: [
             Icon(Icons.reply, size: 14, color: CostrColors.text3),
             const SizedBox(width: 4),
-            Text('回复 @$name',
-              style: TextStyle(fontSize: 13, color: CostrColors.text3, fontWeight: FontWeight.w600)),
+            Text(
+              '回复 @$name',
+              style: TextStyle(
+                fontSize: 13,
+                color: CostrColors.text3,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       ),
@@ -190,45 +198,60 @@ class _NsfwAwareContentState extends ConsumerState<_NsfwAwareContent> {
     }
     // NSFW warning overlay.
     final theme = Theme.of(context);
-    return Stack(
-      children: [
-        // Blurred content behind.
-        ClipRect(
-          child: ImageFiltered(
-            imageFilter: dart_ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Opacity(
-              opacity: 0.3,
-              child: MarkdownContent(event: widget.event),
-            ),
-          ),
-        ),
-        // Warning overlay.
-        Positioned.fill(
-          child: Container(
-            color: theme.colorScheme.surface.withValues(alpha: 0.7),
-            alignment: Alignment.center,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.warning_amber_rounded,
-                    size: 40, color: theme.colorScheme.error),
-                const SizedBox(height: 8),
-                Text('此帖可能包含敏感内容',
-                    style: theme.textTheme.bodyMedium),
-                const SizedBox(height: 12),
-                FilledButton.tonalIcon(
-                  icon: const Icon(Icons.visibility, size: 18),
-                  label: const Text('点击查看'),
-                  onPressed: () => setState(() => _revealed = true),
+    // The Stack's only non-positioned child is the (blurred) content, so for a
+    // short NSFW post the Stack would shrink to the content's tiny size and
+    // squeeze the warning overlay into a few-dozen pixels — making the warning
+    // text wrap one char per line and overflow into the next card. Force full
+    // width (SizedBox) + a minimum height (ConstrainedBox) so the warning
+    // always has room, while long posts still size the Stack by their content.
+    return SizedBox(
+      width: double.infinity,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 200),
+        child: Stack(
+          children: [
+            // Blurred content behind.
+            ClipRect(
+              child: ImageFiltered(
+                imageFilter: dart_ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Opacity(
+                  opacity: 0.3,
+                  child: MarkdownContent(event: widget.event),
                 ),
-              ],
+              ),
             ),
-          ),
+            // Warning overlay.
+            Positioned.fill(
+              child: Container(
+                color: theme.colorScheme.surface.withValues(alpha: 0.7),
+                alignment: Alignment.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      size: 36,
+                      color: theme.colorScheme.error,
+                    ),
+                    const SizedBox(height: 8),
+                    Text('此帖可能包含敏感内容', style: theme.textTheme.bodyMedium),
+                    const SizedBox(height: 12),
+                    FilledButton.tonalIcon(
+                      icon: const Icon(Icons.visibility, size: 18),
+                      label: const Text('点击查看'),
+                      onPressed: () => setState(() => _revealed = true),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
+
 class _ReactionChips extends ConsumerWidget {
   const _ReactionChips({required this.eventId});
   final String eventId;
@@ -246,32 +269,108 @@ class _ReactionChips extends ConsumerWidget {
         children: [
           for (final entry in counts.entries)
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(entry.key,
-                          style: const TextStyle(fontSize: 13)),
-                      if (entry.value > 1) ...[
-                        const SizedBox(width: 2),
-                        Text('${entry.value}',
-                            style: theme.textTheme.labelSmall),
-                      ],
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        );
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(entry.key, style: const TextStyle(fontSize: 13)),
+                  if (entry.value > 1) ...[
+                    const SizedBox(width: 2),
+                    Text('${entry.value}', style: theme.textTheme.labelSmall),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 
-/// Top-right `⋮` menu for a post: copy event id / copy full content.
+/// Hashtag chip on a post. Tap → filter the home feed by this tag (matches
+/// the demo `.tag-chip`). Long-press → a sheet to follow / unfollow the tag
+/// (NIP-51 kind-30015) or filter the feed.
+class _HashtagChip extends ConsumerWidget {
+  const _HashtagChip({required this.tag});
+  final String tag;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final followed = (ref.watch(followedTagsProvider).value ?? const <String>[])
+        .contains(tag);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        ref.read(tagFilterProvider.notifier).set(tag);
+        context.go('/feed');
+      },
+      onLongPress: () => _showTagSheet(context, ref, followed),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          '#$tag',
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.primary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showTagSheet(BuildContext context, WidgetRef ref, bool followed) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (BuildContext ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('#$tag', style: Theme.of(ctx).textTheme.titleSmall),
+            ),
+            ListTile(
+              leading: const Icon(Icons.filter_alt_outlined, size: 20),
+              title: const Text('在首页按此标签过滤'),
+              onTap: () {
+                Navigator.pop(ctx);
+                ref.read(tagFilterProvider.notifier).set(tag);
+                context.go('/feed');
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                followed
+                    ? Icons.bookmark_remove_outlined
+                    : Icons.bookmark_add_outlined,
+                size: 20,
+              ),
+              title: Text(followed ? '取消关注此标签' : '关注此标签'),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (followed) {
+                  ref.read(followedTagsProvider.notifier).remove(tag);
+                } else {
+                  ref.read(followedTagsProvider.notifier).add(tag);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Top-right `⋮` menu for a post: copy post id / copy full content.
 class _PostMenu extends StatelessWidget {
   const _PostMenu({required this.event});
   final Event event;
@@ -282,22 +381,19 @@ class _PostMenu extends StatelessWidget {
       icon: const Icon(Icons.more_vert, size: 18),
       padding: EdgeInsets.zero,
       itemBuilder: (BuildContext context) => const <PopupMenuEntry<String>>[
-        PopupMenuItem<String>(
-          value: 'copy_id',
-          child: Text('复制 event id'),
-        ),
-        PopupMenuItem<String>(
-          value: 'copy_content',
-          child: Text('复制全文'),
-        ),
+        PopupMenuItem<String>(value: 'copy_id', child: Text('复制帖子 id')),
+        PopupMenuItem<String>(value: 'copy_content', child: Text('复制全文')),
       ],
       onSelected: (String value) async {
         final text = value == 'copy_id' ? event.id : event.content;
         await Clipboard.setData(ClipboardData(text: text));
         if (context.mounted) {
-          final label = value == 'copy_id' ? 'event id' : '全文';
+          final label = value == 'copy_id' ? '帖子 id' : '全文';
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('已复制 $label'), duration: const Duration(seconds: 1)),
+            SnackBar(
+              content: Text('已复制 $label'),
+              duration: const Duration(seconds: 1),
+            ),
           );
         }
       },

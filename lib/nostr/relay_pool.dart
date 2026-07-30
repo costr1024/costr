@@ -22,7 +22,8 @@ class RelayState {
   final String? error;
 
   @override
-  String toString() => 'RelayState($url: $status${error == null ? '' : ' — $error'})';
+  String toString() =>
+      'RelayState($url: $status${error == null ? '' : ' — $error'})';
 }
 
 class RelayPool {
@@ -32,7 +33,7 @@ class RelayPool {
 
   /// Construct with explicit connections (allows test injection of fakes).
   RelayPool(List<RelayConnection> connections)
-      : _connections = List<RelayConnection>.unmodifiable(connections);
+    : _connections = List<RelayConnection>.unmodifiable(connections);
 
   final List<RelayConnection> _connections;
   final Map<String, Map<String, dynamic>> _activeSubs = {};
@@ -53,8 +54,8 @@ class RelayPool {
   // late so the initializer can reference the instance method _emitStatus.
   late final StreamController<List<RelayState>> _status =
       StreamController<List<RelayState>>.broadcast(
-    onListen: () => scheduleMicrotask(_emitStatus),
-  );
+        onListen: () => scheduleMicrotask(_emitStatus),
+      );
 
   /// Merged, deduped stream of all events from all relays.
   Stream<Event> get events => _merged.stream;
@@ -70,10 +71,12 @@ class RelayPool {
   Stream<List<RelayState>> get statusStream => _status.stream;
 
   List<RelayState> get states => _connections
-      .map((c) => RelayState(
-            c.url,
-            c.isConnected ? RelayStatus.connected : RelayStatus.disconnected,
-          ))
+      .map(
+        (c) => RelayState(
+          c.url,
+          c.isConnected ? RelayStatus.connected : RelayStatus.disconnected,
+        ),
+      )
       .toList();
 
   Future<void> connect() async {
@@ -89,6 +92,18 @@ class RelayPool {
       await c.connect().catchError((Object _) {});
     }
     _connecting = false;
+    _emitStatus();
+  }
+
+  /// Reconnect any connections that have dropped, WITHOUT clearing the
+  /// in-memory event store. Called by the app's lifecycle observer when the
+  /// app returns to the foreground (the OS suspends websockets while
+  /// backgrounded) so the user sees their already-cached feed instantly and
+  /// only incremental new events are fetched — not a full reload.
+  Future<void> reconnect() async {
+    for (final c in _connections) {
+      if (!c.isConnected) await c.connect().catchError((Object _) {});
+    }
     _emitStatus();
   }
 
@@ -156,8 +171,11 @@ class RelayPool {
   /// If [closeOnEose] is true (used for the global feed), the subscription is
   /// CLOSED on the first EOSE from any relay, bounding it to a recent snapshot
   /// instead of an unbounded live firehose.
-  void request(String subId, Map<String, dynamic> filter,
-      {bool closeOnEose = false}) {
+  void request(
+    String subId,
+    Map<String, dynamic> filter, {
+    bool closeOnEose = false,
+  }) {
     _activeSubs[subId] = filter;
     if (closeOnEose) _closeOnEose.add(subId);
     for (final c in _connections) {
@@ -189,18 +207,21 @@ class RelayPool {
   /// accepts (OK true); if a relay rejects with "auth-required" (NIP-42), it
   /// retries that relay once after the auth round-trip; if all reject, resolves
   /// with the joined rejection reasons; times out if no ack within [timeout].
-  Future<RelayOk> publishAndWait(Event event,
-      {Duration timeout = const Duration(seconds: 15)}) async {
+  Future<RelayOk> publishAndWait(
+    Event event, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
     final expected = event.id;
     final connected = _connections.where((c) => c.isConnected).toList();
-    final byUrl = <String, RelayConnection>{for (final c in connected) c.url: c};
+    final byUrl = <String, RelayConnection>{
+      for (final c in connected) c.url: c,
+    };
     final verdicts = <String, RelayOk>{}; // final non-auth verdicts (url -> ok)
     final retried = <String>{}; // relays already retried for auth-required
     bool resolved = false;
     final completer = Completer<RelayOk>();
 
-    bool isAuthReq(String? r) =>
-        (r ?? '').toLowerCase().contains('auth');
+    bool isAuthReq(String? r) => (r ?? '').toLowerCase().contains('auth');
 
     final sub = oks.listen((RelayOk ok) {
       if (resolved || ok.id != expected || ok.url == null) return;
@@ -225,20 +246,25 @@ class RelayPool {
     publish(event);
 
     return completer.future
-        .timeout(timeout,
-            onTimeout: () {
-              final accepted = verdicts.values.where((v) => v.ok);
-              if (accepted.isNotEmpty) return accepted.first;
-              final fails = verdicts.values.where((v) => !v.ok).toList();
-              if (fails.isEmpty) {
-                return RelayOk(expected, false,
-                    'no relay ack in ${timeout.inSeconds}s (${connected.length} connected)');
-              }
-              final reasons = fails
-                  .map((v) => '${v.url}: ${v.reason ?? 'rejected'}')
-                  .join('; ');
-              return RelayOk(expected, false, reasons);
-            })
+        .timeout(
+          timeout,
+          onTimeout: () {
+            final accepted = verdicts.values.where((v) => v.ok);
+            if (accepted.isNotEmpty) return accepted.first;
+            final fails = verdicts.values.where((v) => !v.ok).toList();
+            if (fails.isEmpty) {
+              return RelayOk(
+                expected,
+                false,
+                'no relay ack in ${timeout.inSeconds}s (${connected.length} connected)',
+              );
+            }
+            final reasons = fails
+                .map((v) => '${v.url}: ${v.reason ?? 'rejected'}')
+                .join('; ');
+            return RelayOk(expected, false, reasons);
+          },
+        )
         .whenComplete(() => sub.cancel());
   }
 

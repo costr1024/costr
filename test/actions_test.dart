@@ -7,14 +7,14 @@ const _priv =
     '0000000000000000000000000000000000000000000000000000000000000001';
 
 Event _ev(String id, {List<List<dynamic>> tags = const []}) => Event(
-      id: id,
-      pubkey: 'pubkey-x',
-      createdAt: 1700000000,
-      kind: 1,
-      tags: tags,
-      content: 'parent',
-      sig: 's',
-    );
+  id: id,
+  pubkey: 'pubkey-x',
+  createdAt: 1700000000,
+  kind: 1,
+  tags: tags,
+  content: 'parent',
+  sig: 's',
+);
 
 Matcher _tag(List<String> t) => contains(equals(t));
 
@@ -35,10 +35,13 @@ void main() {
     });
 
     test('reply to a reply uses the thread root', () {
-      final parent = _ev('reply-id', tags: [
-        ['e', 'root-id', '', 'root'],
-        ['e', 'reply-id', '', 'reply'],
-      ]);
+      final parent = _ev(
+        'reply-id',
+        tags: [
+          ['e', 'root-id', '', 'root'],
+          ['e', 'reply-id', '', 'reply'],
+        ],
+      );
       final r = actions.reply(parent, 're');
       expect(r.tags, _tag(['e', 'root-id', '', 'root']));
       expect(r.tags, _tag(['e', 'reply-id', '', 'reply']));
@@ -65,8 +68,7 @@ void main() {
         customUrl: 'https://example.com/costr.png',
       );
       expect(r.content, ':costr:');
-      expect(r.tags,
-          _tag(['emoji', 'costr', 'https://example.com/costr.png']));
+      expect(r.tags, _tag(['emoji', 'costr', 'https://example.com/costr.png']));
     });
 
     test('repost (NIP-18 kind 6): content is the reposted event JSON', () {
@@ -91,20 +93,29 @@ void main() {
     });
 
     test('follow: kind 3 with full p-tag list, preserves existing + relay', () {
-      final existing = _ev('k3', tags: [
-        ['p', 'existing-pk', 'wss://old.relay', 'pet'],
-      ]);
-      final r = actions.follow(existing, 'new-pk',
-          relay: 'wss://relay.damus.io/');
+      final existing = _ev(
+        'k3',
+        tags: [
+          ['p', 'existing-pk', 'wss://old.relay', 'pet'],
+        ],
+      );
+      final r = actions.follow(
+        existing,
+        'new-pk',
+        relay: 'wss://relay.damus.io/',
+      );
       expect(r.kind, 3);
       expect(r.tags, _tag(['p', 'existing-pk', 'wss://old.relay', 'pet']));
       expect(r.tags, _tag(['p', 'new-pk', 'wss://relay.damus.io/']));
     });
 
     test('follow: adding an already-followed pubkey dedups', () {
-      final existing = _ev('k3', tags: [
-        ['p', 'pk-1', ''],
-      ]);
+      final existing = _ev(
+        'k3',
+        tags: [
+          ['p', 'pk-1', ''],
+        ],
+      );
       final r = actions.follow(existing, 'pk-1');
       expect(r.tags.where((t) => t[1] == 'pk-1').length, 1);
     });

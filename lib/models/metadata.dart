@@ -22,16 +22,16 @@ class Metadata {
   });
 
   factory Metadata.fromJson(Map<String, dynamic> m) => Metadata(
-        name: _asString(m['name']),
-        displayName: _asString(m['display_name']),
-        picture: _asString(m['picture']),
-        about: _asString(m['about']),
-        website: _asString(m['website']),
-        banner: _asString(m['banner']),
-        nip05: _asString(m['nip05']),
-        lud06: _asString(m['lud06']),
-        lud16: _asString(m['lud16']),
-      );
+    name: _asString(m['name']),
+    displayName: _asString(m['display_name']),
+    picture: _asString(m['picture']),
+    about: _asString(m['about']),
+    website: _asString(m['website']),
+    banner: _asString(m['banner']),
+    nip05: _asString(m['nip05']),
+    lud06: _asString(m['lud06']),
+    lud16: _asString(m['lud16']),
+  );
 
   final String? name;
   final String? displayName;
@@ -40,8 +40,8 @@ class Metadata {
   final String? website;
   final String? banner;
   final String? nip05;
-  final String? lud06;  // LNURL pay (bech32)
-  final String? lud16;  // Lightning address (user@domain)
+  final String? lud06; // LNURL pay (bech32)
+  final String? lud16; // Lightning address (user@domain)
 
   /// Preferred display name: display_name > name.
   String? get bestName => displayName ?? name;
@@ -59,5 +59,6 @@ class Metadata {
   }
 
   @override
-  String toString() => 'Metadata(name: $name, picture: ${picture == null ? '∅' : '…'})';
+  String toString() =>
+      'Metadata(name: $name, picture: ${picture == null ? '∅' : '…'})';
 }

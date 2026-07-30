@@ -78,7 +78,16 @@ class RelayConfig extends Table {
   Set<Column> get primaryKey => {url};
 }
 
-@DriftDatabase(tables: [Events, ReplaceableEvents, EventTags, ConfigTable, RelayConfig, Drafts])
+@DriftDatabase(
+  tables: [
+    Events,
+    ReplaceableEvents,
+    EventTags,
+    ConfigTable,
+    RelayConfig,
+    Drafts,
+  ],
+)
 class LocalCache extends _$LocalCache {
   LocalCache(super.e);
 
@@ -154,7 +163,9 @@ class LocalCache extends _$LocalCache {
     required String tagsJson,
     required List<List<dynamic>> tags,
   }) async {
-    final isReplaceable = kind == 0 || kind == 3 ||
+    final isReplaceable =
+        kind == 0 ||
+        kind == 3 ||
         (kind >= 10000 && kind < 20000) ||
         (kind >= 30000 && kind < 40000);
 
@@ -182,7 +193,17 @@ class LocalCache extends _$LocalCache {
     } else {
       await customStatement(
         'INSERT OR IGNORE INTO events(id, pubkey, kind, created_at, content, sig, raw, tags_json, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, pubkey, kind, createdAt, content, sig, raw, tagsJson, DateTime.now().millisecondsSinceEpoch ~/ 1000],
+        [
+          id,
+          pubkey,
+          kind,
+          createdAt,
+          content,
+          sig,
+          raw,
+          tagsJson,
+          DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        ],
       );
       if (kind == 1 || kind == 7) {
         for (var i = 0; i < tags.length; i++) {
@@ -201,18 +222,18 @@ class LocalCache extends _$LocalCache {
 
   Future<List<EventRow>> queryFeed({int limit = 200}) {
     return (select(events)
-      ..where((e) => e.kind.equals(1))
-      ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
-      ..limit(limit)
-    ).get();
+          ..where((e) => e.kind.equals(1))
+          ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
+          ..limit(limit))
+        .get();
   }
 
   Future<List<EventRow>> queryUserPosts(String pubkey, {int limit = 100}) {
     return (select(events)
-      ..where((e) => e.pubkey.equals(pubkey) & e.kind.equals(1))
-      ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
-      ..limit(limit)
-    ).get();
+          ..where((e) => e.pubkey.equals(pubkey) & e.kind.equals(1))
+          ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
+          ..limit(limit))
+        .get();
   }
 
   Future<ReplaceableEvent?> queryMetadata(String pubkey) async {
@@ -228,21 +249,27 @@ class LocalCache extends _$LocalCache {
       'SELECT e.* FROM events e JOIN event_tags t ON e.id = t.event_id WHERE e.kind = 7 AND t.name = ? AND t.value = ?',
       variables: [Variable('e'), Variable(eventId)],
     ).get();
-    return results.map((r) => EventRow(
-      id: r.read<String>('id'),
-      pubkey: r.read<String>('pubkey'),
-      kind: r.read<int>('kind'),
-      createdAt: r.read<int>('created_at'),
-      content: r.read<String>('content'),
-      sig: r.read<String>('sig'),
-      raw: r.read<String>('raw'),
-      tagsJson: r.read<String>('tags_json'),
-      receivedAt: r.read<int>('received_at'),
-    )).toList();
+    return results
+        .map(
+          (r) => EventRow(
+            id: r.read<String>('id'),
+            pubkey: r.read<String>('pubkey'),
+            kind: r.read<int>('kind'),
+            createdAt: r.read<int>('created_at'),
+            content: r.read<String>('content'),
+            sig: r.read<String>('sig'),
+            raw: r.read<String>('raw'),
+            tagsJson: r.read<String>('tags_json'),
+            receivedAt: r.read<int>('received_at'),
+          ),
+        )
+        .toList();
   }
 
   Future<EventRow?> queryEventById(String id) async {
-    final q = select(events)..where((e) => e.id.equals(id))..limit(1);
+    final q = select(events)
+      ..where((e) => e.id.equals(id))
+      ..limit(1);
     final rows = await q.get();
     return rows.isEmpty ? null : rows.first;
   }
@@ -252,17 +279,21 @@ class LocalCache extends _$LocalCache {
       'SELECT e.* FROM events e JOIN event_tags t ON e.id = t.event_id WHERE e.kind = 1 AND t.name = ? AND t.value = ? ORDER BY e.created_at DESC',
       variables: [Variable('e'), Variable(eventId)],
     ).get();
-    return results.map((r) => EventRow(
-      id: r.read<String>('id'),
-      pubkey: r.read<String>('pubkey'),
-      kind: r.read<int>('kind'),
-      createdAt: r.read<int>('created_at'),
-      content: r.read<String>('content'),
-      sig: r.read<String>('sig'),
-      raw: r.read<String>('raw'),
-      tagsJson: r.read<String>('tags_json'),
-      receivedAt: r.read<int>('received_at'),
-    )).toList();
+    return results
+        .map(
+          (r) => EventRow(
+            id: r.read<String>('id'),
+            pubkey: r.read<String>('pubkey'),
+            kind: r.read<int>('kind'),
+            createdAt: r.read<int>('created_at'),
+            content: r.read<String>('content'),
+            sig: r.read<String>('sig'),
+            raw: r.read<String>('raw'),
+            tagsJson: r.read<String>('tags_json'),
+            receivedAt: r.read<int>('received_at'),
+          ),
+        )
+        .toList();
   }
 
   Future<List<EventRow>> searchEvents(String query, {int limit = 100}) async {
@@ -270,31 +301,33 @@ class LocalCache extends _$LocalCache {
       'SELECT e.* FROM events e JOIN events_fts f ON e.rowid = f.rowid WHERE e.kind = 1 AND events_fts MATCH ? ORDER BY e.created_at DESC LIMIT ?',
       variables: [Variable(query), Variable(limit)],
     ).get();
-    return results.map((r) => EventRow(
-      id: r.read<String>('id'),
-      pubkey: r.read<String>('pubkey'),
-      kind: r.read<int>('kind'),
-      createdAt: r.read<int>('created_at'),
-      content: r.read<String>('content'),
-      sig: r.read<String>('sig'),
-      raw: r.read<String>('raw'),
-      tagsJson: r.read<String>('tags_json'),
-      receivedAt: r.read<int>('received_at'),
-    )).toList();
+    return results
+        .map(
+          (r) => EventRow(
+            id: r.read<String>('id'),
+            pubkey: r.read<String>('pubkey'),
+            kind: r.read<int>('kind'),
+            createdAt: r.read<int>('created_at'),
+            content: r.read<String>('content'),
+            sig: r.read<String>('sig'),
+            raw: r.read<String>('raw'),
+            tagsJson: r.read<String>('tags_json'),
+            receivedAt: r.read<int>('received_at'),
+          ),
+        )
+        .toList();
   }
 
   Future<List<ReplaceableEvent>> queryAllMetadata() {
-    return (select(replaceableEvents)
-      ..where((e) => e.kind.equals(0))
-    ).get();
+    return (select(replaceableEvents)..where((e) => e.kind.equals(0))).get();
   }
 
   Future<List<EventRow>> queryRecentReactions({int limit = 500}) {
     return (select(events)
-      ..where((e) => e.kind.equals(7))
-      ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
-      ..limit(limit)
-    ).get();
+          ..where((e) => e.kind.equals(7))
+          ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
+          ..limit(limit))
+        .get();
   }
 
   Future<ReplaceableEvent?> queryContactList(String pubkey) async {
@@ -305,10 +338,26 @@ class LocalCache extends _$LocalCache {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// The user's NIP-51 kind-30015 default Interests list (followed hashtags,
+  /// d-tag ""). Used by FollowedTagsNotifier for cold-start hydration before
+  /// the relay responds.
+  Future<ReplaceableEvent?> queryInterests(String pubkey) async {
+    final q = select(replaceableEvents)
+      ..where(
+        (e) =>
+            e.pubkey.equals(pubkey) & e.kind.equals(30015) & e.dTag.equals(''),
+      )
+      ..limit(1);
+    final rows = await q.get();
+    return rows.isEmpty ? null : rows.first;
+  }
+
   // --- Config ---
 
   Future<String?> readConfig(String key) async {
-    final q = select(configTable)..where((c) => c.key.equals(key))..limit(1);
+    final q = select(configTable)
+      ..where((c) => c.key.equals(key))
+      ..limit(1);
     final rows = await q.get();
     return rows.isEmpty ? null : rows.first.value;
   }
@@ -358,7 +407,12 @@ class LocalCache extends _$LocalCache {
 
   Future<List<RelayConfigData>> getRelays() => select(relayConfig).get();
 
-  Future<void> upsertRelay(String url, {bool read = true, bool write = true, bool enabled = true}) async {
+  Future<void> upsertRelay(
+    String url, {
+    bool read = true,
+    bool write = true,
+    bool enabled = true,
+  }) async {
     await into(relayConfig).insertOnConflictUpdate(
       RelayConfigCompanion.insert(
         url: url,
@@ -376,24 +430,42 @@ class LocalCache extends _$LocalCache {
   // --- Cleanup ---
 
   Future<int> cleanupOldEvents({int ttlDays = 30}) async {
-    final cutoff = DateTime.now().millisecondsSinceEpoch ~/ 1000 - ttlDays * 86400;
-    await customStatement('DELETE FROM events WHERE created_at < ? AND kind != 5', [cutoff]);
-    await customStatement('DELETE FROM event_tags WHERE event_id NOT IN (SELECT id FROM events)', []);
-    await customStatement('DELETE FROM events_fts WHERE rowid NOT IN (SELECT rowid FROM events)', []);
+    final cutoff =
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 - ttlDays * 86400;
+    await customStatement(
+      'DELETE FROM events WHERE created_at < ? AND kind != 5',
+      [cutoff],
+    );
+    await customStatement(
+      'DELETE FROM event_tags WHERE event_id NOT IN (SELECT id FROM events)',
+      [],
+    );
+    await customStatement(
+      'DELETE FROM events_fts WHERE rowid NOT IN (SELECT rowid FROM events)',
+      [],
+    );
     return 0; // drift customStatement doesn't return affected count
   }
 
   Future<void> enforceSizeCap({int maxBytes = 200 * 1024 * 1024}) async {
     final pageResult = await customSelect('PRAGMA page_count').getSingle();
     final sizeResult = await customSelect('PRAGMA page_size').getSingle();
-    final dbSize = (pageResult.data['page_count'] as int) * (sizeResult.data['page_size'] as int);
+    final dbSize =
+        (pageResult.data['page_count'] as int) *
+        (sizeResult.data['page_size'] as int);
     if (dbSize > maxBytes) {
       await customStatement(
         'DELETE FROM events WHERE id IN (SELECT id FROM events ORDER BY created_at ASC LIMIT (SELECT COUNT(*) / 10 FROM events))',
         [],
       );
-      await customStatement('DELETE FROM event_tags WHERE event_id NOT IN (SELECT id FROM events)', []);
-      await customStatement('DELETE FROM events_fts WHERE rowid NOT IN (SELECT rowid FROM events)', []);
+      await customStatement(
+        'DELETE FROM event_tags WHERE event_id NOT IN (SELECT id FROM events)',
+        [],
+      );
+      await customStatement(
+        'DELETE FROM events_fts WHERE rowid NOT IN (SELECT rowid FROM events)',
+        [],
+      );
     }
   }
 
@@ -402,7 +474,9 @@ class LocalCache extends _$LocalCache {
   }
 
   Future<int> get eventCount async {
-    final r = await customSelect('SELECT COUNT(*) as c FROM events').getSingle();
+    final r = await customSelect(
+      'SELECT COUNT(*) as c FROM events',
+    ).getSingle();
     return r.data['c'] as int;
   }
 }
