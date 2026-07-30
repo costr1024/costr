@@ -28,20 +28,29 @@ class ProfilePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final idAsync = ref.watch(identityProvider);
+    final isOwn = pubkey == null;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('我的'),
-        leading: IconButton(
-          icon: const Icon(Icons.info_outline),
-          onPressed: () => context.push('/about'),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => context.push('/settings'),
-          ),
-        ],
-      ),
+      appBar: isOwn
+          ? AppBar(
+              title: const Text('我的'),
+              leading: IconButton(
+                icon: const Icon(Icons.info_outline),
+                onPressed: () => context.push('/about'),
+              ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.settings),
+                  onPressed: () => context.push('/settings'),
+                ),
+              ],
+            )
+          : AppBar(
+              title: const Text('用户'),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => context.pop(),
+              ),
+            ),
       body: idAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object e, _) => Center(child: Text('加载失败：$e')),
