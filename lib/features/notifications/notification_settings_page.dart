@@ -5,7 +5,6 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../app/providers.dart';
 import '../../app/theme.dart';
 
 class NotificationSettingsPage extends ConsumerWidget {
@@ -13,7 +12,6 @@ class NotificationSettingsPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final settings = ref.watch(nsfwSettingsProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('通知设置')),
       body: ListView(
@@ -98,7 +96,7 @@ class _SwitchRow extends StatelessWidget {
               ],
             ),
           ),
-          Switch(value: value, onChanged: onChanged, activeColor: CostrColors.green),
+          Switch(value: value, onChanged: onChanged, activeThumbColor: CostrColors.green),
         ],
       ),
     );

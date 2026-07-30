@@ -5,7 +5,6 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,8 +13,6 @@ import 'package:go_router/go_router.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
-import '../../models/metadata.dart';
-import '../../nostr/relay_pool.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 
@@ -56,7 +53,6 @@ final notificationsProvider =
     StreamProvider.family<List<NotificationItem>, String>((ref, myPubkey) async* {
   final pool = ref.watch(relayPoolProvider);
   final items = <NotificationItem>[];
-  final seen = <String>{};
   final myEventIds = <String>{};
   final myRecentEvents = ref.watch(eventStoreProvider)
       .where((e) => e.pubkey == myPubkey && e.isTextNote)
@@ -224,7 +220,7 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
           Expanded(
             child: async.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (_, __) => const Center(child: Text('通知加载失败')),
+              error: (_, _) => const Center(child: Text('通知加载失败')),
               data: (items) {
                 final filtered = _tab == 'mentions'
                     ? items.where((i) => i.type == NotificationType.mention || i.type == NotificationType.reply).toList()

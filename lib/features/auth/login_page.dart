@@ -12,7 +12,6 @@ import 'package:go_router/go_router.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../nostr/actions.dart';
-import '../../nostr/identity.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/costr_logo.dart';
 
@@ -180,7 +179,6 @@ class _CreateAccountWizard extends ConsumerStatefulWidget {
 class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
   int _step = 0;
   late final String _newNsec;
-  late final String _newNpub;
   bool _backedUp = false;
   bool _busy = false;
   final _nickController = TextEditingController();
@@ -190,8 +188,6 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
     super.initState();
     final privHex = _generatePrivKeyHex();
     _newNsec = hexToNsec(privHex);
-    final id = Identity.fromPrivkeyHex(privHex);
-    _newNpub = id.npub;
   }
 
   @override

@@ -243,27 +243,6 @@ class _AppShellState extends ConsumerState<AppShell> {
   }
 }
 
-/// Notification center placeholder (P4 will fill this in).
-class _NotificationsPlaceholder extends StatelessWidget {
-  const _NotificationsPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('通知')),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            '还没有通知。\n有人 @你、回复、喜欢你的帖子时会出现在这里。',
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// Simple placeholder for not-yet-implemented settings sub-pages.
 class _PlaceholderPage extends StatelessWidget {
   const _PlaceholderPage({required this.title});
