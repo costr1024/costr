@@ -567,6 +567,8 @@ class _FollowsTab extends ConsumerStatefulWidget {
 class _FollowsTabState extends ConsumerState<_FollowsTab> {
   final _controller = TextEditingController();
   String _query = '';
+  /// Selected group name, or null for "全部" (segmented view). See DESIGN §8.
+  String? _selectedGroup;
   Timer? _debounce;
 
   @override
@@ -616,6 +618,12 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
             error: (Object e, _) => Center(child: Text('加载失败：$e')),
             data: (List<FollowGroup> groups) {
               if (groups.isEmpty) return const Center(child: Text('暂无关注'));
+              // If the selected group vanished after a refresh, fall back to 全部.
+              if (_selectedGroup != null &&
+                  !groups.any((g) => g.name == _selectedGroup)) {
+                _selectedGroup = null;
+              }
+              final segmented = _selectedGroup == null;
               // Build a flat metadata cache for all pubkeys across groups.
               final allPks = <String>{};
               for (final g in groups) {
@@ -625,21 +633,26 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
               for (final pk in allPks) {
                 metaCache[pk] = ref.watch(metadataProvider(pk)).value;
               }
-              // Build filtered slivers.
+              // Build filtered sections. Only show per-group section headers
+              // in 全部 (segmented) mode; a single selected group is a flat list.
               final sections = <Widget>[];
               for (final g in groups) {
+                if (!segmented && g.name != _selectedGroup) continue;
                 final filtered = _filterGroup(g.pubkeys, metaCache);
                 if (filtered.isEmpty) continue;
-                sections.add(
-                  Container(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    child: Text(
-                      '${g.name} (${filtered.length})',
-                      style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+                if (segmented) {
+                  sections.add(
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      child: Text(
+                        '${g.name} (${filtered.length})',
+                        style: theme.textTheme.labelMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
+                      ),
                     ),
-                  ),
-                );
+                  );
+                }
                 for (final pk in filtered) {
                   sections.add(_FollowRow(
                     pubkey: pk,
@@ -648,10 +661,18 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
                   ));
                 }
               }
-              if (sections.isEmpty) {
-                return Center(child: Text(_query.isEmpty ? '暂无关注' : '无匹配'));
-              }
-              return ListView(children: sections);
+              final chips = _GroupChipRow(
+                groups: groups,
+                selected: _selectedGroup,
+                onSelected: (v) => setState(() => _selectedGroup = v),
+              );
+              final empty = sections.isEmpty
+                  ? Center(
+                      child: Text(_query.isEmpty ? '暂无关注' : '无匹配'))
+                  : ListView(children: sections);
+              return Column(
+                children: [chips, Expanded(child: empty)],
+              );
             },
           ),
         ),
@@ -735,6 +756,74 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Horizontal group-filter chip row for the 关注 tab (DESIGN §8 / ui_demo.html
+/// `.grp-chips`). "全部" (selected = null) → segmented by group; a specific
+/// group → flat list of only that group.
+class _GroupChipRow extends StatelessWidget {
+  const _GroupChipRow({
+    required this.groups,
+    required this.selected,
+    required this.onSelected,
+  });
+  final List<FollowGroup> groups;
+  final String? selected;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget chip(String label, String? value) {
+      final on = selected == value;
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: GestureDetector(
+          onTap: () => onSelected(value),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: on ? theme.colorScheme.primary : theme.colorScheme.surface,
+              border: Border.all(
+                color: on
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.outline,
+              ),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: on
+                    ? theme.colorScheme.onPrimary
+                    : theme.colorScheme.secondary,
+                fontWeight: on ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border:
+            Border(bottom: BorderSide(color: theme.colorScheme.outline)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            chip('全部', null),
+            for (final g in groups) chip(g.name, g.name),
+          ],
+        ),
+      ),
     );
   }
 }
