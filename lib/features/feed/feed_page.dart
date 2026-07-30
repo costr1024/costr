@@ -68,10 +68,6 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       appBar: AppBar(
         title: const CostrWordmark(logoSize: 26, fontSize: 19),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () => context.push('/search'),
-          ),
           _LanguageDropdown(value: lang),
           _RelayStatusChip(relays: relays.value ?? const []),
         ],
@@ -130,11 +126,6 @@ class _FeedPageState extends ConsumerState<FeedPage> {
             ),
           ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: CostrColors.brand,
-        child: const CostrLogo.light(size: 26),
-        onPressed: () => context.push('/compose'),
       ),
     );
   }

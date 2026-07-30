@@ -17,7 +17,9 @@ import '../features/profile/edit_profile_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/search/search_page.dart';
 import '../models/event.dart';
+import '../widgets/costr_logo.dart';
 import 'providers.dart';
+import 'theme.dart';
 
 final GlobalKey<NavigatorState> rootNavigator =
     GlobalKey<NavigatorState>(debugLabel: 'root');
@@ -74,10 +76,6 @@ final routerProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
-        path: '/search',
-        builder: (BuildContext context, GoRouterState state) => const SearchPage(),
-      ),
-      GoRoute(
         path: '/profile/edit',
         builder: (BuildContext context, GoRouterState state) => const EditProfilePage(),
       ),
@@ -89,6 +87,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         ) =>
             AppShell(navigationShell: navigationShell),
         branches: <StatefulShellBranch>[
+          // Tab 1: 首页 (Feed)
           StatefulShellBranch(
             routes: <RouteBase>[
               GoRoute(
@@ -98,6 +97,27 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
+          // Tab 2: 搜索
+          StatefulShellBranch(
+            routes: <RouteBase>[
+              GoRoute(
+                path: '/search',
+                builder: (BuildContext context, GoRouterState state) =>
+                    const SearchPage(),
+              ),
+            ],
+          ),
+          // Tab 3: 通知 (placeholder — fills with notification center in P4)
+          StatefulShellBranch(
+            routes: <RouteBase>[
+              GoRoute(
+                path: '/notifications',
+                builder: (BuildContext context, GoRouterState state) =>
+                    const _NotificationsPlaceholder(),
+              ),
+            ],
+          ),
+          // Tab 4: 我的 (Profile)
           StatefulShellBranch(
             routes: <RouteBase>[
               GoRoute(
@@ -113,8 +133,8 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 });
 
-/// Shared bottom-nav shell wrapping Feed + Profile. Persists across the two
-/// tabs and preserves each tab's state (scroll position, etc.).
+/// 4-tab bottom-nav shell (首页/搜索/通知/我的) with FAB. Persists each
+/// tab's state via StatefulShellRoute.indexedStack.
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.navigationShell});
   final StatefulNavigationShell navigationShell;
@@ -123,6 +143,11 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: navigationShell,
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: CostrColors.brand,
+        child: const CostrLogo.light(size: 26),
+        onPressed: () => context.push('/compose'),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: navigationShell.currentIndex,
         onDestinationSelected: (int index) {
@@ -131,11 +156,21 @@ class AppShell extends StatelessWidget {
             initialLocation: index == navigationShell.currentIndex,
           );
         },
-        destinations: const <NavigationDestination>[
+        destinations: <NavigationDestination>[
           NavigationDestination(
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home),
             label: '首页',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.search),
+            selectedIcon: Icon(Icons.search),
+            label: '搜索',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.notifications_outlined),
+            selectedIcon: Icon(Icons.notifications),
+            label: '通知',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline),
@@ -147,3 +182,26 @@ class AppShell extends StatelessWidget {
     );
   }
 }
+
+/// Notification center placeholder (P4 will fill this in).
+class _NotificationsPlaceholder extends StatelessWidget {
+  const _NotificationsPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('通知')),
+      body: const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            '还没有通知。\n有人 @你、回复、喜欢你的帖子时会出现在这里。',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Notification center placeholder (P4 will fill this in).
