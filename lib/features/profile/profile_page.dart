@@ -220,6 +220,9 @@ class _Header extends ConsumerWidget {
                 const SizedBox(height: 8),
                 Text(meta!.website!, style: theme.textTheme.bodySmall),
               ],
+              const SizedBox(height: 12),
+              // Profile stats: 关注/关注者 counts.
+              _ProfileStats(pubkey: pubkey),
               if (isSelf) ...[
                 const SizedBox(height: 16),
                 Row(
@@ -247,6 +250,68 @@ class _Header extends ConsumerWidget {
         const Divider(height: 1),
       ],
     );
+  }
+}
+
+/// Profile stats row: 关注 / 关注者 counts (X-style: bold number + secondary
+/// label, see DESIGN.md §3 / ui_demo.html `.prof-stats`). The 关注 count is
+/// the pubkey's own follows ([userGroupedFollowsProvider] summed across
+/// groups); 关注者 is who follows them ([userFollowersProvider]). Shows "—"
+/// while an async value is still loading or errored.
+class _ProfileStats extends ConsumerWidget {
+  const _ProfileStats({required this.pubkey});
+  final String pubkey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final followsAsync = ref.watch(userGroupedFollowsProvider(pubkey));
+    final followersAsync = ref.watch(userFollowersProvider(pubkey));
+    // Sum the pubkey's follows across all groups (默认分组 + custom groups).
+    final followingCount = followsAsync.value?.fold<int>(
+      0,
+      (int s, FollowGroup g) => s + g.pubkeys.length,
+    );
+    final followersCount = followersAsync.value?.length;
+    final theme = Theme.of(context);
+    final numStyle =
+        theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700);
+    final lblStyle = theme.textTheme.bodyMedium
+        ?.copyWith(color: theme.colorScheme.secondary);
+    return Row(
+      children: [
+        _stat(followingCount, '关注', numStyle, lblStyle),
+        const SizedBox(width: 20),
+        _stat(followersCount, '关注者', numStyle, lblStyle),
+      ],
+    );
+  }
+
+  Widget _stat(
+    int? count,
+    String label,
+    TextStyle? numStyle,
+    TextStyle? lblStyle,
+  ) {
+    final n = count == null ? '—' : _formatCount(count);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(n, style: numStyle),
+        const SizedBox(width: 4),
+        Text(label, style: lblStyle),
+      ],
+    );
+  }
+
+  /// X-style compact count: 312 → "312", 1234 → "1.2k", 1_200_000 → "1.2M".
+  static String _formatCount(int n) {
+    if (n < 1000) return '$n';
+    if (n < 1000000) {
+      final v = (n / 100).round() / 10.0;
+      return '${v.toStringAsFixed(1)}k';
+    }
+    final v = (n / 100000).round() / 10.0;
+    return '${v.toStringAsFixed(1)}M';
   }
 }
 
@@ -553,7 +618,9 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
               if (groups.isEmpty) return const Center(child: Text('暂无关注'));
               // Build a flat metadata cache for all pubkeys across groups.
               final allPks = <String>{};
-              for (final g in groups) allPks.addAll(g.pubkeys);
+              for (final g in groups) {
+                allPks.addAll(g.pubkeys);
+              }
               final metaCache = <String, Metadata?>{};
               for (final pk in allPks) {
                 metaCache[pk] = ref.watch(metadataProvider(pk)).value;
