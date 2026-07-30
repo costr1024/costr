@@ -5,7 +5,7 @@ Android、iOS、Windows、macOS、Linux 五端。
 
 ## 当前状态
 
-**v1** —— 私钥登录（NIP-19 `nsec1`）+ 公开帖子信息流（全球流 / 关注流）。暂不支持发帖。
+**v1** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、发帖 / 回复 / 转发 / 引用 / reaction、全球 / 关注信息流、用户主页（帖子 / 回帖 / 关注 / 关注者）、搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux 五端。
 
 已实现：
 - **身份**：粘贴 `nsec1` 私钥 → 用 BIP-340 `getPublicKey` 派生 x-only 公钥 → 存入 OS 安全存储，下次启动自动登录。
@@ -20,17 +20,20 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **发帖（Compose）**：FAB → 撰写页，字数计数（280 软上限提示），签名（`Identity.signEvent`：computeId + bip340 sign + secure-random aux）+ 发布到中继。**EVENT 消息用对象形式**（2026 现行 NIP-01，中继拒绝旧数组形式）；`publishAndWait` 等中继 OK 应答，成功/失败带原因反馈到 UI，并本地 echo 让作者立即看到自己的帖子。**NIP-42 认证**：中继发 `["AUTH", challenge]` 时，pool 用当前身份签 kind-22242（含 `relay`/`challenge` tag）回送；`publishAndWait` 遇 auth-required 自动重试该中继。
 - **媒体/文件上传（Blossom，BUD-02 + BUD-11）**：Compose 内 📷图片 / 🎬视频 / 📎文件 按钮选文件 → 上传到 Blossom 图床。**图片**≤10MB、最多 9 张；**视频**≤100MB、单条；图片视频不可混传；**文件附件**（pdf/zip 等，按 Blossom 服务器支持的类型）≤100MB、最多 4 个、可与图片或视频并存。上传 = 签 kind-24242 auth event（tags `t/x/expiration/size/m`）→ `PUT /upload`（binary + `Authorization: Nostr <base64url of event>`）→ 取回 url。默认服务器 `blossom.ditto.pub` / `media.libernet.app`，失败自动换服务器重试。每个上传媒体生成 NIP-92 `imeta` tag（url/m/x）随帖发布，MarkdownContent 渲染为九宫格图 / 视频 / 文件 chip。
 - **默认中继**：`damus.io` / `nos.lol` / `ditto.pub` / `bostr.online`。前三个接受写入且被广泛订阅（帖子能被其他客户端看到）；`bostr.online` 写入需 NIP-42 认证（已支持）+ **白名单**（你的 key 须在白名单内，否则拒 `restricted: whitelisted`，这是中继策略）。
-- **帖子交互（X 风格）**：每条帖子下方一排 💬回复 / 🔁转发 / ❤️reaction / 📌引用 / ↗分享。
+- **帖子交互（X 风格）**：每条帖子下方一排 💬回复 / 🔁转发 / ❤️reaction / 🔖收藏 / ↗分享。
   - **回复**（NIP-10）：push Compose 带 `replyTo`，签 kind-1 带 root+reply `e` tag + `p` tag。
-  - **转发**（NIP-18）：确认后签 kind-6（content = 被转帖事件 JSON）+ `e`/`p` tag。
+  - **转发**（弹二选一菜单，DESIGN §3.5）：① **转发**（NIP-18）：确认后签 kind-6（content = 被转帖事件 JSON）+ `e`/`p` tag，直接转发不带评论；② **引用**（quote）：push Compose 带 `quoteOf`，签 kind-1，正文带 `nostr:note1` 引用 + `e` mention tag。不做下拉即转发的隐藏入口，弹菜单让用户明确选择。
   - **reaction**（NIP-25 + NIP-30）：表情选择器，签 kind-7（`e`/`p`/`k` tag；unicode emoji 或 `:shortcode:` 自定义表情 + `emoji` tag）。自定义表情的 URL 由 `NostrActions.reaction(customShortcode/customUrl)` 支持。
-  - **引用**（quote）：push Compose 带 `quoteOf`，签 kind-1，正文带 `nostr:note1` 引用 + `e` mention tag。
   - **分享**：复制 `https://njump.me/<note1>`（参考 Amethyst）。
 - **关注**（NIP-02 kind 3 = 主关注列表，最新标准未废弃）：他人主页头像旁"关注"按钮 → 弹分组选择（无分组 / 亲友 / 新闻资讯 / 网友）。拉取当前用户完整 kind-3（保留 relay/petname）→ `NostrActions.follow` 加新 pubkey → 签 kind-3 全量发布 → 刷新关注列表。若选了分组，额外拉取该分组的 NIP-51 kind-30000 列表（`d`=分组名，parameterized replaceable）→ `NostrActions.followCategory` 加 pubkey → 发布。已关注则显示"已关注"。**安全护栏**：拉 kind-3 / kind-30000 不 closeOnEose、等事件或所有中继 EOSE；超时未确认则**中止不发布**（绝不发只含新 pubkey 的列表清空已有）。RelayPool 的 closeOnEose 改成等**所有**已连中继 EOSE 才关。**支持关注自己**（own profile 也显示关注按钮——关注自己后自己的帖会出现在"关注"feed，因关注流用 kind-3 p-tags 作 authors）。
 - **关注者列表 + 列表内关注 + 回关**：个人主页新增"关注者"tab（NIP-12 参数化查询 `{kinds:[3], "#p":[pubkey]}` → 返回引用该 pubkey 的 kind-3，作者即 follower）。关注/关注者列表每行带关注按钮；在**自己的"关注者"tab**里，对方关注了我 → 按钮显示"回关"（未互关）/"已关注"（已互关）；其他列表显示"关注"/"已关注"。
 - **收藏**（NIP-51 kind-10003 + NIP-44）：每条帖子收藏动作，弹"公开书签 / 私人书签"选择。**公开**：`e` tag 加进事件 `tags`（明文，他人可见）；**私人**：`e` tag 加进 `.content`——用 **NIP-44 v2 加密给自己**（secp256k1 ECDH + HKDF + ChaCha20 RFC7539 + HMAC-SHA256，纯 Dart 自实现，通过官方向量验证）。保留现有公开 tag + 私人条目。同样的中止护栏（拉取不确定时不发布，绝不清空书签）。
 - **搜索**：Feed AppBar 搜索图标 → 全局搜索页。**全局搜索**支持搜索帖子（NIP-50 `search` 过滤器 + kind 1）和用户（kind 0 metadata），结果分用户区 + 帖子区，点用户进主页、点帖为 EventCard。搜索中继用 `nostr.wine`（支持 NIP-50，已 live 验证）。**指定用户搜索**放在用户主页：profile 顶部搜索框，客户端过滤该用户的帖子/回帖（按正文子串）。
 - **下拉刷新 + 加载更多**：下拉刷新重新拉取当前流；滚到底自动发 `until: 最旧时间戳` 的 REQ 追加更早的事件。
+- **用户主页（P5 增强）**：header 加 **关注 / 关注者统计行**（数字粗体 + 次色 label，>1k/1M 紧凑格式；关注数取 `userGroupedFollowsProvider` 求和，关注者数取 `userFollowersProvider`，加载中显 `—`）。关注 tab 加 **子 tab：关注的人 / 关注的标签**（仅自己的 profile，标签是本地数据）：关注的人顶部 **分组 chip 横滑**（全部 / 各分组，选全部按分组分段带计数小标题，选某分组平铺）；关注的标签为 chip 网格，点一个跳首页按 tag 过滤。关注的标签存本地 config 表（`followed_tags`，JSON 数组），不发中继。
+- **帖子详情 thread line（P5）**：原帖 + 各回复共用左侧头像列（center x=28），每行 Stack 叠 2px 竖线，头像不透明遮中段 → 视觉呈「线—头像—线」连续；末条回复无下段线。复用 EventCard 不动。
+- **新手引导（P5）**：首次登录后一次性 3 步气泡（发帖 FAB / 通知 tab / 关注一个人，可跳过、可点遮罩跳过）。"已看过"标志存本地 config 表（`onboarding_done`），后续不再弹。
+- **首页偏好持久化（P5）**：上次选的首页 tab（全球 / 关注）和语言过滤重启后恢复——存本地 config 表（`feed_mode` / `language_filter`），不上传中继。开箱默认全球 + 全部语言。
 - **界面与导航**：**中文优先**（面向中国用户，所有 UI 文案中文化；品牌名 costr 保留）。登录页、信息流页（中继状态 chip + 语言下拉 + tag 过滤 chip + 空/错误态）、个人页（头像 + 资料 + npub/pubkey + 登出）、发帖页、帖子详情页、用户主页。Feed/Profile 共用一个底栏导航 shell（`StatefulShellRoute.indexedStack`，保留各 tab 状态）；发帖页 / 用户主页 / 详情页 push 进栈、AppBar 自带返回键。相对时间中文（刚刚/分/时/天）。
 
 ## 设计与交互
@@ -78,8 +81,11 @@ flutter run -d linux        # 或：android / ios / macos / windows
 
 ## 默认中继
 
-- `wss://relay.bostr.online/`
-- `wss://relay.ditto.pub/`
+- `wss://relay.damus.io/`、`wss://nos.lol/`、`wss://relay.ditto.pub/`（接受写入，被广泛订阅）
+- `wss://relay.bostr.online/`（写入需 NIP-42 认证 + 白名单）
+- `wss://nostr.wine/`（支持 NIP-50 全文搜索）、`wss://relay.nostr.net/`、`wss://relay.0xchat.com/`
+
+中继列表同时是 NIP-65（kind 10002）用户元数据——后续会签发发布，让其他客户端按 outbox 模型拉你的帖子。
 
 ## 目录结构
 
@@ -88,34 +94,49 @@ lib/
   main.dart              入口（ProviderScope）
   app/                   app 外壳、主题、路由、providers（riverpod）
     app.dart             以 bootstrap 门控的 MaterialApp.router
-    router.dart          GoRouter + 登录重定向（/login /feed /profile /compose）
+    router.dart          GoRouter + 登录重定向 + AppShell（4-tab 底栏 + FAB + 引导）
     providers.dart       identity、relayPool、bootstrap、eventStore、feedMode、
-                         followingState、feedSubscription、currentFeed、relayStatus
-  models/                NIP-01 Event（解析、p-tag、验签 hook）
+                         followingState、followedTags、socialGraph、
+                         savedFeedMode/savedLanguageFilter、relayStatus
+  models/                NIP-01 Event（解析、p-tag、hashtags、验签 hook）
   nostr/
     identity.dart        Identity（nsec1 → 公钥，bip340）
+    actions.dart         NostrActions（reply/repost/quote/reaction/follow）
+    nip44.dart           NIP-44 v2 加密（纯 Dart 自实现，私人书签用）
     relay_client.dart    WebSocket 中继连接（长生命周期广播，EOSE/NOTICE）
-    relay_pool.dart      RelayPool（去重、重连、重发、RelayState）
+    relay_pool.dart      RelayPool（去重、重连、重发、NIP-42 AUTH）
     event_store.dart     内存存储（去重/排序/上限）
   services/
+    local_cache.dart     drift/SQLite 本地缓存（events/replaceable/event_tags/
+                         events_fts/config/drafts，冷启动 hydration + 30 天清理）
     secure_storage_service.dart   nsec 持久化（libsecret 不可用时降级）
   features/
-    auth/login_page.dart      nsec 输入 + 校验 + 持久化
+    auth/login_page.dart      私钥导入 + 创建账号多步向导
     feed/feed_page.dart       全球/关注切换、列表、状态、空态
-    feed/event_card.dart      npub + 相对时间 + 正文
-    profile/profile_page.dart npub/pubkey + 登出
-    compose/compose_page.dart 占位（发帖后续版本）
+    feed/event_card.dart      npub + 相对时间 + 正文 + 反应 chip
+    feed/post_detail_page.dart 帖子详情 + 回复 thread line
+    profile/profile_page.dart 用户主页（帖子/回帖/关注/关注者 + 统计 + 分组 chip + 标签）
+    compose/compose_page.dart 发帖/回复/引用 + 媒体上传（Blossom）
+    notifications/           通知中心（全部/提及 + 聚合）+ 通知设置
+    search/search_page.dart  全局搜索（帖子/用户）
+    settings/                设置 / 关于 / 账号 / 服务器节点
+  widgets/
+    onboarding_overlay.dart   首次登录 3 步引导
+    markdown_content.dart     帖子正文（九宫格图/视频/mention linkify/折叠）
+    post_actions.dart         X 风格动作栏（回复/转发菜单/reaction/收藏/分享）
+    avatar.dart, costr_logo.dart
   utils/
     bech32_codec.dart    纯 Dart BIP-173 bech32
     nip19.dart           nsec/npub/note ↔ hex
-test/             单元与 widget 测试（58 个）
+    language.dart        帖子语言启发式检测
+test/             单元与 widget 测试（100 个）
 ```
 
 ## 验证
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 58 个测试
+flutter test             # 100 个测试
 flutter build linux --debug
 ```
 
