@@ -21,6 +21,7 @@ import '../features/settings/settings_page.dart';
 import '../features/search/search_page.dart';
 import '../models/event.dart';
 import '../widgets/costr_logo.dart';
+import '../widgets/onboarding_overlay.dart';
 import 'providers.dart';
 import 'theme.dart';
 
@@ -158,50 +159,86 @@ final routerProvider = Provider<GoRouter>((ref) {
 
 /// 4-tab bottom-nav shell (首页/搜索/通知/我的) with FAB. Persists each
 /// tab's state via StatefulShellRoute.indexedStack.
-class AppShell extends StatelessWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.navigationShell});
   final StatefulNavigationShell navigationShell;
 
   @override
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> {
+  /// Whether to show the first-run onboarding overlay. Loaded from the local
+  /// config table on init; flipped off + persisted when the user finishes.
+  bool _showOnboarding = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkOnboarding();
+  }
+
+  Future<void> _checkOnboarding() async {
+    final cache = await ref.read(localCacheProvider.future);
+    final done = await cache.readConfig('onboarding_done');
+    if (mounted && done != '1') {
+      setState(() => _showOnboarding = true);
+    }
+  }
+
+  Future<void> _finishOnboarding() async {
+    setState(() => _showOnboarding = false);
+    final cache = await ref.read(localCacheProvider.future);
+    await cache.writeConfig('onboarding_done', '1');
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: navigationShell,
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: CostrColors.brand,
-        child: const CostrLogo.light(size: 26),
-        onPressed: () => context.push('/compose'),
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: navigationShell.currentIndex,
-        onDestinationSelected: (int index) {
-          navigationShell.goBranch(
-            index,
-            initialLocation: index == navigationShell.currentIndex,
-          );
-        },
-        destinations: <NavigationDestination>[
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: '首页',
+    final shell = widget.navigationShell;
+    return Stack(
+      children: <Widget>[
+        Scaffold(
+          body: shell,
+          floatingActionButton: FloatingActionButton(
+            backgroundColor: CostrColors.brand,
+            child: const CostrLogo.light(size: 26),
+            onPressed: () => context.push('/compose'),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.search),
-            selectedIcon: Icon(Icons.search),
-            label: '搜索',
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: shell.currentIndex,
+            onDestinationSelected: (int index) {
+              shell.goBranch(
+                index,
+                initialLocation: index == shell.currentIndex,
+              );
+            },
+            destinations: const <NavigationDestination>[
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home),
+                label: '首页',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.search),
+                selectedIcon: Icon(Icons.search),
+                label: '搜索',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.notifications_outlined),
+                selectedIcon: Icon(Icons.notifications),
+                label: '通知',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: '我的',
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.notifications_outlined),
-            selectedIcon: Icon(Icons.notifications),
-            label: '通知',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: '我的',
-          ),
-        ],
-      ),
+        ),
+        if (_showOnboarding)
+          OnboardingOverlay(onDone: _finishOnboarding),
+      ],
     );
   }
 }
