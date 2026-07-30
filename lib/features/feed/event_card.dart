@@ -9,7 +9,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
+import '../../app/theme.dart';
 import '../../models/event.dart';
+import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/markdown_content.dart';
 import '../../widgets/post_actions.dart';
@@ -67,6 +69,7 @@ class EventCard extends ConsumerWidget {
                         _PostMenu(event: event),
                       ],
                     ),
+                    if (event.isReply) _ReplyContext(event: event),
                     const SizedBox(height: 6),
                     _NsfwAwareContent(event: event),
                     if (event.hashtags.isNotEmpty) ...[
@@ -114,6 +117,55 @@ class EventCard extends ConsumerWidget {
     if (days < 30) return '$days天';
     return '${eventTime.year}-${eventTime.month.toString().padLeft(2, '0')}'
         '-${eventTime.day.toString().padLeft(2, '0')}';
+  }
+}
+
+/// "回复 @用户" context line above reply posts (X style).
+class _ReplyContext extends ConsumerWidget {
+  const _ReplyContext({required this.event});
+  final Event event;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final parent = event.replyToId;
+    if (parent == null) return const SizedBox.shrink();
+
+    // Find the parent event's author in the store.
+    String? parentPubkey;
+    final store = ref.read(eventStoreProvider);
+    for (final e in store) {
+      if (e.id == parent) { parentPubkey = e.pubkey; break; }
+    }
+    if (parentPubkey == null) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          children: [
+            Icon(Icons.reply, size: 14, color: CostrColors.text3),
+            const SizedBox(width: 4),
+            Text('回复', style: TextStyle(fontSize: 13, color: CostrColors.text3)),
+          ],
+        ),
+      );
+    }
+
+    final meta = ref.watch(metadataProvider(parentPubkey)).value;
+    final name = meta?.bestName ?? shortenEntity(hexToNpub(parentPubkey));
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: InkWell(
+        onTap: () => context.push('/n/$parent'),
+        child: Row(
+          children: [
+            Icon(Icons.reply, size: 14, color: CostrColors.text3),
+            const SizedBox(width: 4),
+            Text('回复 @$name',
+              style: TextStyle(fontSize: 13, color: CostrColors.text3, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
   }
 }
 
