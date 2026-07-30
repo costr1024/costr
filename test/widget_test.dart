@@ -46,7 +46,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(LoginPage), findsOneWidget);
-    expect(find.text('登录'), findsWidgets);
+    expect(find.text('我是新用户，创建账号'), findsOneWidget);
   });
 
   testWidgets('logged in → redirected to FeedPage', (tester) async {

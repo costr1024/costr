@@ -15,6 +15,7 @@ import '../features/feed/feed_page.dart';
 import '../features/feed/post_detail_page.dart';
 import '../features/profile/edit_profile_page.dart';
 import '../features/profile/profile_page.dart';
+import '../features/settings/settings_page.dart';
 import '../features/search/search_page.dart';
 import '../models/event.dart';
 import '../widgets/costr_logo.dart';
@@ -78,6 +79,26 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/profile/edit',
         builder: (BuildContext context, GoRouterState state) => const EditProfilePage(),
+      ),
+      GoRoute(
+        path: '/settings',
+        builder: (BuildContext context, GoRouterState state) => const SettingsPage(),
+      ),
+      GoRoute(
+        path: '/about',
+        builder: (BuildContext context, GoRouterState state) => const AboutPage(),
+      ),
+      GoRoute(
+        path: '/settings/notifications',
+        builder: (BuildContext context, GoRouterState state) => const _PlaceholderPage(title: '通知设置'),
+      ),
+      GoRoute(
+        path: '/settings/account',
+        builder: (BuildContext context, GoRouterState state) => const _PlaceholderPage(title: '账号与身份'),
+      ),
+      GoRoute(
+        path: '/settings/relays',
+        builder: (BuildContext context, GoRouterState state) => const _PlaceholderPage(title: '服务器节点'),
       ),
       StatefulShellRoute.indexedStack(
         builder: (
@@ -202,6 +223,17 @@ class _NotificationsPlaceholder extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Simple placeholder for not-yet-implemented settings sub-pages.
+class _PlaceholderPage extends StatelessWidget {
+  const _PlaceholderPage({required this.title});
+  final String title;
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(title)),
+    body: Center(child: Text('$title（即将支持）', style: Theme.of(context).textTheme.bodyMedium)),
+  );
 }
 
 /// Notification center placeholder (P4 will fill this in).
