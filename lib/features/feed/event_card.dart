@@ -22,10 +22,12 @@ class EventCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final meta = ref.watch(metadataProvider(event.pubkey)).value;
     final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: InkWell(
-        onTap: () => context.push('/n/${event.id}'),
+    return InkWell(
+      onTap: () => context.push('/n/${event.id}'),
+      child: Container(
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: Color(0xFFEFF3F4))),
+        ),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
@@ -41,60 +43,59 @@ class EventCard extends ConsumerWidget {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: GestureDetector(
-                          onTap: () => context.push('/u/${event.pubkey}'),
-                          child: Text(
-                            displayLabelFor(event.pubkey, meta),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: GestureDetector(
+                            onTap: () => context.push('/u/${event.pubkey}'),
+                            child: Text(
+                              displayLabelFor(event.pubkey, meta),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _relativeTime(event.createdAt),
-                        style: theme.textTheme.labelSmall,
-                      ),
-                      _PostMenu(event: event),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  _NsfwAwareContent(event: event),
-                  if (event.hashtags.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        for (final tag in event.hashtags)
-                          ActionChip(
-                            label: Text('#$tag'),
-                            visualDensity: VisualDensity.compact,
-                            onPressed: () => ref
-                                .read(tagFilterProvider.notifier)
-                                .set(tag),
-                          ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _relativeTime(event.createdAt),
+                          style: theme.textTheme.labelSmall,
+                        ),
+                        _PostMenu(event: event),
                       ],
                     ),
+                    const SizedBox(height: 6),
+                    _NsfwAwareContent(event: event),
+                    if (event.hashtags.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          for (final tag in event.hashtags)
+                            ActionChip(
+                              label: Text('#$tag'),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () => ref
+                                  .read(tagFilterProvider.notifier)
+                                  .set(tag),
+                            ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 2),
+                    _ReactionChips(eventId: event.id),
+                    const SizedBox(height: 2),
+                    PostActions(event: event),
                   ],
-                  const SizedBox(height: 2),
-                  // Reaction display (NIP-25 kind-7).
-                  _ReactionChips(eventId: event.id),
-                  const SizedBox(height: 2),
-                  PostActions(event: event),
-                ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
       ),
     );
   }

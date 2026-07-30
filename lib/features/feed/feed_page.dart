@@ -7,7 +7,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
+import '../../app/theme.dart';
 import '../../nostr/relay_pool.dart';
+import '../../widgets/costr_logo.dart';
 import 'event_card.dart';
 
 class FeedPage extends ConsumerStatefulWidget {
@@ -64,7 +66,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('costr'),
+        title: const CostrWordmark(logoSize: 26, fontSize: 19),
         actions: [
           IconButton(
             icon: const Icon(Icons.search),
@@ -129,9 +131,9 @@ class _FeedPageState extends ConsumerState<FeedPage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        icon: const Icon(Icons.edit),
-        label: const Text('发帖'),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: CostrColors.brand,
+        child: const CostrLogo.light(size: 26),
         onPressed: () => context.push('/compose'),
       ),
     );
