@@ -296,12 +296,31 @@ final eventStoreProvider =
 
 enum FeedMode { global, following }
 
+/// Last-used feed mode, persisted in the config table (key `feed_mode`).
+/// Restored into [FeedModeNotifier] on startup so the app reopens on the
+/// tab (全球 / 关注) the user last selected.
+final savedFeedModeProvider = FutureProvider<FeedMode>((ref) async {
+  final cache = await ref.read(localCacheProvider.future);
+  final raw = await cache.readConfig('feed_mode');
+  return raw == 'following' ? FeedMode.following : FeedMode.global;
+});
+
 class FeedModeNotifier extends Notifier<FeedMode> {
   @override
-  FeedMode build() => FeedMode.global;
+  FeedMode build() {
+    // Default to 全球 until the persisted value loads; the Notifier rebuilds
+    // (snapping to the saved mode) once [savedFeedModeProvider] resolves.
+    return ref.watch(savedFeedModeProvider).value ?? FeedMode.global;
+  }
 
   void set(FeedMode mode) {
-    if (mode != state) state = mode;
+    if (mode == state) return;
+    state = mode;
+    // Persist (fire-and-forget; SQLite write is ms-fast).
+    final value = mode == FeedMode.following ? 'following' : 'global';
+    ref.read(localCacheProvider.future).then(
+          (cache) => cache.writeConfig('feed_mode', value),
+        );
   }
 }
 
@@ -312,11 +331,40 @@ final feedModeProvider =
 
 enum LanguageFilter { all, zh, en, ja }
 
+/// Last-used language filter, persisted in the config table (key
+/// `language_filter`). Restored into [LanguageFilterNotifier] on startup.
+final savedLanguageFilterProvider = FutureProvider<LanguageFilter>((ref) async {
+  final cache = await ref.read(localCacheProvider.future);
+  final raw = await cache.readConfig('language_filter');
+  switch (raw) {
+    case 'zh':
+      return LanguageFilter.zh;
+    case 'en':
+      return LanguageFilter.en;
+    case 'ja':
+      return LanguageFilter.ja;
+    default:
+      return LanguageFilter.all;
+  }
+});
+
 class LanguageFilterNotifier extends Notifier<LanguageFilter> {
   @override
-  LanguageFilter build() => LanguageFilter.all;
+  LanguageFilter build() =>
+      ref.watch(savedLanguageFilterProvider).value ?? LanguageFilter.all;
+
   void set(LanguageFilter f) {
-    if (f != state) state = f;
+    if (f == state) return;
+    state = f;
+    final value = switch (f) {
+      LanguageFilter.zh => 'zh',
+      LanguageFilter.en => 'en',
+      LanguageFilter.ja => 'ja',
+      LanguageFilter.all => 'all',
+    };
+    ref.read(localCacheProvider.future).then(
+          (cache) => cache.writeConfig('language_filter', value),
+        );
   }
 }
 
