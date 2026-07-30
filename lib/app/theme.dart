@@ -73,11 +73,18 @@ class AppTheme {
           color: CostrColors.text,
         ),
       ),
-      navigationBarTheme: const NavigationBarThemeData(
+      navigationBarTheme: NavigationBarThemeData(
         backgroundColor: CostrColors.bg,
         indicatorColor: Colors.transparent,
-        labelTextStyle: WidgetStatePropertyAll(TextStyle(fontSize: 10)),
+        labelTextStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 10, color: CostrColors.text),
+        ),
         height: 64,
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const IconThemeData(color: CostrColors.brand, size: 26);
+          }
+          return const IconThemeData(color: CostrColors.text3, size: 26);
+        }),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
