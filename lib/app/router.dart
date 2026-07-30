@@ -13,6 +13,8 @@ import '../features/auth/login_page.dart';
 import '../features/compose/compose_page.dart';
 import '../features/feed/feed_page.dart';
 import '../features/feed/post_detail_page.dart';
+import '../features/notifications/notification_settings_page.dart';
+import '../features/notifications/notifications_page.dart';
 import '../features/profile/edit_profile_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/settings/settings_page.dart';
@@ -90,7 +92,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/settings/notifications',
-        builder: (BuildContext context, GoRouterState state) => const _PlaceholderPage(title: '通知设置'),
+        builder: (BuildContext context, GoRouterState state) => const NotificationSettingsPage(),
       ),
       GoRoute(
         path: '/settings/account',
@@ -134,7 +136,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/notifications',
                 builder: (BuildContext context, GoRouterState state) =>
-                    const _NotificationsPlaceholder(),
+                    const NotificationsPage(),
               ),
             ],
           ),
