@@ -82,6 +82,14 @@ dev_dependencies:
   # Code generation for drift (local cache).
   build_runner: ^2.4.0
   drift_dev: ^2.34.0
+  # Generate app launcher icons.
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/costr_icon.png"
+  min_sdk_android: 21
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
