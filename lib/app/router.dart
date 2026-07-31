@@ -178,10 +178,47 @@ class _AppShellState extends ConsumerState<AppShell> {
   /// config table on init; flipped off + persisted when the user finishes.
   bool _showOnboarding = false;
 
+  /// Compose FAB position (top-left origin within the shell stack). Null =
+  /// default bottom-right. Persisted to the local config table so the user's
+  /// chosen spot survives across sessions.
+  Offset? _fabOffset;
+
+  static const double _fabSize = 56;
+  static const double _fabMargin = 12;
+  static const double _navBarHeight = 80; // NavigationBar default height.
+
   @override
   void initState() {
     super.initState();
     _checkOnboarding();
+    _loadFabOffset();
+  }
+
+  Future<void> _loadFabOffset() async {
+    final cache = await ref.read(localCacheProvider.future);
+    final x = await cache.readConfig('fab_x');
+    final y = await cache.readConfig('fab_y');
+    if (!mounted) return;
+    final dx = double.tryParse(x ?? '');
+    final dy = double.tryParse(y ?? '');
+    if (dx != null && dy != null) {
+      setState(() => _fabOffset = Offset(dx, dy));
+    }
+  }
+
+  Future<void> _persistFabOffset() async {
+    final pos = _fabOffset;
+    if (pos == null) return;
+    final cache = await ref.read(localCacheProvider.future);
+    await cache.writeConfig('fab_x', pos.dx.toStringAsFixed(1));
+    await cache.writeConfig('fab_y', pos.dy.toStringAsFixed(1));
+  }
+
+  Offset _defaultFabOffset(Size size, EdgeInsets pad) {
+    return Offset(
+      size.width - _fabSize - _fabMargin,
+      size.height - _navBarHeight - pad.bottom - _fabSize - _fabMargin,
+    );
   }
 
   Future<void> _checkOnboarding() async {
@@ -201,15 +238,23 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   Widget build(BuildContext context) {
     final shell = widget.navigationShell;
+    final mq = MediaQuery.of(context);
+    final size = mq.size;
+    final pad = mq.padding;
+    // Resolve + clamp the FAB position so it stays fully on-screen across
+    // rotations / keyboard insets.
+    final base = _fabOffset ?? _defaultFabOffset(size, pad);
+    final pos = Offset(
+      base.dx.clamp(_fabMargin, size.width - _fabSize - _fabMargin),
+      base.dy.clamp(
+        pad.top + _fabMargin,
+        size.height - _navBarHeight - pad.bottom - _fabSize - _fabMargin,
+      ),
+    );
     return Stack(
       children: <Widget>[
         Scaffold(
           body: shell,
-          floatingActionButton: FloatingActionButton(
-            backgroundColor: CostrColors.brand,
-            child: const CostrLogo.light(size: 26),
-            onPressed: () => context.push('/compose'),
-          ),
           bottomNavigationBar: NavigationBar(
             selectedIndex: shell.currentIndex,
             onDestinationSelected: (int index) {
@@ -242,8 +287,43 @@ class _AppShellState extends ConsumerState<AppShell> {
             ],
           ),
         ),
+        // Draggable compose FAB. Tap = open compose; drag = reposition
+        // (persisted). Lets the user move it off any sheet/menu/popup that
+        // would otherwise be occluded by a fixed bottom-right button.
+        Positioned(left: pos.dx, top: pos.dy, child: _buildFab(context)),
         if (_showOnboarding) OnboardingOverlay(onDone: _finishOnboarding),
       ],
+    );
+  }
+
+  Widget _buildFab(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      // Tap and pan compete in the gesture arena: a touch that moves beyond
+      // the slop becomes a drag (onTap won't fire); a quick tap fires onTap.
+      onTap: () => context.push('/compose'),
+      onPanUpdate: (details) {
+        setState(() {
+          _fabOffset = (_fabOffset ?? Offset.zero) + details.delta;
+        });
+      },
+      onPanEnd: (_) => _persistFabOffset(),
+      child: Container(
+        width: _fabSize,
+        height: _fabSize,
+        decoration: BoxDecoration(
+          color: CostrColors.brand,
+          shape: BoxShape.circle,
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x33000000),
+              blurRadius: 6,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: const CostrLogo.light(size: 26),
+      ),
     );
   }
 }

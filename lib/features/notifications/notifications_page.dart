@@ -28,6 +28,7 @@ class NotificationItem {
     required this.time,
     this.preview,
     this.targetEventId,
+    this.sourceEventId,
     this.eventContent,
     this.reactionEmoji,
     required this.id,
@@ -38,7 +39,13 @@ class NotificationItem {
   final int extraCount;
   final int time;
   final String? preview;
+  /// The event the notification points at: for replies/reactions/reposts the
+  /// user's own post that was interacted with; null for pure mentions.
   final String? targetEventId;
+  /// The id of the event that *triggered* the notification (the mentioner's
+  /// own post, the reply, etc.). Used as a navigation fallback for mentions,
+  /// which have no `targetEventId` — tapping a mention opens this post.
+  final String? sourceEventId;
   final String? eventContent;
   final String? reactionEmoji;
   final String id;
@@ -119,6 +126,7 @@ final notificationsProvider =
               time: e.createdAt,
               preview: existing.preview,
               targetEventId: existing.targetEventId,
+              sourceEventId: existing.sourceEventId,
               eventContent: existing.eventContent,
               reactionEmoji: existing.reactionEmoji,
               id: existing.id,
@@ -136,6 +144,7 @@ final notificationsProvider =
               time: e.createdAt,
               preview: e.content.isNotEmpty ? e.content : null,
               targetEventId: referencedId,
+              sourceEventId: e.id,
               eventContent: e.content,
               reactionEmoji: e.kind == 7
                   ? (e.content.isEmpty ? '+' : e.content)
@@ -333,8 +342,12 @@ class _NotificationTile extends ConsumerWidget {
 
     return InkWell(
       onTap: () {
-        if (item.targetEventId != null) {
-          context.push('/n/${item.targetEventId}');
+        // Replies/reactions/reposts point at the user's own post (targetEventId);
+        // pure mentions have no target, so fall back to the mentioner's own post
+        // (sourceEventId) — tapping a mention opens the post that mentioned you.
+        final target = item.targetEventId ?? item.sourceEventId;
+        if (target != null) {
+          context.push('/n/$target');
         } else if (item.type == NotificationType.follow) {
           // Go to my followers tab.
           context.go('/profile');
