@@ -278,10 +278,27 @@ class _ReactionChips extends ConsumerWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(entry.key, style: const TextStyle(fontSize: 13)),
-                  if (entry.value > 1) ...[
+                  if (entry.value.emojiUrl != null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 3),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: Image.network(
+                          entry.value.emojiUrl!,
+                          width: 16,
+                          height: 16,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                          errorBuilder: (_, Object e, _) =>
+                              Text(entry.key, style: const TextStyle(fontSize: 13)),
+                        ),
+                      ),
+                    )
+                  else
+                    Text(entry.key, style: const TextStyle(fontSize: 13)),
+                  if (entry.value.count > 1) ...[
                     const SizedBox(width: 2),
-                    Text('${entry.value}', style: theme.textTheme.labelSmall),
+                    Text('${entry.value.count}', style: theme.textTheme.labelSmall),
                   ],
                 ],
               ),

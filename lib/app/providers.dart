@@ -1375,23 +1375,42 @@ final searchUsersProvider = FutureProvider.family<List<UserResult>, String>((
 /// Reactions (NIP-25 kind-7) for an event. Reads from the EventStore (kind-7
 /// events arrive as part of the global feed REQ {kinds:[1,7]}). No separate
 /// #e parameterized query needed (most relays don't support #e anyway).
-final reactionsProvider = Provider.family<Map<String, int>, String>((
+final reactionsProvider = Provider.family<
+    Map<String, ({int count, String? emojiUrl})>, String>((
   ref,
   eventId,
 ) {
   final store = ref.watch(eventStoreProvider);
-  final counts = <String, int>{};
+  final tallies = <String, ({int count, String? emojiUrl})>{};
   for (final e in store) {
     if (e.kind != 7) continue;
     for (final t in e.tags) {
       if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
         final key = e.content.isEmpty ? '+' : e.content;
-        counts[key] = (counts[key] ?? 0) + 1;
+        final prev = tallies[key];
+        // For NIP-30 custom-emoji reactions (content `:shortcode:`), surface
+        // the image URL from the kind-7 `["emoji", shortcode, url]` tag so the
+        // chip can render the image instead of the raw `:shortcode:` text.
+        var url = prev?.emojiUrl;
+        if (url == null) {
+          for (final et in e.tags) {
+            if (et.length >= 3 &&
+                et[0] == 'emoji' &&
+                et[2] is String) {
+              url = et[2] as String;
+              break;
+            }
+          }
+        }
+        tallies[key] = (
+          count: (prev?.count ?? 0) + 1,
+          emojiUrl: url,
+        );
         break;
       }
     }
   }
-  return counts;
+  return tallies;
 });
 
 /// Replies (kind-1) to an event. REQ {kinds:[1], "#e":[eventId]}.

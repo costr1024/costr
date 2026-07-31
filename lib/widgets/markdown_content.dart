@@ -119,17 +119,65 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
 
     final theme = Theme.of(context);
     final children = <Widget>[];
+
+    // NIP-30 custom emoji: collect `["emoji", shortcode, url]` tags and
+    // replace `:shortcode:` occurrences in text with inline markdown images.
+    // Done after tokenization so the 九宫格 image-grouper doesn't pull emoji
+    // into a grid — they stay inline within their text segment.
+    final emojiMap = <String, String>{};
+    for (final t in event.tags) {
+      if (t.length >= 3 &&
+          t[0] == 'emoji' &&
+          t[1] is String &&
+          t[2] is String) {
+        emojiMap[t[1] as String] = t[2] as String;
+      }
+    }
+    final emojiUrlSet = emojiMap.values.toSet();
+    String replaceEmoji(String text) {
+      if (emojiMap.isEmpty) return text;
+      return text.replaceAllMapped(
+        RegExp(r':([a-zA-Z0-9_+-]+):'),
+        (Match m) {
+          final url = emojiMap[m[1]];
+          return url == null ? m[0]! : '![${m[1]}]($url)';
+        },
+      );
+    }
+
+    Widget sizedImageBuilder(MarkdownImageConfig c) {
+      // Inline custom-emoji image: render small so it sits inline with text.
+      final isEmoji = (c.alt != null && emojiMap.containsKey(c.alt!)) ||
+          emojiUrlSet.contains(c.uri.toString());
+      if (isEmoji) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Image.network(
+            c.uri.toString(),
+            width: 22,
+            height: 22,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            errorBuilder: (_, Object e, _) =>
+                Text(':${c.alt ?? ''}:'),
+          ),
+        );
+      }
+      // Other images are rendered via the 九宫格 / imeta pipeline; shrink
+      // here to avoid duplicating them inline.
+      return const SizedBox.shrink();
+    }
+
     for (final seg in segments) {
       if (seg is TextSeg) {
         // Strip bare media URLs from text (they're rendered via imeta extra).
-        final cleaned = seg.text.replaceAll(_bareMediaUrl, '').trim();
+        final cleaned = replaceEmoji(seg.text.replaceAll(_bareMediaUrl, '').trim());
         if (cleaned.isEmpty) continue;
         children.add(
           MarkdownBody(
             data: cleaned,
             extensionSet: ExtensionSet.gitHubFlavored,
-            sizedImageBuilder: (MarkdownImageConfig _) =>
-                const SizedBox.shrink(),
+            sizedImageBuilder: sizedImageBuilder,
             onTapLink: (String text, String? href, String? title) {
               if (href == null) return;
               if (href.startsWith('nostr:')) {
