@@ -2057,6 +2057,95 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
   yield* ctrl.stream;
 });
 
+/// Per-pubkey NIP-38 user status (kind 30315, `d`="general") — the short text
+/// shown under a user's name in the feed / profile (Amethyst pattern). A
+/// StreamProvider so it yields the SQLite-cached value instantly then
+/// async-refreshes from relays (like [metadataProvider]). Cached to the
+/// replaceable-events table (pubkey+kind+d). Returns null when the user has
+/// no status. Editable from the profile page (signs kind 30315 + publishes).
+final userStatusProvider = StreamProvider.family<String?, String>((
+  ref,
+  pubkey,
+) async* {
+  String? cached;
+  var cachedCreatedAt = -1;
+  final cache = ref.read(localCacheProvider).value;
+  if (cache != null) {
+    final row = await cache.queryReplaceable(
+      pubkey,
+      Event.kindUserStatus,
+      dTag: 'general',
+    );
+    if (row != null) {
+      cached = row.content.isEmpty ? null : row.content;
+      cachedCreatedAt = row.createdAt;
+    }
+  }
+  if (cached != null) yield cached;
+
+  final pool = ref.read(relayPoolProvider);
+  final ctrl = StreamController<String?>();
+  late StreamSubscription<Event> sub;
+  late StreamSubscription<String> eoseSub;
+  var relayHit = false;
+  sub = pool.rawEvents.listen((e) {
+    if (e.pubkey != pubkey || e.kind != Event.kindUserStatus) return;
+    if (e.createdAt < cachedCreatedAt) return;
+    // Only the "general" d-tag status.
+    final d = e.tags.firstWhere(
+      (t) => t.length >= 2 && t[0] == 'd' && t[1] is String,
+      orElse: () => const ['d', ''],
+    );
+    if ((d[1] as String) != 'general') return;
+    cachedCreatedAt = e.createdAt;
+    relayHit = true;
+    final text = e.content.isEmpty ? null : e.content;
+    final db = ref.read(localCacheProvider).value;
+    if (db != null) {
+      unawaited(
+        db.writeEvent(
+          id: e.id,
+          pubkey: e.pubkey,
+          kind: e.kind,
+          createdAt: e.createdAt,
+          content: e.content,
+          sig: e.sig,
+          raw: jsonEncode(e.toWireObject()),
+          tagsJson: jsonEncode(e.tags),
+          tags: e.tags,
+        ),
+      );
+    }
+    ctrl.add(text);
+  });
+  final subId = nextSubId('status');
+  pool.request(
+    subId,
+    <String, dynamic>{
+      'authors': [pubkey],
+      'kinds': [Event.kindUserStatus],
+      '#d': ['general'],
+      'limit': 1,
+    },
+    closeOnEose: true,
+  );
+  void finish() {
+    if (ctrl.isClosed) return;
+    if (!relayHit && cached == null) ctrl.add(null);
+    ctrl.close();
+  }
+
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) => finish());
+  final timer = Timer(const Duration(seconds: 8), finish);
+  ref.onDispose(() {
+    sub.cancel();
+    eoseSub.cancel();
+    timer.cancel();
+    ctrl.close();
+  });
+  yield* ctrl.stream;
+});
+
 /// Bulk-prefetch profile metadata (kind 0) for the whole social graph
 /// (follows + followers + self) so avatars/profiles resolve instantly on
 /// first paint. One REQ per ~200-author chunk (relay author-list limit).

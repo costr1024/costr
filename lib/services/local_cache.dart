@@ -245,6 +245,21 @@ class LocalCache extends _$LocalCache {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// Generic replaceable-event lookup by pubkey + kind + `d` tag (for
+  /// NIP-51 kind-30000 follow sets, NIP-38 kind-30315 user statuses, …).
+  /// [dTag] defaults to '' (the default list / general status).
+  Future<ReplaceableEvent?> queryReplaceable(
+    String pubkey,
+    int kind, {
+    String dTag = '',
+  }) async {
+    final q = select(replaceableEvents)
+      ..where((e) => e.pubkey.equals(pubkey) & e.kind.equals(kind) & e.dTag.equals(dTag))
+      ..limit(1);
+    final rows = await q.get();
+    return rows.isEmpty ? null : rows.first;
+  }
+
   Future<List<EventRow>> queryReactions(String eventId) async {
     final results = await customSelect(
       'SELECT e.* FROM events e JOIN event_tags t ON e.id = t.event_id WHERE e.kind = 7 AND t.name = ? AND t.value = ?',

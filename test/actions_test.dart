@@ -81,6 +81,16 @@ void main() {
       expect(id.verifyEventSignature(id: r.id, sig: r.sig), isTrue);
     });
 
+    test('userStatus (NIP-38 kind 30315, d=general): content = status text', () {
+      final s = actions.userStatus('忙碌中');
+      expect(s.kind, 30315);
+      expect(s.content, '忙碌中');
+      expect(s.tags, _tag(['d', 'general']));
+      expect(id.verifyEventSignature(id: s.id, sig: s.sig), isTrue);
+      // Empty text clears the status.
+      expect(actions.userStatus('').content, '');
+    });
+
     test('quote: kind 1 with nostr:note1 ref + e mention tag', () {
       final quoted = _ev('a' * 64);
       final r = actions.quote(quoted, 'well said');

@@ -107,6 +107,10 @@ class Event {
   /// NIP-23 long-form content (an article). Shown in the feed like a post.
   static const int kindLongForm = 30023;
 
+  /// NIP-38 user status (a parameterized-replaceable event; `d` tag "general"
+  /// holds the short text status shown under a user's name).
+  static const int kindUserStatus = 30315;
+
   bool get isTextNote => kind == kindTextNote;
   bool get isContactList => kind == kindContactList;
   bool get isRepost => kind == kindRepost || kind == kindGenericRepost;

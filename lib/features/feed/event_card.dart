@@ -27,6 +27,7 @@ class EventCard extends ConsumerWidget {
     // reposted note (Amethyst pattern), not as a bare text card.
     if (event.isRepost) return _RepostView(event: event);
     final meta = ref.watch(metadataProvider(event.pubkey)).value;
+    final status = ref.watch(userStatusProvider(event.pubkey)).value;
     final theme = Theme.of(context);
     return InkWell(
       onTap: () => context.push('/n/${event.id}'),
@@ -73,6 +74,8 @@ class EventCard extends ConsumerWidget {
                         _PostMenu(event: event),
                       ],
                     ),
+                    if (status != null && status.isNotEmpty)
+                      _StatusLine(text: status),
                     if (event.isReply) _ReplyContext(event: event),
                     const SizedBox(height: 6),
                     _NsfwAwareContent(event: event),
@@ -117,6 +120,31 @@ class EventCard extends ConsumerWidget {
     if (days < 30) return '$days天';
     return '${eventTime.year}-${eventTime.month.toString().padLeft(2, '0')}'
         '-${eventTime.day.toString().padLeft(2, '0')}';
+  }
+}
+
+/// NIP-38 user status shown under the author name in the feed (Amethyst
+/// pattern). Single line; if it overflows, it scrolls horizontally instead of
+/// ellipsizing (so the full status is reachable, not truncated).
+class _StatusLine extends StatelessWidget {
+  const _StatusLine({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Text(
+        text,
+        maxLines: 1,
+        softWrap: false,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: CostrColors.text3,
+          fontStyle: FontStyle.italic,
+        ),
+      ),
+    );
   }
 }
 

@@ -161,6 +161,19 @@ class NostrActions {
     return id.signEvent(kind: 10002, content: '', tags: tags);
   }
 
+  /// NIP-38 user status (kind 30315, `d`="general") — the short text shown
+  /// under the user's name. Parameterized-replaceable (re-publishing replaces
+  /// the prior status). Empty [text] clears the status.
+  Event userStatus(String text) {
+    return id.signEvent(
+      kind: 30315,
+      content: text,
+      tags: const [
+        ['d', 'general'],
+      ],
+    );
+  }
+
   /// Quote (kind-1 referencing [quoted]). The user's [content] is followed by a
   /// `nostr:note1…` reference; an `e` mention tag + `p` tag reference the quote.
   /// [extraTags] (e.g. imeta) are appended.

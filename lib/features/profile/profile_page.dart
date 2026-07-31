@@ -2,6 +2,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +17,7 @@ import '../../app/theme.dart';
 import '../../models/event.dart';
 import '../../models/metadata.dart';
 import '../../nostr/identity.dart';
+import '../../nostr/actions.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 import 'user_post_item.dart';
@@ -141,6 +143,7 @@ class _Header extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final status = ref.watch(userStatusProvider(pubkey)).value;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -217,6 +220,26 @@ class _Header extends ConsumerWidget {
                     _FollowButton(pubkey: pubkey),
                 ],
               ),
+              // NIP-38 user status — 2 lines under the name. Self sees an
+              // inline edit field (no popup); others see read-only italic text.
+              if (isSelf)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: _StatusEditField(pubkey: pubkey, current: status),
+                )
+              else if (status != null && status.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    status,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: CostrColors.text3,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
               // Row 3: NIP-05 (wraps if long). The badge distinguishes
               // verified (server confirmed the pubkey) from unverified
               // (failed / couldn't check) — see _Nip05Badge.
@@ -1383,6 +1406,110 @@ class _FollowRow extends ConsumerWidget {
       ),
       trailing: _FollowButton(pubkey: pubkey, followsMe: followsMe),
       onTap: onTap,
+    );
+  }
+}
+
+/// Inline NIP-38 status editor for the user's own profile — a direct text
+/// field (no popup) under the name, above the about. maxLength 100 (NIP-38
+/// statuses are short). Enter / check icon signs kind-30315 (d="general") +
+/// publishes; publishAndWait already does per-relay 1/2/3s retry. Local cache
+/// is written + [userStatusProvider] invalidated so the new status shows
+/// instantly.
+class _StatusEditField extends ConsumerStatefulWidget {
+  const _StatusEditField({required this.pubkey, this.current});
+  final String pubkey;
+  final String? current;
+
+  @override
+  ConsumerState<_StatusEditField> createState() => _StatusEditFieldState();
+}
+
+class _StatusEditFieldState extends ConsumerState<_StatusEditField> {
+  late final TextEditingController _c =
+      TextEditingController(text: widget.current ?? '');
+  bool _saving = false;
+  bool _focused = false;
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StatusEditField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Sync from an async refresh only while not actively editing.
+    final next = widget.current ?? '';
+    if (!_focused && next != _c.text) {
+      _c.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: next.length),
+      );
+    }
+  }
+
+  Future<void> _save() async {
+    final id = ref.read(identityProvider).value;
+    if (id == null) return;
+    final text = _c.text.trim();
+    setState(() => _saving = true);
+    final signed = NostrActions(id).userStatus(text);
+    await ref.read(relayPoolProvider).publishAndWait(signed);
+    // Local cache so it shows instantly + offline.
+    final db = await ref.read(localCacheProvider.future);
+    await db.writeEvent(
+      id: signed.id,
+      pubkey: signed.pubkey,
+      kind: signed.kind,
+      createdAt: signed.createdAt,
+      content: signed.content,
+      sig: signed.sig,
+      raw: jsonEncode(signed.toWireObject()),
+      tagsJson: jsonEncode(signed.tags),
+      tags: signed.tags,
+    );
+    ref.invalidate(userStatusProvider(widget.pubkey));
+    if (mounted) setState(() => _saving = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Focus(
+      onFocusChange: (f) => setState(() => _focused = f),
+      child: TextField(
+        controller: _c,
+        maxLength: 100,
+        maxLines: 1,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => unawaited(_save()),
+        decoration: InputDecoration(
+          hintText: '状态签名（NIP-38）',
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(color: theme.colorScheme.outline),
+          ),
+          suffixIcon: _saving
+              ? const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : IconButton(
+                  tooltip: '保存',
+                  icon: const Icon(Icons.check, size: 18),
+                  onPressed: () => unawaited(_save()),
+                ),
+        ),
+      ),
     );
   }
 }
