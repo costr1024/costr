@@ -258,6 +258,81 @@ void main() {
       expect(mk(3).isPostLike, isFalse);
     });
 
+    test('repostedEventId resolves the reposted note (NIP-18 e tag)', () {
+      const repostedId =
+          'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+      Event repost(Event e) => Event(
+        id: 'r' * 64,
+        pubkey: 'p' * 64,
+        createdAt: 2,
+        kind: 6,
+        tags: e.tags,
+        content: e.content,
+        sig: 's' * 128,
+      );
+      // root marker
+      expect(
+        repost(Event(
+          id: '',
+          pubkey: '',
+          createdAt: 0,
+          kind: 6,
+          tags: [
+            ['e', repostedId, 'wss://x', 'root'],
+          ],
+          content: '',
+          sig: '',
+        )).repostedEventId,
+        repostedId,
+      );
+      // legacy positional (empty marker)
+      expect(
+        repost(Event(
+          id: '',
+          pubkey: '',
+          createdAt: 0,
+          kind: 6,
+          tags: [
+            ['e', repostedId],
+          ],
+          content: '',
+          sig: '',
+        )).repostedEventId,
+        repostedId,
+      );
+      // mention tags are NOT reposted-of
+      expect(
+        repost(Event(
+          id: '',
+          pubkey: '',
+          createdAt: 0,
+          kind: 6,
+          tags: [
+            ['e', 'm' * 64, '', 'mention'],
+            ['e', repostedId, '', 'root'],
+          ],
+          content: '',
+          sig: '',
+        )).repostedEventId,
+        repostedId,
+      );
+      // a non-repost has no repostedEventId
+      expect(
+        Event(
+          id: 'n',
+          pubkey: 'p',
+          createdAt: 0,
+          kind: 1,
+          tags: const [
+            ['e', repostedId],
+          ],
+          content: '',
+          sig: 's' * 128,
+        ).repostedEventId,
+        isNull,
+      );
+    });
+
     test('hashtags parses NIP-12 t-tags, lowercased + deduped', () {
       final list = <dynamic>[
         'id',

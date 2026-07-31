@@ -102,7 +102,7 @@ String nextSubId(String purpose) => 'costr:$purpose:${_seq++}';
 /// so it can be unit-tested independently of the relay pool.
 Map<String, dynamic> buildFeedFilter(FeedMode mode, List<String> follows) {
   final filter = <String, dynamic>{
-    'kinds': [0, 1, 7], // metadata + text notes + reactions (Amethyst pattern)
+    'kinds': [0, 1, 6, 7], // metadata + text notes + reposts + reactions (Amethyst pattern)
     'limit': 200,
   };
   if (mode == FeedMode.following && follows.isNotEmpty) {
@@ -230,7 +230,8 @@ class EventStoreNotifier extends Notifier<List<Event>> {
     _hydrate();
     final pool = ref.watch(relayPoolProvider);
     _sub = pool.events.listen((e) {
-      if ((e.kind == 0 || e.isTextNote || e.kind == 7) && _store.add(e)) {
+      if ((e.kind == 0 || e.isTextNote || e.isRepost || e.kind == 7) &&
+          _store.add(e)) {
         _persist(e);
         _scheduleFlush();
       }
@@ -825,9 +826,10 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   final lang = ref.watch(languageFilterProvider);
   final tag = ref.watch(tagFilterProvider);
 
-  // Only kind-1 text notes appear in the feed. Kind-0 (metadata) and
-  // kind-7 (reactions) are stored for lookups but NOT rendered as posts.
-  Iterable<Event> events = all.where((e) => e.isTextNote);
+  // Only kind-1 text notes and kind-6/16 reposts appear in the feed.
+  // Kind-0 (metadata) and kind-7 (reactions) are stored for lookups but NOT
+  // rendered as posts.
+  Iterable<Event> events = all.where((e) => e.isTextNote || e.isRepost);
 
   if (mode == FeedMode.following) {
     final follows = ref.watch(followingStateProvider).value ?? const <String>[];

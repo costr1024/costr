@@ -23,6 +23,9 @@ class EventCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Kind-6/16 reposts render as a "↻ 转发" header above the embedded
+    // reposted note (Amethyst pattern), not as a bare text card.
+    if (event.isRepost) return _RepostView(event: event);
     final meta = ref.watch(metadataProvider(event.pubkey)).value;
     final theme = Theme.of(context);
     return InkWell(
@@ -114,6 +117,122 @@ class EventCard extends ConsumerWidget {
     if (days < 30) return '$days天';
     return '${eventTime.year}-${eventTime.month.toString().padLeft(2, '0')}'
         '-${eventTime.day.toString().padLeft(2, '0')}';
+  }
+}
+
+/// Renders a kind-6/16 repost: a "↻ 转发" header (reposter avatar + name +
+/// time + post menu) above the embedded reposted note. The reposted note is
+/// fetched via [eventByIdProvider] and rendered as a nested [EventCard]; if
+/// it hasn't arrived yet, a placeholder is shown. Tapping the inner card
+/// opens the reposted note's detail page (Amethyst behavior).
+class _RepostView extends ConsumerWidget {
+  const _RepostView({required this.event});
+  final Event event;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final meta = ref.watch(metadataProvider(event.pubkey)).value;
+    final theme = Theme.of(context);
+    final repostedId = event.repostedEventId;
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFEFF3F4))),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                GestureDetector(
+                  onTap: () => context.push('/u/${event.pubkey}'),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.repeat_rounded,
+                        size: 15,
+                        color: CostrColors.text3,
+                      ),
+                      const SizedBox(width: 6),
+                      Avatar(pubkey: event.pubkey, radius: 10),
+                      const SizedBox(width: 5),
+                    ],
+                  ),
+                ),
+                Flexible(
+                  child: GestureDetector(
+                    onTap: () => context.push('/u/${event.pubkey}'),
+                    child: Text(
+                      '${displayLabelFor(event.pubkey, meta)} 转发',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: CostrColors.text3,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  EventCard._relativeTime(event.createdAt),
+                  style: theme.textTheme.labelSmall,
+                ),
+                _PostMenu(event: event),
+              ],
+            ),
+            const SizedBox(height: 6),
+            if (repostedId == null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  '转发内容不可用',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: CostrColors.text3,
+                  ),
+                ),
+              )
+            else
+              _RepostedEmbed(id: repostedId),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Fetches + renders the note a repost points at. Falls back to a placeholder
+/// while loading or if the referenced event isn't a post (a repost should
+/// only embed a post-like note).
+class _RepostedEmbed extends ConsumerWidget {
+  const _RepostedEmbed({required this.id});
+  final String id;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final async = ref.watch(eventByIdProvider(id));
+    final ev = async.value;
+    if (ev == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(
+          async.isLoading ? '加载转发内容…' : '转发内容不可用',
+          style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.text3),
+        ),
+      );
+    }
+    if (!ev.isPostLike) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(
+          '转发内容不可用',
+          style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.text3),
+        ),
+      );
+    }
+    return EventCard(event: ev);
   }
 }
 

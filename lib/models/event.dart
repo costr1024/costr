@@ -111,6 +111,30 @@ class Event {
   bool get isContactList => kind == kindContactList;
   bool get isRepost => kind == kindRepost || kind == kindGenericRepost;
 
+  /// For a kind-6/16 repost (NIP-18): the id of the reposted note — the first
+  /// non-`mention` `e` tag. null if this isn't a repost or has no usable tag.
+  /// Prefer the `root`-marked tag, else the legacy positional (empty marker)
+  /// one; `mention` tags are not reposts-of.
+  String? get repostedEventId {
+    if (!isRepost) return null;
+    String? positional;
+    String? root;
+    for (final t in tags) {
+      if (t.length < 2 || t[0] != 'e' || t[1] is! String) continue;
+      final id = t[1] as String;
+      final marker = (t.length >= 4 && t[3] is String) ? (t[3] as String) : '';
+      if (marker == 'mention') continue;
+      if (marker.isEmpty) {
+        positional ??= id;
+      } else if (marker == 'root') {
+        root ??= id;
+      } else if (marker == 'reply') {
+        return id;
+      }
+    }
+    return root ?? positional;
+  }
+
   /// True for kinds that should render as a post in the feed / as a quote-embed
   /// card: text notes (1), reposts (6, 16), and long-form articles (30023).
   /// Other kinds (e.g. reactions 7, contact lists 3) are NOT posts and must

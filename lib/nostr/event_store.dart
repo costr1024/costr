@@ -16,9 +16,10 @@ class EventStore {
 
   /// Returns true if the event was newly added (false on duplicate id).
   bool add(Event e) {
-    // Store kind-0 (metadata), kind-1 (text notes), kind-7 (reactions).
-    // These all come in via the global feed subscription (kinds:[0,1,7]).
-    if (e.kind != 0 && e.kind != 1 && e.kind != 7) return false;
+    // Store kind-0 (metadata), kind-1 (text notes), kind-6 (reposts),
+    // kind-7 (reactions). These all come in via the global feed subscription
+    // (kinds:[0,1,6,7]).
+    if (e.kind != 0 && e.kind != 1 && e.kind != 6 && e.kind != 7) return false;
     if (_byId.containsKey(e.id)) return false;
     _byId[e.id] = e;
     _sorted.add(e);

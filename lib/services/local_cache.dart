@@ -206,7 +206,7 @@ class LocalCache extends _$LocalCache {
           DateTime.now().millisecondsSinceEpoch ~/ 1000,
         ],
       );
-      if (kind == 1 || kind == 7) {
+      if (kind == 1 || kind == 6 || kind == 7) {
         for (var i = 0; i < tags.length; i++) {
           final t = tags[i];
           if (t.length < 2) continue;
@@ -223,7 +223,7 @@ class LocalCache extends _$LocalCache {
 
   Future<List<EventRow>> queryFeed({int limit = 200}) {
     return (select(events)
-          ..where((e) => e.kind.equals(1))
+          ..where((e) => e.kind.isIn(const [1, 6]))
           ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
           ..limit(limit))
         .get();
