@@ -20,22 +20,27 @@ class FeedPage extends ConsumerStatefulWidget {
   ConsumerState<FeedPage> createState() => _FeedPageState();
 }
 
-/// Apply the read-freeze to a feed list. While frozen ([barrierCreatedAt] +
-/// [barrierId] set), keep only events not newer than the barrier (the
-/// freeze-time list + any older posts loaded later); newer live events are
-/// held back as pending. Pure + testable.
+/// Apply the read-freeze to a feed list. While frozen (a [snapshot] of the
+/// freeze-time visible ids + [barrierCreatedAt] + [barrierId] set), keep only
+/// events that were visible at freeze time ([snapshot]) OR strictly older
+/// posts loaded later via `_loadMore` (createdAt < barrier). Anything that
+/// arrived after the freeze — including same-`created_at`-second events the
+/// sort tie-break can't reliably classify as newer — is held back as pending.
+/// Pure + testable.
 @visibleForTesting
 List<Event> frozenVisible(
   List<Event> events,
   int? barrierCreatedAt,
   String? barrierId,
+  Set<String>? snapshot,
 ) {
   if (barrierId == null || barrierCreatedAt == null) return events;
   if (!events.any((e) => e.id == barrierId)) return events; // evicted → live
+  final snap = snapshot;
   return events.where((e) {
-    final c = e.createdAt.compareTo(barrierCreatedAt);
-    if (c != 0) return c < 0; // strictly older → visible
-    return e.id.compareTo(barrierId) >= 0; // same time: barrier or tie-older
+    if (e.id == barrierId) return true; // the post being read is always visible
+    if (snap != null && snap.contains(e.id)) return true; // freeze-time visible
+    return e.createdAt < barrierCreatedAt; // older posts from _loadMore
   }).toList();
 }
 
@@ -59,6 +64,11 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   /// the pending posts and jumps to the top. `null` = live (no freeze).
   int? _barrierCreatedAt;
   String? _barrierId;
+  /// Ids of the events visible at the moment the freeze was set. While frozen,
+  /// only these (plus strictly older posts from `_loadMore`) stay visible;
+  /// everything that arrives after the freeze is held back as pending — even
+  /// same-`created_at`-second arrivals the sort tie-break can't classify.
+  Set<String>? _frozenSnapshot;
 
   void _freeze() {
     final ev = ref.read(currentFeedEventsProvider);
@@ -67,6 +77,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     setState(() {
       _barrierCreatedAt = newest.createdAt;
       _barrierId = newest.id;
+      _frozenSnapshot = ev.map((e) => e.id).toSet();
     });
   }
 
@@ -74,6 +85,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     setState(() {
       _barrierCreatedAt = null;
       _barrierId = null;
+      _frozenSnapshot = null;
     });
   }
 
@@ -136,7 +148,12 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     // Apply the freeze: while frozen, only show events not newer than the
     // barrier (the freeze-time list + any older posts loaded via _loadMore);
     // newer live events are held back as pending.
-    final visible = frozenVisible(events, _barrierCreatedAt, _barrierId);
+    final visible = frozenVisible(
+      events,
+      _barrierCreatedAt,
+      _barrierId,
+      _frozenSnapshot,
+    );
     final pending = _barrierId == null ? 0 : events.length - visible.length;
 
     return Scaffold(
