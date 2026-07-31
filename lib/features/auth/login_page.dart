@@ -478,7 +478,14 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
 // --- Logout confirmation sheet ---
 
 Future<void> showLogoutSheet(BuildContext context, WidgetRef ref) async {
-  await showModalBottomSheet(
+  // Confirm via the sheet; only mutate identity state AFTER the sheet has
+  // fully dismissed. Otherwise `logout()` sets state -> Riverpod listeners
+  // fire synchronously -> GoRouterRefreshNotifier.notify() rebuilds the route
+  // tree while the sheet's element is still mid-teardown, tripping the
+  // `element._lifecycleState == inactive` assertion. Returning a result from
+  // the sheet (and awaiting showModalBottomSheet) guarantees the sheet is
+  // unmounted before any state mutation.
+  final confirmed = await showModalBottomSheet<bool>(
     context: context,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
@@ -501,18 +508,14 @@ Future<void> showLogoutSheet(BuildContext context, WidgetRef ref) async {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => Navigator.pop(ctx),
+                    onPressed: () => Navigator.pop(ctx, false),
                     child: const Text('取消'),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: FilledButton(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      await ref.read(identityProvider.notifier).logout();
-                      if (context.mounted) context.go('/login');
-                    },
+                    onPressed: () => Navigator.pop(ctx, true),
                     style: FilledButton.styleFrom(
                       backgroundColor: CostrColors.red,
                     ),
@@ -526,4 +529,10 @@ Future<void> showLogoutSheet(BuildContext context, WidgetRef ref) async {
       ),
     ),
   );
+  if (confirmed != true) return;
+  await ref.read(identityProvider.notifier).logout();
+  // GoRouter's redirect (router.dart) already routes a null identity to
+  // /login via refreshListenable; the explicit go is a safe belt-and-suspenders
+  // now that the sheet is gone (no concurrent teardown).
+  if (context.mounted) context.go('/login');
 }

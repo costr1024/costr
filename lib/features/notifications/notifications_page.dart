@@ -368,13 +368,16 @@ class _NotificationTile extends ConsumerWidget {
               ),
             ),
             const SizedBox(width: 12),
-            // Avatars (up to 3).
+            // Avatars (up to 3, overlapping). Transform.translate shifts each
+            // avatar left so they overlap visually; Padding disallows negative
+            // values (asserts padding.isNonNegative), so we must not use a
+            // negative EdgeInsets here.
             Row(
               children: [
-                for (final pk in item.pubkeys.take(3))
-                  Padding(
-                    padding: const EdgeInsets.only(right: -8),
-                    child: Avatar(pubkey: pk, radius: 16),
+                for (var i = 0; i < item.pubkeys.length && i < 3; i++)
+                  Transform.translate(
+                    offset: Offset(i == 0 ? 0 : -8.0, 0),
+                    child: Avatar(pubkey: item.pubkeys[i], radius: 16),
                   ),
               ],
             ),
