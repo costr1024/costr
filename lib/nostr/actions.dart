@@ -151,6 +151,16 @@ class NostrActions {
     return id.signEvent(kind: 0, content: contentJson, tags: const []);
   }
 
+  /// NIP-65 relay list (kind 10002). Declares which relays other clients
+  /// should query for this author's events (outbox/inbox model). Each `["r",
+  /// url]` tag with no third marker means the relay is used for both read and
+  /// write. kind 10002 is replaceable, so re-publishing simply replaces the
+  /// prior list.
+  Event relayList(List<String> urls) {
+    final tags = <List<String>>[for (final url in urls) ['r', url]];
+    return id.signEvent(kind: 10002, content: '', tags: tags);
+  }
+
   /// Quote (kind-1 referencing [quoted]). The user's [content] is followed by a
   /// `nostr:note1…` reference; an `e` mention tag + `p` tag reference the quote.
   /// [extraTags] (e.g. imeta) are appended.

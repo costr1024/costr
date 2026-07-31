@@ -21,7 +21,8 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **NIP-27 事件引用（nevent/note 嵌入）**：发帖框里粘贴 `nostr:nevent1…` / `nostr:note1…` → 发布时自动补 `e` mention tag（+ nevent 的 `p` author tag），正文保留 `nostr:…` 文本引用（其他客户端按此渲染）。渲染端 `MarkdownContent` 检测正文 `nostr:nevent1/note1` 及 `e` mention tag，抓取引用帖（`eventByIdProvider`：SQLite→内存→中继 REQ）渲染成内嵌引用卡（作者头像+名+正文片段，点进 `/n/:id`），原文里的裸 bech32 文本被剥离不重复显示。
 - **发帖（Compose）**：FAB → 撰写页，字数计数（280 软上限提示），签名（`Identity.signEvent`：computeId + bip340 sign + secure-random aux）+ 发布到中继。**EVENT 消息用对象形式**（2026 现行 NIP-01，中继拒绝旧数组形式）；`publishAndWait` 等中继 OK 应答，成功/失败带原因反馈到 UI，并本地 echo 让作者立即看到自己的帖子。**NIP-42 认证**：中继发 `["AUTH", challenge]` 时，pool 用当前身份签 kind-22242（含 `relay`/`challenge` tag）回送；`publishAndWait` 遇 auth-required 自动重试该中继。
 - **媒体/文件上传（Blossom，BUD-02 + BUD-11）**：Compose 内 📷图片 / 🎬视频 / 📎文件 按钮选文件 → 上传到 Blossom 图床。**图片**≤10MB、最多 9 张；**视频**≤100MB、单条；图片视频不可混传；**文件附件**（pdf/zip 等，按 Blossom 服务器支持的类型）≤100MB、最多 4 个、可与图片或视频并存。上传 = 签 kind-24242 auth event（tags `t/x/expiration/size/m`）→ `PUT /upload`（binary + `Authorization: Nostr <base64url of event>`）→ 取回 url。默认服务器 `blossom.ditto.pub` / `media.libernet.app`，失败自动换服务器重试。每个上传媒体生成 NIP-92 `imeta` tag（url/m/x）随帖发布，MarkdownContent 渲染为九宫格图 / 视频 / 文件 chip。
-- **默认中继**（8 台）：`damus.io` / `nos.lol` / `ditto.pub` / `bostr.online` / `nostr.wine` / `nostr.net` / `0xchat.com` / `top.testrelay.top`。`damus/nos.lol/ditto` 接受写入且被广泛订阅（帖子能被其他客户端看到）；`bostr.online` 写入需 NIP-42 认证（已支持）+ **白名单**（你的 key 须在白名单内，否则拒 `restricted: whitelisted`，这是中继策略）。
+- **默认中继**（8 台）：`damus.bostr.online`（damus 反代，便于大陆直连）/ `nos.lol` / `ditto.pub` / `bostr.online` / `nostr.wine` / `nostr.net` / `0xchat.com` / `top.testrelay.top`。`damus/nos.lol/ditto` 接受写入且被广泛订阅（帖子能被其他客户端看到）；`bostr.online` 写入需 NIP-42 认证（已支持）+ **白名单**（你的 key 须在白名单内，否则拒 `restricted: whitelisted`，这是中继策略）。
+- **NIP-65 中继清单发布**（kind 10002）：每次冷启动后台 fire-and-forget 签发一次当前中继列表（`["r", url]` tags，无 marker = 读写皆可），首次登录后也补发一次。kind 10002 是 replaceable 事件，重发只替换不堆积。让其他客户端按 outbox/inbox 模型找到你的中继、拉你的帖子——修复"其他客户端看不到我配置的中继、outbox/inbox 里只有 ditto/testrelay"的缺漏。
 - **帖子交互（X 风格）**：每条帖子下方一排 💬回复 / 🔁转发 / ❤️reaction / 🔖收藏 / ↗分享。
   - **回复**（NIP-10）：push Compose 带 `replyTo`，签 kind-1 带 root+reply `e` tag + `p` tag。
   - **转发**（弹二选一菜单，DESIGN §3.5）：① **转发**（NIP-18）：确认后签 kind-6（content = 被转帖事件 JSON）+ `e`/`p` tag，直接转发不带评论；② **引用**（quote）：push Compose 带 `quoteOf`，签 kind-1，正文带 `nostr:note1` 引用 + `e` mention tag。不做下拉即转发的隐藏入口，弹菜单让用户明确选择。
@@ -94,15 +95,17 @@ flutter run -d linux        # 或：android / ios / macos / windows
 
 ## 默认中继
 
-- `wss://relay.damus.io/`、`wss://nos.lol/`、`wss://relay.ditto.pub/`（接受写入，被广泛订阅）
+- `wss://damus.bostr.online/`、`wss://nos.lol/`、`wss://relay.ditto.pub/`（接受写入，被广泛订阅）
 - `wss://relay.bostr.online/`（写入需 NIP-42 认证 + 白名单）
 - `wss://nostr.wine/`、`wss://relay.nostr.net/`、`wss://relay.0xchat.com/`、`wss://top.testrelay.top/`
+
+> `damus.bostr.online` 是用户自建的 damus 反向代理（真实后端为 `relay.damus.io`），便于中国大陆直连。
 
 搜索专用中继（NIP-50，独立 `searchPoolProvider`，只连这两台）：
 
 - `wss://relay.ditto.pub/`、`wss://search.nos.today/`
 
-中继列表同时是 NIP-65（kind 10002）用户元数据——后续会签发发布，让其他客户端按 outbox 模型拉你的帖子。
+中继列表同时是 NIP-65（kind 10002）用户元数据——**每次冷启动后台签发一次 kind 10002**（`["r", url]` tags，replaceable 故重复发布只替换不堆积；首次登录后也补发一次），让其他客户端按 outbox/inbox 模型找到你的中继、拉你的帖子。
 
 ## 目录结构
 

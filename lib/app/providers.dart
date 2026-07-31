@@ -31,7 +31,7 @@ import 'package:path/path.dart' as p;
 /// ditto/damus/nos.lol accept writes and are broadly queried, so posts reach
 /// other clients. nostr.wine supports NIP-50 full-text search (posts + users).
 const List<String> defaultRelays = <String>[
-  'wss://relay.damus.io/',
+  'wss://damus.bostr.online/',
   'wss://nos.lol/',
   'wss://relay.ditto.pub/',
   'wss://relay.bostr.online/',
@@ -104,6 +104,9 @@ class IdentityNotifier extends AsyncNotifier<Identity?> {
     final identity = Identity.fromNsec(nsec); // throws on invalid
     await ref.read(storageProvider).writeNsec(nsec);
     state = AsyncData(identity);
+    // NIP-65: publish relay list right after first login (cold-start publish
+    // only fires if an identity was already stored). Fire-and-forget.
+    publishRelayList(ref.read(relayPoolProvider), identity);
   }
 
   Future<void> logout() async {
@@ -145,6 +148,14 @@ final searchPoolProvider = Provider<RelayPool>((ref) {
 final bootstrapProvider = FutureProvider<void>((ref) async {
   await ref.watch(identityProvider.future);
   await ref.read(relayPoolProvider).connect();
+  // NIP-65: publish our relay list (kind 10002) in the background so other
+  // clients can discover the author's relays (outbox/inbox model). Fire-and-
+  // forget — must not block the router. kind 10002 is replaceable, so
+  // re-publishing on every cold start just replaces the prior list.
+  final identity = ref.read(identityProvider).value;
+  if (identity != null) {
+    publishRelayList(ref.read(relayPoolProvider), identity);
+  }
   // Cache cleanup 30s after startup (avoids startup jank).
   Timer(const Duration(seconds: 30), () async {
     final cache = ref.read(localCacheProvider).value;
@@ -156,6 +167,13 @@ final bootstrapProvider = FutureProvider<void>((ref) async {
     } catch (_) {}
   });
 });
+
+/// Sign + publish the NIP-65 relay list (kind 10002) for [identity] to
+/// [pool]. Fire-and-forget; safe to call on every cold start (replaceable).
+void publishRelayList(RelayPool pool, Identity identity) {
+  final signed = NostrActions(identity).relayList(defaultRelays);
+  unawaited(pool.publishAndWait(signed));
+}
 
 // --- Event store (text notes only) -----------------------------------------
 
