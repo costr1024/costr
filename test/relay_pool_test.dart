@@ -351,4 +351,95 @@ void main() {
           await pool.dispose();
         });
   });
+
+  group('publishAndWait (per-relay retry spec)', () {
+    test('one relay accepts → success, single EVENT send (no retry)', () async {
+      final a = _FakeRelay('wss://a');
+      final pool = RelayPool([a]);
+      await pool.connect();
+      final ev = _event('e1');
+      final fut = pool.publishAndWait(
+        ev,
+        retryDelays: const [Duration(milliseconds: 50)],
+        perRoundTimeout: const Duration(milliseconds: 200),
+      );
+      await Future<void>.delayed(Duration.zero);
+      a.emitOk(RelayOk(ev.id, true, '', url: 'wss://a'));
+      final ok = await fut;
+      expect(ok.ok, isTrue);
+      expect(a.sent.where((m) => m[0] == 'EVENT').length, 1);
+      await pool.dispose();
+    });
+
+    test('all relays timeout → foreground retries then fails (4 sends)', () async {
+      final a = _FakeRelay('wss://a');
+      final pool = RelayPool([a]);
+      await pool.connect();
+      final ev = _event('e1');
+      final ok = await pool.publishAndWait(
+        ev,
+        retryDelays: const [
+          Duration(milliseconds: 20),
+          Duration(milliseconds: 20),
+          Duration(milliseconds: 20),
+        ],
+        perRoundTimeout: const Duration(milliseconds: 30),
+      );
+      expect(ok.ok, isFalse);
+      // initial round + 3 retries = 4 EVENT sends.
+      expect(a.sent.where((m) => m[0] == 'EVENT').length, 4);
+      await pool.dispose();
+    });
+
+    test('auth-required rejection → foreground retry succeeds', () async {
+      final a = _FakeRelay('wss://a');
+      final pool = RelayPool([a]);
+      await pool.connect();
+      final ev = _event('e1');
+      final fut = pool.publishAndWait(
+        ev,
+        retryDelays: const [
+          Duration(milliseconds: 30),
+          Duration(milliseconds: 30),
+          Duration(milliseconds: 30),
+        ],
+        perRoundTimeout: const Duration(milliseconds: 100),
+      );
+      await Future<void>.delayed(Duration.zero);
+      // Round 0: reject with auth-required (transient).
+      a.emitOk(
+        RelayOk(ev.id, false, 'auth-required: please auth', url: 'wss://a'),
+      );
+      // Let the foreground retry delay (30ms) pass + round 1 start.
+      await Future<void>.delayed(const Duration(milliseconds: 45));
+      a.emitOk(RelayOk(ev.id, true, '', url: 'wss://a'));
+      final ok = await fut;
+      expect(ok.ok, isTrue);
+      expect(a.sent.where((m) => m[0] == 'EVENT').length, 2); // initial + 1 retry
+      await pool.dispose();
+    });
+
+    test('unrecoverable rejection → no retry (relay dropped)', () async {
+      final a = _FakeRelay('wss://a');
+      final pool = RelayPool([a]);
+      await pool.connect();
+      final ev = _event('e1');
+      final fut = pool.publishAndWait(
+        ev,
+        retryDelays: const [
+          Duration(milliseconds: 20),
+          Duration(milliseconds: 20),
+          Duration(milliseconds: 20),
+        ],
+        perRoundTimeout: const Duration(milliseconds: 100),
+      );
+      await Future<void>.delayed(Duration.zero);
+      // Explicit non-auth rejection → unrecoverable → no retry.
+      a.emitOk(RelayOk(ev.id, false, 'blocked: spam', url: 'wss://a'));
+      final ok = await fut;
+      expect(ok.ok, isFalse);
+      expect(a.sent.where((m) => m[0] == 'EVENT').length, 1); // no retry
+      await pool.dispose();
+    });
+  });
 }

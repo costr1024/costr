@@ -447,6 +447,15 @@ class LocalCache extends _$LocalCache {
     return results.map((r) => r.read<String>('raw_json')).toList();
   }
 
+  /// Load all pending drafts with their rowid (oldest first), so callers can
+  /// delete / bump attempts after a retry round.
+  Future<List<(int, String)>> getDraftsWithRowid() async {
+    final results = await customSelect(
+      'SELECT rowid, raw_json FROM drafts ORDER BY created_at ASC',
+    ).get();
+    return results.map((r) => (r.read<int>('rowid'), r.read<String>('raw_json'))).toList();
+  }
+
   /// Delete a draft after successful publish.
   Future<void> deleteDraft(int rowid) async {
     await customStatement('DELETE FROM drafts WHERE rowid = ?', [rowid]);

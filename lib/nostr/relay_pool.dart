@@ -301,70 +301,168 @@ class RelayPool {
     if (!_merged.isClosed) _merged.add(event);
   }
 
-  /// Publish and wait for relay OK verdicts. Resolves on the first relay that
-  /// accepts (OK true); if a relay rejects with "auth-required" (NIP-42), it
-  /// retries that relay once after the auth round-trip; if all reject, resolves
-  /// with the joined rejection reasons; times out if no ack within [timeout].
+  /// Publish and wait for relay OK verdicts, retrying per the project spec:
+  /// - Send EVENT to every connected relay, wait for each relay's OK (per-round
+  ///   timeout).
+  /// - If **any** relay accepts → resolve success immediately; the remaining
+  ///   transiently-failed relays keep retrying in the BACKGROUND (delays
+  ///   1s/2s/3s, up to 3 more attempts) so the caller isn't blocked.
+  /// - If **all** relays fail a round → retry in the FOREGROUND (blocking)
+  ///   with delays 1s/2s/3s. Give up on a relay only when it's confirmed
+  ///   unreachable (disconnects) or returns an unrecoverable rejection (OK
+  ///   false with a non-`auth` reason). A timeout (no ack) is always retried.
+  /// - NIP-42: relays that reject with `auth-required` are retried (the
+  ///   pool auto-signs kind-22242 on AUTH challenges); the retry lands after
+  ///   the auth round-trip.
+  /// - If background retries are exhausted with relays still failing, the
+  ///   optional [onPublishExhausted] hook is invoked (the app saves the event
+  ///   to the drafts table for a next-launch retry to the missing relays).
   Future<RelayOk> publishAndWait(
     Event event, {
     Duration timeout = const Duration(seconds: 15),
+    List<Duration> retryDelays = const [
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 3),
+    ],
+    Duration perRoundTimeout = const Duration(seconds: 5),
   }) async {
     final expected = event.id;
-    final connected = _connections.where((c) => c.isConnected).toList();
-    final byUrl = <String, RelayConnection>{
-      for (final c in connected) c.url: c,
-    };
-    final verdicts = <String, RelayOk>{}; // final non-auth verdicts (url -> ok)
-    final retried = <String>{}; // relays already retried for auth-required
-    bool resolved = false;
-    final completer = Completer<RelayOk>();
+    final delays = retryDelays;
+    final perRound = perRoundTimeout;
 
-    bool isAuthReq(String? r) => (r ?? '').toLowerCase().contains('auth');
+    // Echo locally so the author sees the post instantly (relays only ack
+    // OK; they don't echo the EVENT back on publish).
+    if (!_merged.isClosed) _merged.add(event);
 
-    final sub = oks.listen((RelayOk ok) {
-      if (resolved || ok.id != expected || ok.url == null) return;
-      final url = ok.url!;
-      if (ok.ok) {
-        resolved = true;
-        completer.complete(ok);
-        return;
+    var targets = _connections.where((c) => c.isConnected).toList();
+    if (targets.isEmpty) {
+      return RelayOk(expected, false, 'no connected relay');
+    }
+
+    bool isAuthRejection(String? reason) =>
+        (reason ?? '').toLowerCase().contains('auth');
+
+    for (var attempt = 0; attempt <= delays.length; attempt++) {
+      final verdicts = await _collectOks(event, targets, perRound);
+      final accepted = verdicts.values.where((v) => v.ok).toList();
+      if (accepted.isNotEmpty) {
+        // Some relays accepted → return success + background-retry the rest.
+        final transient = <RelayConnection>[];
+        for (final c in targets) {
+          final v = verdicts[c.url];
+          // No verdict (timeout) but still connected → transient.
+          // Auth-required rejection → transient (retry after auth).
+          if (v == null) {
+            if (c.isConnected) transient.add(c);
+          } else if (!v.ok && isAuthRejection(v.reason)) {
+            transient.add(c);
+          }
+        }
+        if (transient.isNotEmpty) {
+          _backgroundRetryPublish(event, transient, delays, perRound);
+        }
+        return accepted.first;
       }
-      // Rejected. If it's an auth-required rejection and we haven't retried,
-      // wait for the NIP-42 auth round-trip then re-send the EVENT to that relay.
-      if (isAuthReq(ok.reason) && !retried.contains(url)) {
-        retried.add(url);
-        Future<void>.delayed(const Duration(seconds: 3)).then((_) {
-          if (!resolved) byUrl[url]?.publish(event);
-        });
-      } else {
-        verdicts[url] = ok;
+      // All failed this round. Keep only transiently-failed relays for the
+      // next round; drop unrecoverable (explicit non-auth rejection) and
+      // disconnected ones.
+      final next = <RelayConnection>[];
+      for (final c in targets) {
+        final v = verdicts[c.url];
+        if (v == null) {
+          if (c.isConnected) next.add(c); // timeout, still connected
+        } else if (!v.ok && isAuthRejection(v.reason)) {
+          next.add(c);
+        }
+        // else: explicit non-auth rejection OR accepted (n/a here) → drop.
       }
-    });
-
-    publish(event);
-
-    return completer.future
-        .timeout(
-          timeout,
-          onTimeout: () {
-            final accepted = verdicts.values.where((v) => v.ok);
-            if (accepted.isNotEmpty) return accepted.first;
-            final fails = verdicts.values.where((v) => !v.ok).toList();
-            if (fails.isEmpty) {
-              return RelayOk(
-                expected,
-                false,
-                'no relay ack in ${timeout.inSeconds}s (${connected.length} connected)',
-              );
-            }
-            final reasons = fails
-                .map((v) => '${v.url}: ${v.reason ?? 'rejected'}')
-                .join('; ');
-            return RelayOk(expected, false, reasons);
-          },
-        )
-        .whenComplete(() => sub.cancel());
+      if (next.isEmpty) break; // all unrecoverable — no point retrying
+      targets = next;
+      if (attempt < delays.length) {
+        await Future.delayed(delays[attempt]);
+      }
+    }
+    return RelayOk(
+      expected,
+      false,
+      'all relays failed after ${delays.length} retries',
+    );
   }
+
+  /// Collect per-relay OK verdicts for [event] from [relays] within [perRound].
+  /// Sends EVENT to each relay, then waits for OKs (or [perRound]). Relays
+  /// with no verdict within the window are timeouts (transient).
+  Future<Map<String, RelayOk>> _collectOks(
+    Event event,
+    List<RelayConnection> relays,
+    Duration perRound,
+  ) async {
+    final pending = relays.map((c) => c.url).toSet();
+    final verdicts = <String, RelayOk>{};
+    if (pending.isEmpty) return verdicts;
+    final completer = Completer<void>();
+    late StreamSubscription<RelayOk> sub;
+    sub = oks.listen((RelayOk ok) {
+      if (ok.id != event.id || ok.url == null) return;
+      if (!pending.contains(ok.url!)) return;
+      verdicts[ok.url!] = ok;
+      pending.remove(ok.url!);
+      if (pending.isEmpty && !completer.isCompleted) completer.complete();
+    });
+    for (final c in relays) {
+      c.publish(event);
+    }
+    await completer.future.timeout(perRound, onTimeout: () {});
+    await sub.cancel();
+    return verdicts;
+  }
+
+  /// Background (detached) retry of transiently-failed relays after a publish
+  /// already resolved success elsewhere. Retries with [delays], dropping
+  /// relays that disconnect or return an unrecoverable rejection. On
+  /// exhaustion, invokes [onPublishExhausted] if set (app saves a draft).
+  void _backgroundRetryPublish(
+    Event event,
+    List<RelayConnection> relays,
+    List<Duration> delays,
+    Duration perRound,
+  ) {
+    () async {
+      var targets = relays;
+      for (var attempt = 0;
+          attempt < delays.length && targets.isNotEmpty;
+          attempt++) {
+        await Future.delayed(delays[attempt]);
+        targets = targets.where((c) => c.isConnected).toList();
+        if (targets.isEmpty) break;
+        final verdicts = await _collectOks(event, targets, perRound);
+        final still = <RelayConnection>[];
+        for (final c in targets) {
+          final v = verdicts[c.url];
+          if (v == null) {
+            if (c.isConnected) still.add(c);
+          } else if (!v.ok &&
+              (v.reason ?? '').toLowerCase().contains('auth')) {
+            still.add(c);
+          }
+          // accepted or unrecoverable → drop.
+        }
+        targets = still;
+      }
+      if (targets.isNotEmpty) {
+        _onPublishExhausted?.call(event);
+      }
+    }();
+  }
+
+  /// Optional hook invoked when a publish's background retries are exhausted
+  /// with relays still failing (the event was accepted by at least one relay,
+  /// so it IS published, but not to all). The app sets this to save the event
+  /// to the drafts table for a later retry to the missing relays.
+  void Function(Event event)? _onPublishExhausted;
+  set onPublishExhausted(void Function(Event event)? fn) =>
+      _onPublishExhausted = fn;
 
   void _emitStatus() {
     if (!_status.isClosed) {

@@ -283,14 +283,30 @@ final Map<String, _CachedRelayList> _relayListCache = {};
 /// Also triggers cache cleanup 30s after startup (Jumble pattern).
 final bootstrapProvider = FutureProvider<void>((ref) async {
   await ref.watch(identityProvider.future);
-  await ref.read(relayPoolProvider).connect();
+  final pool = ref.read(relayPoolProvider);
+  await pool.connect();
+  // Per-relay publish retry: when a publish succeeds on some relays but
+  // background retries to the rest are exhausted (event published, but not
+  // everywhere), save it to the drafts table so a later session retries the
+  // missing relays — "尽量保证所有中继都发布成功".
+  pool.onPublishExhausted = (event) {
+    final db = ref.read(localCacheProvider).value;
+    if (db != null) {
+      unawaited(db.saveDraft(jsonEncode(event.toWireObject())));
+    }
+  };
   // NIP-65: publish our relay list (kind 10002) in the background so other
   // clients can discover the author's relays (outbox/inbox model). Fire-and-
   // forget — must not block the router. kind 10002 is replaceable, so
   // re-publishing on every cold start just replaces the prior list.
   final identity = ref.read(identityProvider).value;
   if (identity != null) {
-    publishRelayList(ref.read(relayPoolProvider), identity);
+    publishRelayList(pool, identity);
+    // Retry drafts (failed publishes from a prior session). publishAndWait
+    // already does in-session per-relay retry; this covers cross-session.
+    unawaited(
+      ref.read(localCacheProvider.future).then((db) => retryDrafts(pool, db)),
+    );
     // Bulk-prefetch metadata (kind 0) for the whole social graph (follows +
     // followers + self) so avatars/profiles resolve instantly. Deferred 5s
     // so the feed renders first; fire-and-forget.
@@ -317,6 +333,31 @@ final bootstrapProvider = FutureProvider<void>((ref) async {
 void publishRelayList(RelayPool pool, Identity identity) {
   final signed = NostrActions(identity).relayList(defaultRelays);
   unawaited(pool.publishAndWait(signed));
+}
+
+/// Retry publishing drafts — events that failed to publish in a prior
+/// session (saved via [RelayPool]'s `onPublishExhausted` hook or compose's
+/// all-failed path). Loads all drafts, re-publishes each via
+/// [RelayPool.publishAndWait] (which itself does the per-relay 1s/2s/3s
+/// retry), deletes on success or bumps the attempt count. Fire-and-forget
+/// on cold start so previously-dropped publishes eventually land.
+Future<void> retryDrafts(RelayPool pool, cache.LocalCache db) async {
+  final drafts = await db.getDraftsWithRowid();
+  for (final (rowid, rawJson) in drafts) {
+    try {
+      final ev = Event.fromJson(
+        jsonDecode(rawJson) as Map<String, dynamic>,
+      );
+      final ok = await pool.publishAndWait(ev);
+      if (ok.ok) {
+        await db.deleteDraft(rowid);
+      } else {
+        await db.incrementDraftAttempts(rowid);
+      }
+    } catch (_) {
+      await db.incrementDraftAttempts(rowid);
+    }
+  }
 }
 
 // --- Event store (text notes only) -----------------------------------------

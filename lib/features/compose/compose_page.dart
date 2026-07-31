@@ -7,6 +7,7 @@
 /// each becomes a NIP-92 imeta tag in the signed event.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -396,7 +397,14 @@ class _ComposePageState extends ConsumerState<ComposePage> {
           : identity.signEvent(kind: 1, content: text, tags: extraTags);
       final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;
-      _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}');
+      // If EVERY relay failed (after the pool's per-relay 1s/2s/3s foreground
+      // retry), the post isn't published anywhere → save to drafts so the
+      // next cold start retries it (retryDrafts). Don't drop the user's post.
+      if (!ok.ok) {
+        final db = await ref.read(localCacheProvider.future);
+        await db.saveDraft(jsonEncode(signed.toWireObject()));
+      }
+      _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}（已存草稿，稍后重试）');
       // Refresh the profile Posts/Replies tabs so the just-published note
       // (already cached to SQLite by EventStoreNotifier) shows immediately —
       // userPostsProvider is non-autoDispose so it wouldn't re-run on its own.
