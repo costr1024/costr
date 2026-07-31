@@ -439,11 +439,16 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
             ListTile(
               leading: const Icon(Icons.add, size: 20),
               title: const Text('新建分组…'),
+              // Show the name dialog FIRST — the bottom sheet is still alive
+              // so `ctx` is mounted — then pop the sheet ONCE with the name.
+              // The old code popped the sheet before showing the dialog,
+              // leaving `ctx` unmounted (dialog never appeared / name never
+              // returned) so following into a NEW group never happened.
               onTap: () async {
-                Navigator.pop(ctx);
                 final name = await _showNewGroupDialog(ctx);
+                if (!ctx.mounted) return;
                 if (name != null && name.isNotEmpty) {
-                  if (ctx.mounted) Navigator.pop(ctx, name);
+                  Navigator.pop(ctx, name);
                 }
               },
             ),
@@ -551,47 +556,52 @@ class _PostsTabState extends ConsumerState<_PostsTab> {
     // bounded height smaller than the bar during header scroll (the recurring
     // "bottom overflowed by N pixels" when the bio is long). Slivers tolerate
     // any bounded height; a Column with a fixed-height child does not.
-    return CustomScrollView(
-      slivers: [
-        SliverToBoxAdapter(
-          child: _SearchBar(
-            controller: _controller,
-            hint: '搜索该用户的帖子…',
-            onChanged: _onChanged,
+    return RefreshIndicator(
+      onRefresh: () => ref.refresh(userPostsProvider(widget.pubkey).future),
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(
+            child: _SearchBar(
+              controller: _controller,
+              hint: '搜索该用户的帖子…',
+              onChanged: _onChanged,
+            ),
           ),
-        ),
-        async.when(
-          loading: () => const SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(child: CircularProgressIndicator()),
-          ),
-          error: (Object e, _) => SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(child: Text('加载失败：$e')),
-          ),
-          data: (List<Event> all) {
-            var posts = all.where((e) => !e.isReply).toList();
-            if (_query.isNotEmpty) {
-              final q = _query.toLowerCase();
-              posts = posts
-                  .where((e) => e.content.toLowerCase().contains(q))
-                  .toList();
-            }
-            if (posts.isEmpty) {
-              return SliverFillRemaining(
-                hasScrollBody: false,
-                child: Center(child: Text(_query.isEmpty ? '暂无帖子' : '无匹配帖子')),
+          async.when(
+            loading: () => const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (Object e, _) => SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: Text('加载失败：$e')),
+            ),
+            data: (List<Event> all) {
+              var posts = all.where((e) => !e.isReply).toList();
+              if (_query.isNotEmpty) {
+                final q = _query.toLowerCase();
+                posts = posts
+                    .where((e) => e.content.toLowerCase().contains(q))
+                    .toList();
+              }
+              if (posts.isEmpty) {
+                return SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(child: Text(_query.isEmpty ? '暂无帖子' : '无匹配帖子')),
+                );
+              }
+              return SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (BuildContext context, int i) =>
+                      UserPostItem(event: posts[i]),
+                  childCount: posts.length,
+                ),
               );
-            }
-            return SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (BuildContext context, int i) => UserPostItem(event: posts[i]),
-                childCount: posts.length,
-              ),
-            );
-          },
-        ),
-      ],
+            },
+          ),
+        ],
+      ),
     );
   }
 }
@@ -626,48 +636,52 @@ class _RepliesTabState extends ConsumerState<_RepliesTab> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(userPostsProvider(widget.pubkey));
-    return CustomScrollView(
-      slivers: [
-        SliverToBoxAdapter(
-          child: _SearchBar(
-            controller: _controller,
-            hint: '搜索该用户的回帖…',
-            onChanged: _onChanged,
+    return RefreshIndicator(
+      onRefresh: () => ref.refresh(userPostsProvider(widget.pubkey).future),
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(
+            child: _SearchBar(
+              controller: _controller,
+              hint: '搜索该用户的回帖…',
+              onChanged: _onChanged,
+            ),
           ),
-        ),
-        async.when(
-          loading: () => const SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(child: CircularProgressIndicator()),
-          ),
-          error: (Object e, _) => SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(child: Text('加载失败：$e')),
-          ),
-          data: (List<Event> all) {
-            var replies = all.where((e) => e.isReply).toList();
-            if (_query.isNotEmpty) {
-              final q = _query.toLowerCase();
-              replies = replies
-                  .where((e) => e.content.toLowerCase().contains(q))
-                  .toList();
-            }
-            if (replies.isEmpty) {
-              return SliverFillRemaining(
-                hasScrollBody: false,
-                child: Center(child: Text(_query.isEmpty ? '暂无回帖' : '无匹配回帖')),
+          async.when(
+            loading: () => const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (Object e, _) => SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: Text('加载失败：$e')),
+            ),
+            data: (List<Event> all) {
+              var replies = all.where((e) => e.isReply).toList();
+              if (_query.isNotEmpty) {
+                final q = _query.toLowerCase();
+                replies = replies
+                    .where((e) => e.content.toLowerCase().contains(q))
+                    .toList();
+              }
+              if (replies.isEmpty) {
+                return SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(child: Text(_query.isEmpty ? '暂无回帖' : '无匹配回帖')),
+                );
+              }
+              return SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (BuildContext context, int i) =>
+                      UserPostItem(event: replies[i]),
+                  childCount: replies.length,
+                ),
               );
-            }
-            return SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (BuildContext context, int i) =>
-                    UserPostItem(event: replies[i]),
-                childCount: replies.length,
-              ),
-            );
-          },
-        ),
-      ],
+            },
+          ),
+        ],
+      ),
     );
   }
 }

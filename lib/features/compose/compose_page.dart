@@ -283,8 +283,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       final ev = neventDecode(entity); // null for note1
       final id = ev?.id ?? entityToEventIdHex(entity);
       if (id == null || !seenIds.add(id)) continue;
-      final relay =
-          (ev?.relays.isNotEmpty ?? false) ? ev!.relays.first : '';
+      final relay = (ev?.relays.isNotEmpty ?? false) ? ev!.relays.first : '';
       tags.add(['e', id, relay, 'mention']);
       final author = ev?.author;
       if (author != null && author.isNotEmpty) tags.add(['p', author]);
@@ -398,6 +397,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;
       _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}');
+      // Refresh the profile Posts/Replies tabs so the just-published note
+      // (already cached to SQLite by EventStoreNotifier) shows immediately —
+      // userPostsProvider is non-autoDispose so it wouldn't re-run on its own.
+      if (ok.ok) {
+        ref.invalidate(userPostsProvider(identity.pubkeyHex));
+      }
       if (ok.ok && context.mounted) context.pop();
     } catch (e) {
       _snack('发送失败：$e');

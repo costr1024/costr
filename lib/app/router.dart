@@ -18,6 +18,7 @@ import '../features/notifications/notifications_page.dart';
 import '../features/profile/edit_profile_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/settings/account_settings_page.dart';
+import '../features/settings/relays_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/search/search_page.dart';
 import '../models/event.dart';
@@ -107,7 +108,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/settings/relays',
         builder: (BuildContext context, GoRouterState state) =>
-            const _PlaceholderPage(title: '服务器节点'),
+            const RelaysPage(),
       ),
       StatefulShellRoute.indexedStack(
         builder:
@@ -326,22 +327,6 @@ class _AppShellState extends ConsumerState<AppShell> {
       ),
     );
   }
-}
-
-/// Simple placeholder for not-yet-implemented settings sub-pages.
-class _PlaceholderPage extends StatelessWidget {
-  const _PlaceholderPage({required this.title});
-  final String title;
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(title)),
-    body: Center(
-      child: Text(
-        '$title（即将支持）',
-        style: Theme.of(context).textTheme.bodyMedium,
-      ),
-    ),
-  );
 }
 
 /// Notification center placeholder (P4 will fill this in).

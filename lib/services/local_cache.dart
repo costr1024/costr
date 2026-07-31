@@ -1,6 +1,7 @@
 /// Local cache (drift/SQLite) for Nostr events — 30-day persistent store.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
@@ -370,6 +371,33 @@ class LocalCache extends _$LocalCache {
 
   Future<void> deleteConfig(String key) async {
     await (delete(configTable)..where((c) => c.key.equals(key))).go();
+  }
+
+  // --- Relay RTT cache (last N samples per relay, FIFO) ---
+
+  static const int _rttKeep = 3;
+
+  /// Read the cached RTT samples (ms) for [url]. Empty list if none/invalid.
+  Future<List<int>> readRtt(String url) async {
+    final raw = await readConfig('relay_rtt:$url');
+    if (raw == null || raw.isEmpty) return const <int>[];
+    try {
+      final list = jsonDecode(raw);
+      if (list is List) {
+        return list.whereType<int>().toList(growable: false);
+      }
+    } catch (_) {}
+    return const <int>[];
+  }
+
+  /// Append [ms] to the cached samples for [url], keeping only the most recent
+  /// [_rttKeep] (FIFO eviction). Persists immediately.
+  Future<void> pushRtt(String url, int ms) async {
+    final samples = (await readRtt(url)).toList()..add(ms);
+    final kept = samples.length > _rttKeep
+        ? samples.sublist(samples.length - _rttKeep)
+        : samples;
+    await writeConfig('relay_rtt:$url', jsonEncode(kept));
   }
 
   // --- Drafts (outbox: events that failed to publish, for retry) ---

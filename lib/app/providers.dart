@@ -202,6 +202,13 @@ class EventStoreNotifier extends Notifier<List<Event>> {
         _persist(e);
         _scheduleFlush();
       }
+      // A kind-30000 Follow Set authored by the logged-in user changed the
+      // categorization overlay — bump so grouped-follows/group-names refresh.
+      // Read identity per-event: it may resolve after this build ran.
+      if (e.kind == 30000 &&
+          e.pubkey == ref.read(identityProvider).value?.pubkeyHex) {
+        ref.read(kind30000VersionProvider.notifier).bump();
+      }
     });
     ref.onDispose(() {
       _sub?.cancel();
@@ -890,11 +897,9 @@ final threadAncestorsProvider = FutureProvider.family<List<Event>, String>((
   for (var depth = 0; depth < 32 && frontier.isNotEmpty; depth++) {
     final fresh = frontier.where((cid) => !seen.contains(cid)).toList();
     if (fresh.isEmpty) break;
-    final results = await Future.wait(
-      <Future<Event?>>[
-        for (final cid in fresh) ref.read(eventByIdProvider(cid).future),
-      ],
-    );
+    final results = await Future.wait(<Future<Event?>>[
+      for (final cid in fresh) ref.read(eventByIdProvider(cid).future),
+    ]);
     frontier = <String>[];
     for (final r in results) {
       if (r == null || !seen.add(r.id)) continue;
@@ -1055,6 +1060,22 @@ final userFollowersProvider = FutureProvider.family<List<String>, String>((
 
 // --- Search (NIP-50, via nostr.wine) --------------------------------------
 
+/// Version counter that bumps whenever a kind-30000 (NIP-51 Follow Set) event
+/// for the logged-in user is ingested or published — mirrors Amethyst's
+/// `peopleListVersions` reactive pattern. The grouped-follows and group-name
+/// providers watch this so a category add/remove (local or remote) re-fetches
+/// without needing manual invalidation at every call site.
+class Kind30000VersionNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+  void bump() => state++;
+}
+
+final kind30000VersionProvider =
+    NotifierProvider<Kind30000VersionNotifier, int>(
+      Kind30000VersionNotifier.new,
+    );
+
 /// A follow group: name + the pubkeys in it.
 class FollowGroup {
   const FollowGroup(this.name, this.pubkeys);
@@ -1068,6 +1089,9 @@ class FollowGroup {
 /// pubkeys in custom groups are also kept in 默认分组 only if not in any group.
 final userGroupedFollowsProvider =
     FutureProvider.family<List<FollowGroup>, String>((ref, pubkey) async {
+      // Re-run when any kind-30000 set for the user changes (local publish or
+      // remote ingestion bumps this counter).
+      ref.watch(kind30000VersionProvider);
       final pool = ref.watch(relayPoolProvider);
 
       // 1. Fetch kind-3 (master follow list) p-tags.
@@ -1192,6 +1216,8 @@ final userGroupNamesProvider = FutureProvider.family<List<String>, String>((
   ref,
   pubkey,
 ) async {
+  // Re-run when any kind-30000 set for the user changes.
+  ref.watch(kind30000VersionProvider);
   final pool = ref.watch(relayPoolProvider);
   final collected = <String>[];
   final seen = <String>{};
@@ -1375,43 +1401,38 @@ final searchUsersProvider = FutureProvider.family<List<UserResult>, String>((
 /// Reactions (NIP-25 kind-7) for an event. Reads from the EventStore (kind-7
 /// events arrive as part of the global feed REQ {kinds:[1,7]}). No separate
 /// #e parameterized query needed (most relays don't support #e anyway).
-final reactionsProvider = Provider.family<
-    Map<String, ({int count, String? emojiUrl})>, String>((
-  ref,
-  eventId,
-) {
-  final store = ref.watch(eventStoreProvider);
-  final tallies = <String, ({int count, String? emojiUrl})>{};
-  for (final e in store) {
-    if (e.kind != 7) continue;
-    for (final t in e.tags) {
-      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
-        final key = e.content.isEmpty ? '+' : e.content;
-        final prev = tallies[key];
-        // For NIP-30 custom-emoji reactions (content `:shortcode:`), surface
-        // the image URL from the kind-7 `["emoji", shortcode, url]` tag so the
-        // chip can render the image instead of the raw `:shortcode:` text.
-        var url = prev?.emojiUrl;
-        if (url == null) {
-          for (final et in e.tags) {
-            if (et.length >= 3 &&
-                et[0] == 'emoji' &&
-                et[2] is String) {
-              url = et[2] as String;
-              break;
+final reactionsProvider =
+    Provider.family<Map<String, ({int count, String? emojiUrl})>, String>((
+      ref,
+      eventId,
+    ) {
+      final store = ref.watch(eventStoreProvider);
+      final tallies = <String, ({int count, String? emojiUrl})>{};
+      for (final e in store) {
+        if (e.kind != 7) continue;
+        for (final t in e.tags) {
+          if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
+            final key = e.content.isEmpty ? '+' : e.content;
+            final prev = tallies[key];
+            // For NIP-30 custom-emoji reactions (content `:shortcode:`), surface
+            // the image URL from the kind-7 `["emoji", shortcode, url]` tag so the
+            // chip can render the image instead of the raw `:shortcode:` text.
+            var url = prev?.emojiUrl;
+            if (url == null) {
+              for (final et in e.tags) {
+                if (et.length >= 3 && et[0] == 'emoji' && et[2] is String) {
+                  url = et[2] as String;
+                  break;
+                }
+              }
             }
+            tallies[key] = (count: (prev?.count ?? 0) + 1, emojiUrl: url);
+            break;
           }
         }
-        tallies[key] = (
-          count: (prev?.count ?? 0) + 1,
-          emojiUrl: url,
-        );
-        break;
       }
-    }
-  }
-  return tallies;
-});
+      return tallies;
+    });
 
 /// Replies (kind-1) to an event. REQ {kinds:[1], "#e":[eventId]}.
 /// Returns `List<Event>` sorted newest-first.
@@ -1585,6 +1606,9 @@ Future<void> _addToCategoryList(
     identity,
   ).followCategory(current, pubkey, category);
   await pool.publishAndWait(signed);
+  // Optimistic local refresh — don't wait for the relay to round-trip the
+  // kind-30000 back; the ingestion listener will bump again when it lands.
+  ref.read(kind30000VersionProvider.notifier).bump();
 }
 
 /// Bookmark [eventId] (NIP-51 kind-10003). Fetches the current kind-10003 (to
@@ -1817,8 +1841,9 @@ final socialGraphMetadataPrefetchProvider = FutureProvider<void>((ref) async {
   final id = ref.watch(identityProvider).value;
   if (id == null) return;
   // Ensure followers have been merged into the graph before bulk-fetching.
-  await ref.watch(userFollowersProvider(id.pubkeyHex).future).catchError((_) =>
-      <String>[]);
+  await ref
+      .watch(userFollowersProvider(id.pubkeyHex).future)
+      .catchError((_) => <String>[]);
   final graph = ref.read(socialGraphProvider);
   if (graph.isEmpty) return;
   final pool = ref.read(relayPoolProvider);
@@ -1840,7 +1865,6 @@ final socialGraphMetadataPrefetchProvider = FutureProvider<void>((ref) async {
     }
   });
 });
-
 
 // --- NIP-05 verification ----------------------------------------------------
 

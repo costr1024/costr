@@ -88,6 +88,7 @@ class RelayClient implements RelayConnection {
   bool _connected = false;
   bool _disposed = false;
   int _backoffMs = 1000;
+  int _rttCounter = 0;
 
   void Function()? _onConnected;
   void Function()? _onDisconnected;
@@ -193,6 +194,45 @@ class RelayClient implements RelayConnection {
 
   void _send(List<dynamic> message) {
     _channel?.sink.add(jsonEncode(message));
+  }
+
+  /// Measure real application-level WebSocket round-trip latency: send a REQ
+  /// whose filter CANNOT match anything (`since` = 1 year in the future) and
+  /// time until the relay replies — the first reply frame for an impossible
+  /// filter is always `EOSE`, which the relay emits with no DB scan, so this
+  /// ≈ network RTT over the live socket (not an ICMP ping). Returns null if
+  /// not connected, or on [timeout] with no reply. The subscription is closed
+  /// in all exit paths.
+  Future<int?> measureRtt({
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    if (_disposed || !_connected) return null;
+    final subId = 'rtt${_rttCounter++}';
+    final sw = Stopwatch()..start();
+    final completer = Completer<int?>();
+    late StreamSubscription<String> sub;
+    sub = _eose.stream.where((id) => id == subId).listen((_) {
+      if (!completer.isCompleted) {
+        completer.complete(sw.elapsedMilliseconds);
+      }
+    });
+    final since =
+        (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 31557600; // +1y
+    _send([
+      'REQ',
+      subId,
+      <String, dynamic>{
+        'kinds': [1],
+        'since': since,
+        'limit': 1,
+      },
+    ]);
+    try {
+      return await completer.future.timeout(timeout, onTimeout: () => null);
+    } finally {
+      await sub.cancel();
+      _send(['CLOSE', subId]);
+    }
   }
 
   @override

@@ -96,6 +96,19 @@ class RelayPool {
       )
       .toList();
 
+  /// Measure real WS round-trip latency for [url] via its [RelayClient].
+  /// Returns null if the URL isn't in the pool or isn't a real client. The
+  /// measurement is a REQ→EOSE round-trip with an impossible filter (≈ network
+  /// RTT, not ICMP ping); see [RelayClient.measureRtt].
+  Future<int?> measureRttFor(String url) async {
+    for (final c in _connections) {
+      if (c.url == url && c is RelayClient) {
+        return c.measureRtt();
+      }
+    }
+    return null;
+  }
+
   Future<void> connect() async {
     if (_connecting || _mergedWired) return;
     _connecting = true;
