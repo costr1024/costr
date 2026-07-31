@@ -19,19 +19,26 @@ class PostDetailPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final chainAsync = ref.watch(threadAncestorsProvider(id));
+    // Show the focused post as soon as it resolves (usually instant — it's
+    // cached when opened from the feed/notifications). Ancestors load in the
+    // background via threadAncestorsProvider and are prepended above when
+    // ready, so the page is never blank while the chain resolves.
+    final focusedAv = ref.watch(eventByIdProvider(id));
+    final chainAv = ref.watch(threadAncestorsProvider(id));
     return Scaffold(
       appBar: AppBar(title: const Text('帖子')),
-      body: chainAsync.when(
+      body: focusedAv.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object e, _) => Center(child: Text('加载失败：$e')),
-        data: (List<Event> chain) {
-          if (chain.isEmpty) {
+        data: (Event? focused) {
+          if (focused == null) {
             return const Center(child: Text('未找到该帖子（可能未在中继上）'));
           }
-          final focused = chain.last;
+          // chain is root-first ending in focused; null while still loading.
+          final chain = chainAv.value ?? const <Event>[];
           final ancestors =
               chain.length > 1 ? chain.sublist(0, chain.length - 1) : <Event>[];
+          final displayFocused = chain.isNotEmpty ? chain.last : focused;
           final theme = Theme.of(context);
           return SingleChildScrollView(
             child: Padding(
@@ -52,8 +59,8 @@ class PostDetailPage extends ConsumerWidget {
                       ),
                     ),
                   ],
-                  EventCard(event: focused),
-                  _RepliesSection(eventId: focused.id),
+                  EventCard(event: displayFocused),
+                  _RepliesSection(eventId: displayFocused.id),
                 ],
               ),
             ),
