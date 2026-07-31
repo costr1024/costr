@@ -1,15 +1,16 @@
-/// Post detail page — single post full-screen + reply placeholder.
+/// Post detail page — full thread view.
+///
+/// Renders the ancestor chain of the focused post **root-first**
+/// (`[root, …, focused]`) so the replied-to main post is always visible
+/// above a reply the user opened (e.g. from a notification), followed by the
+/// direct replies to the focused post. Every post reuses [EventCard].
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
 import '../../models/event.dart';
-import '../../widgets/avatar.dart';
-import '../../widgets/markdown_content.dart';
-import '../../widgets/post_actions.dart';
 import 'event_card.dart';
 
 class PostDetailPage extends ConsumerWidget {
@@ -18,22 +19,19 @@ class PostDetailPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final evAsync = ref.watch(eventByIdProvider(id));
+    final chainAsync = ref.watch(threadAncestorsProvider(id));
     return Scaffold(
       appBar: AppBar(title: const Text('帖子')),
-      body: evAsync.when(
+      body: chainAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object e, _) => Center(child: Text('加载失败：$e')),
-        data: (Event? event) {
-          if (event == null) {
+        data: (List<Event> chain) {
+          if (chain.isEmpty) {
             return const Center(child: Text('未找到该帖子（可能未在中继上）'));
           }
-          // Watch replies so the original post knows whether to draw the
-          // thread connector down to the first reply (DESIGN §3.5 / ui_demo
-          // `.thread-line`). Cached by Riverpod, so re-watching here is free.
-          final replies =
-              ref.watch(repliesProvider(event.id)).value ?? const <Event>[];
-          final hasReplies = replies.isNotEmpty;
+          final focused = chain.last;
+          final ancestors =
+              chain.length > 1 ? chain.sublist(0, chain.length - 1) : <Event>[];
           final theme = Theme.of(context);
           return SingleChildScrollView(
             child: Padding(
@@ -41,92 +39,21 @@ class PostDetailPage extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  // Original post. Wrapped in a Stack so the thread line can
-                  // descend from the avatar (center x = 28) down to the row
-                  // bottom, connecting into the replies below.
-                  Stack(
-                    children: <Widget>[
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Row(
-                            children: <Widget>[
-                              const SizedBox(width: 10),
-                              GestureDetector(
-                                onTap: () => context.push('/u/${event.pubkey}'),
-                                child: Avatar(pubkey: event.pubkey, radius: 18),
-                              ),
-                              const SizedBox(width: 10),
-                              Flexible(
-                                child: GestureDetector(
-                                  onTap: () =>
-                                      context.push('/u/${event.pubkey}'),
-                                  child: Consumer(
-                                    builder:
-                                        (
-                                          BuildContext context,
-                                          WidgetRef ref,
-                                          _,
-                                        ) {
-                                          final meta = ref
-                                              .watch(
-                                                metadataProvider(event.pubkey),
-                                              )
-                                              .value;
-                                          return Text(
-                                            displayLabelFor(event.pubkey, meta),
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .labelMedium
-                                                ?.copyWith(
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          );
-                                        },
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          MarkdownContent(
-                            event: event,
-                            initiallyExpanded: true,
-                          ),
-                          if (event.hashtags.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 6,
-                              children: <Widget>[
-                                for (final t in event.hashtags)
-                                  Chip(
-                                    label: Text('#$t'),
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                              ],
-                            ),
-                          ],
-                          const Divider(height: 24),
-                          PostActions(event: event),
-                          const SizedBox(height: 16),
-                        ],
-                      ),
-                      if (hasReplies)
-                        Positioned(
-                          left: 27,
-                          top: 18,
-                          bottom: 0,
-                          width: 2,
-                          child: ColoredBox(
-                            color: theme.colorScheme.outline,
-                            child: const SizedBox.expand(),
-                          ),
+                  for (final e in ancestors) EventCard(event: e),
+                  if (ancestors.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 2, bottom: 2),
+                      child: Text(
+                        '你打开的帖子',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.outline,
                         ),
-                    ],
-                  ),
-                  _RepliesSection(eventId: event.id),
+                      ),
+                    ),
+                  ],
+                  EventCard(event: focused),
+                  _RepliesSection(eventId: focused.id),
                 ],
               ),
             ),
@@ -137,11 +64,8 @@ class PostDetailPage extends ConsumerWidget {
   }
 }
 
-/// Replies section — fetches kind-1 events that reference this post via #e
-/// tag and renders them as an X-style thread: each reply's avatar sits on a
-/// vertical connector line that runs down from the original post (see DESIGN
-/// §3.5 / ui_demo.html `.thread-line`). EventCard is reused unchanged for
-/// each reply; the line is an overlay aligned to its avatar center (x=28).
+/// Direct replies to [eventId], newest-first. Plain [EventCard]s (the former
+/// avatar-column connector line was removed).
 class _RepliesSection extends ConsumerWidget {
   const _RepliesSection({required this.eventId});
   final String eventId;
@@ -164,47 +88,9 @@ class _RepliesSection extends ConsumerWidget {
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            for (int i = 0; i < replies.length; i++)
-              _ThreadReplyCard(
-                event: replies[i],
-                isLast: i == replies.length - 1,
-              ),
-          ],
+          children: <Widget>[for (final e in replies) EventCard(event: e)],
         );
       },
-    );
-  }
-}
-
-/// One reply in the thread: [EventCard] with a connector line overlaid at the
-/// avatar center. The avatar (opaque) hides the line's middle, so it reads as
-/// segment-above — avatar — segment-below. The last reply has no segment
-/// below its avatar.
-class _ThreadReplyCard extends StatelessWidget {
-  const _ThreadReplyCard({required this.event, required this.isLast});
-  final Event event;
-  final bool isLast;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    // EventCard avatar center: padding(12) + top(2) + radius(16) = (28, 30).
-    return Stack(
-      children: <Widget>[
-        EventCard(event: event),
-        Positioned(
-          left: 27,
-          top: 0,
-          bottom: isLast ? null : 0,
-          width: 2,
-          height: isLast ? 30 : null,
-          child: ColoredBox(
-            color: theme.colorScheme.outline,
-            child: const SizedBox.expand(),
-          ),
-        ),
-      ],
     );
   }
 }

@@ -34,7 +34,8 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **搜索**：Feed AppBar 搜索图标 → 全局搜索页。**全局搜索**支持搜索帖子（NIP-50 `search` 过滤器 + kind 1）和用户（kind 0 metadata），结果分用户区 + 帖子区，点用户进主页、点帖为 EventCard。**搜索走独立中继池 `searchPoolProvider`**（只连支持 NIP-50 的 `relay.ditto.pub` + `search.nos.today`），与主信息流隔离——此前把 search REQ 发给全部默认中继，多数中继不认 `search` 过滤器会无视它、直接回最近的 kind-1/kind-0 喂量，导致搜出一堆无关帖子。搜索 provider 用 `rawEvents` + 本地 `seen` 去重，重复搜同一关键词也能返回结果。**指定用户搜索**放在用户主页：profile 顶部搜索框，客户端过滤该用户的帖子/回帖（按正文子串）。
 - **下拉刷新 + 加载更多**：下拉刷新重新拉取当前流；滚到底自动发 `until: 最旧时间戳` 的 REQ 追加更早的事件。
 - **用户主页（P5 增强）**：header 加 **关注 / 关注者统计行**（数字粗体 + 次色 label，>1k/1M 紧凑格式；关注数取 `userGroupedFollowsProvider` 求和，关注者数取 `userFollowersProvider`，加载中显 `—`）。关注 tab 加 **子 tab：关注的人 / 关注的标签**（仅自己的 profile）：关注的人顶部 **分组 chip 横滑**（全部 / 各分组，选全部按分组分段带计数小标题，选某分组平铺）；关注的标签为 `#tag 帖子数` chip 网格，点一个跳首页按 tag 过滤、long-press 取消关注、行首"+ 标签"可手动添加。**关注的标签存中继**（NIP-51 kind-30015 Interests，`t` 标签列表，d=""，跨设备同步）+ 本地缓存（`replaceable_events` 表）冷启动秒开；入口三处：首页 tag 过滤条星标、帖子 `#标签` 长按菜单、个人页关注的标签网格。
-- **帖子详情 thread line（P5）**：原帖 + 各回复共用左侧头像列（center x=28），每行 Stack 叠 2px 竖线，头像不透明遮中段 → 视觉呈「线—头像—线」连续；末条回复无下段线。复用 EventCard 不动。
+- **帖子详情线程视图**：打开任意帖 → `threadAncestorsProvider` 用**并行 BFS**从该帖的 NIP-10 `e` tag 逐级回溯祖先（root + reply marker 通常在同一条帖里，一次并行拉取，典型 2 层线程 ~5s 而非 5s×深度），返回 root-first 的 `[根帖, …, 当前帖]`；页面顶部依次展示根帖与各级祖先、标出"你打开的帖子"、下方列其直接回复（newest-first，全部复用 `EventCard`）。**去掉此前的头像列竖线**。祖先拉取失败则链在该级中止、展示已得部分——修复"打开回复却看不到被回复的主帖"。
+- **回复链强制缓存**：`EventStoreNotifier.cacheThreadEvent` 绕过社交图谱门槛，把用户打开过的整条回复链（根帖 + 各级祖先 + 当前帖 + 可见直接回复）**无论作者是否关注都持久化到 SQLite**，方便日后回复这些帖；fire-and-forget 不阻塞显示。只缓存链上的帖，不缓存这些用户的其他帖。
 - **新手引导（P5）**：首次登录后一次性 3 步气泡（发帖 FAB / 通知 tab / 关注一个人，可跳过、可点遮罩跳过）。"已看过"标志存本地 config 表（`onboarding_done`），后续不再弹。
 - **首页偏好持久化（P5）**：上次选的首页 tab（全球 / 关注）和语言过滤重启后恢复——存本地 config 表（`feed_mode` / `language_filter`），不上传中继。开箱默认全球 + 全部语言。
 - **账号备份**（设置→账号备份）：**账号级 NSFW 设置**（自动显示敏感内容 / 发帖默认标记敏感，只存本地不同步）+ **备份私钥**。复制私钥前用 `local_auth` 做生物识别 / 设备锁验证（移动端指纹/FaceID/锁屏密码；桌面 Linux 不支持则禁用），并展示强风险警示（私钥泄漏=账号无法销毁、被盗用、永远无法夺回控制权）。Android 用 `FlutterFragmentActivity`，iOS 配 `NSFaceIDUsageDescription`。
@@ -138,7 +139,7 @@ lib/
     feed/feed_page.dart       全球/关注切换、列表、状态、空态
     feed/event_card.dart      npub + 相对时间 + 正文 + 反应 chip + 帖子菜单（复制id/全文/打闪）
     feed/zap_sheet.dart       打闪底部页（金额/留言 → 二维码发票 + 钱包 deeplink）
-    feed/post_detail_page.dart 帖子详情 + 回复 thread line
+    feed/post_detail_page.dart 帖子详情 + 回复线程（祖先链 + 直接回复）
     profile/profile_page.dart 用户主页（帖子/回帖/关注/关注者 + 统计 + 分组 chip + 标签）
     compose/compose_page.dart 发帖/回复/引用 + 媒体上传（Blossom）
     notifications/           通知中心（全部/提及 + 聚合）+ 通知设置

@@ -280,6 +280,30 @@ class EventStoreNotifier extends Notifier<List<Event>> {
     } catch (_) {}
   }
 
+  /// Force-persist a thread event to SQLite **regardless of social-graph
+  /// membership**. Called for posts on a reply chain the user opened (root +
+  /// ancestors + the focused post + its visible replies) — the user may want
+  /// to reply to them later, so the chain is cached even when the authors
+  /// aren't followed. Only invoked for actually-viewed thread posts, so we
+  /// do NOT cache these users' other posts.
+  Future<void> cacheThreadEvent(Event e) async {
+    final db = _cache;
+    if (db == null) return;
+    try {
+      await db.writeEvent(
+        id: e.id,
+        pubkey: e.pubkey,
+        kind: e.kind,
+        createdAt: e.createdAt,
+        content: e.content,
+        sig: e.sig,
+        raw: jsonEncode(e.toWireObject()),
+        tagsJson: jsonEncode(e.tags),
+        tags: e.tags,
+      );
+    } catch (_) {}
+  }
+
   Event _cacheRowToEvent(cache.EventRow row) {
     return Event(
       id: row.id,
@@ -819,6 +843,78 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
   );
 });
 
+/// Candidate ancestor ids referenced by a kind-1 note's `e` tags — excludes
+/// `mention` markers (those aren't replies). Used to seed the parallel walk.
+List<String> _candidateAncestorIds(Event e) {
+  final ids = <String>{};
+  for (final t in e.tags) {
+    if (t.length < 2 || t[0] != 'e' || t[1] is! String) continue;
+    final marker = (t.length >= 4 && t[3] is String) ? (t[3] as String) : '';
+    if (marker == 'mention') continue;
+    final id = t[1] as String;
+    if (id != e.id) ids.add(id);
+  }
+  return ids.toList();
+}
+
+/// Ancestor chain of a kind-1 note, **root-first**: `[root, …, focused]`.
+///
+/// Walks up via NIP-10 `e` tags using a **parallel BFS**: from each event it
+/// takes all candidate ancestor ids (root + reply markers — usually both
+/// live in the focused event's tags already) and fetches them concurrently
+/// via [eventByIdProvider]'s 3-tier lookup (SQLite → in-memory → relay REQ).
+/// This turns a deep *sequential* walk (5s × depth) into ~one round-trip for
+/// the typical 2-level thread. Best-effort: if an ancestor can't be loaded
+/// the chain stops there; cycles are guarded by a seen-set + depth cap.
+///
+/// This is what lets the post-detail page show the *root* post above a reply
+/// the user opened (e.g. from a notification) — previously the page only
+/// showed the focused event itself, so the replied-to main post was missing.
+final threadAncestorsProvider = FutureProvider.family<List<Event>, String>((
+  ref,
+  id,
+) async {
+  final focused = await ref.watch(eventByIdProvider(id).future);
+  if (focused == null) return const <Event>[];
+  final byId = <String, Event>{focused.id: focused};
+  final seen = <String>{focused.id};
+  var frontier = _candidateAncestorIds(focused);
+  for (var depth = 0; depth < 32 && frontier.isNotEmpty; depth++) {
+    final fresh = frontier.where((cid) => !seen.contains(cid)).toList();
+    if (fresh.isEmpty) break;
+    final results = await Future.wait(
+      <Future<Event?>>[
+        for (final cid in fresh) ref.read(eventByIdProvider(cid).future),
+      ],
+    );
+    frontier = <String>[];
+    for (final r in results) {
+      if (r == null || !seen.add(r.id)) continue;
+      byId[r.id] = r;
+      frontier = <String>[...frontier, ..._candidateAncestorIds(r)];
+    }
+  }
+  // Build the ordered chain from focused up via immediate-parent pointers.
+  final chain = <Event>[focused];
+  var cur = focused;
+  for (var i = 0; i < 32; i++) {
+    final pid = cur.replyToId;
+    if (pid == null || pid == cur.id) break;
+    final parent = byId[pid];
+    if (parent == null) break; // ancestor didn't resolve — stop here
+    chain.insert(0, parent);
+    cur = parent;
+  }
+  // Persist the whole chain to SQLite (regardless of author) so the user can
+  // reply to any of these posts later. Fire-and-forget — must not delay the
+  // chain display; the events are already in memory here.
+  final store = ref.read(eventStoreProvider.notifier);
+  for (final e in byId.values) {
+    unawaited(store.cacheThreadEvent(e));
+  }
+  return chain;
+});
+
 /// A user's public kind-1 notes (posts + replies), newest-first. SQLite first
 /// (instant), then relay REQ for fresh data. Used by the profile page.
 final userPostsProvider = FutureProvider.family<List<Event>, String>((
@@ -1331,6 +1427,12 @@ final repliesProvider = FutureProvider.family<List<Event>, String>((
   });
   await completer.future.timeout(const Duration(seconds: 10), onTimeout: () {});
   collected.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  // Persist visible thread replies to SQLite (regardless of author) so the
+  // user can reply to them later. Fire-and-forget — don't block the list.
+  final store = ref.read(eventStoreProvider.notifier);
+  for (final e in collected) {
+    unawaited(store.cacheThreadEvent(e));
+  }
   return collected;
 });
 
