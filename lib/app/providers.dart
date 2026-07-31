@@ -29,14 +29,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
 /// Default relays. bostr requires NIP-42 auth to write (read-only for us);
-/// ditto/damus/nos.lol accept writes and are broadly queried, so posts reach
-/// other clients. nostr.wine supports NIP-50 full-text search (posts + users).
+/// ditto/damus/gulugulu accept writes and are broadly queried, so posts reach
+/// other clients.
 const List<String> defaultRelays = <String>[
   'wss://damus.bostr.online/',
-  'wss://nos.lol/',
+  'wss://relay.gulugulu.moe/',
   'wss://relay.ditto.pub/',
   'wss://relay.bostr.online/',
-  'wss://nostr.wine/',
+  'wss://multiplexer.huszonegy.world/',
   'wss://relay.nostr.net/',
   'wss://relay.0xchat.com/',
   'wss://top.testrelay.top/',
@@ -1269,7 +1269,7 @@ final userFollowersProvider = FutureProvider.family<List<String>, String>((
   return collected;
 });
 
-// --- Search (NIP-50, via nostr.wine) --------------------------------------
+// --- Search (NIP-50, via the dedicated search pool) --------------------------------------
 
 /// Version counter that bumps whenever a kind-30000 (NIP-51 Follow Set) event
 /// for the logged-in user is ingested or published — mirrors Amethyst's

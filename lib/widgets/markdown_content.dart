@@ -39,6 +39,16 @@ final RegExp _eventEntityRegex = RegExp(
   r'(?:nostr:)?((?:nevent1|note1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
 );
 
+/// Preserve blank lines in text fed to [MarkdownBody]. Markdown collapses
+/// runs of blank lines into a single paragraph break; Amethyst renders every
+/// blank line. Replace each empty line with a zero-width space (non-whitespace
+/// → not a blank line → no paragraph split). Pair with `softLineBreak: true`
+/// on MarkdownBody so single `\n` also render as line breaks.
+String _preserveBlankLines(String s) => s
+    .split('\n')
+    .map((l) => l.trim().isEmpty ? '​' : l)
+    .join('\n');
+
 /// Bare media URLs in content (image/video/file extensions) — stripped from
 /// text segments so they don't show as plain text; rendered via imeta extra
 /// or, for image/video, by [tokenizeContent] below. Negative lookbehind on
@@ -183,11 +193,14 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     for (final seg in segments) {
       if (seg is TextSeg) {
         // Strip bare media URLs from text (they're rendered via imeta extra).
-        final cleaned = replaceEmoji(seg.text.replaceAll(_bareMediaUrl, '').trim());
+        final cleaned = replaceEmoji(
+          _preserveBlankLines(seg.text.replaceAll(_bareMediaUrl, '')),
+        ).trim();
         if (cleaned.isEmpty) continue;
         children.add(
           MarkdownBody(
             data: cleaned,
+            softLineBreak: true,
             extensionSet: ExtensionSet.gitHubFlavored,
             sizedImageBuilder: sizedImageBuilder,
             onTapLink: (String text, String? href, String? title) {

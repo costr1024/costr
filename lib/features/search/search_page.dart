@@ -1,5 +1,5 @@
 /// Global search page — NIP-50 search for posts (kind 1) and users (kind 0)
-/// via nostr.wine. Entered from the feed AppBar search icon.
+/// via the dedicated NIP-50 search pool. Entered from the feed AppBar search icon.
 library;
 
 import 'package:flutter/material.dart';

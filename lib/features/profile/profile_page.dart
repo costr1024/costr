@@ -1415,9 +1415,18 @@ class _AboutTextState extends ConsumerState<_AboutText> {
 
   @override
   Widget build(BuildContext context) {
+    // 0. Preserve blank lines. Markdown collapses runs of blank lines into a
+    // single paragraph break; Amethyst renders multiple blank lines. Replace
+    // each empty line with a zero-width space (non-whitespace → not a blank
+    // line → no paragraph split) and render soft line breaks as real breaks
+    // (softLineBreak: true below), so each blank line stays visible.
+    var processed = widget.text
+        .split('\n')
+        .map((l) => l.trim().isEmpty ? '​' : l)
+        .join('\n');
     // 1. Linkify npub/nprofile mentions.
     final pubkeysByEntity = <String, String?>{};
-    for (final m in _entityRegex.allMatches(widget.text)) {
+    for (final m in _entityRegex.allMatches(processed)) {
       // group(1) = the bare entity (no `nostr:` prefix); use it for both
       // pubkey lookup and the link href so the href stays `nostr:<bare>`
       // (no doubled prefix).
@@ -1431,7 +1440,7 @@ class _AboutTextState extends ConsumerState<_AboutText> {
       final name = meta?.bestName;
       if (name != null && name.isNotEmpty) nameByPubkey[pk] = name;
     }
-    var processed = widget.text.replaceAllMapped(_entityRegex, (Match m) {
+    processed = processed.replaceAllMapped(_entityRegex, (Match m) {
       final entity = m.group(1)!;
       final pk = pubkeysByEntity[entity];
       final label =
@@ -1449,6 +1458,7 @@ class _AboutTextState extends ConsumerState<_AboutText> {
 
     Widget body = MarkdownBody(
       data: processed,
+      softLineBreak: true,
       extensionSet: ExtensionSet.gitHubFlavored,
       onTapLink: (String text, String? href, String? title) {
         if (href == null) return;
@@ -1457,7 +1467,10 @@ class _AboutTextState extends ConsumerState<_AboutText> {
           final pk = entityToPubkeyHex(entity);
           if (pk != null) context.push('/u/$pk');
         } else if (href.startsWith('costr:tag:')) {
-          final tag = href.substring('costr:tag:'.length);
+          // flutter_markdown percent-encodes non-ASCII in hrefs (e.g. Chinese
+          // #去掉 → costr:tag:%E5%8E%BB…) — decode so the tag filter gets the
+          // real characters, not mojibake.
+          final tag = Uri.decodeFull(href.substring('costr:tag:'.length));
           ref.read(tagFilterProvider.notifier).set(tag);
           context.go('/feed');
         } else if (href.startsWith('http')) {

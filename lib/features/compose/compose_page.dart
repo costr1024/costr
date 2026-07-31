@@ -403,6 +403,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       if (!ok.ok) {
         final db = await ref.read(localCacheProvider.future);
         await db.saveDraft(jsonEncode(signed.toWireObject()));
+        if (!mounted) return;
       }
       _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}（已存草稿，稍后重试）');
       // Refresh the profile Posts/Replies tabs so the just-published note
