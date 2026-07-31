@@ -254,10 +254,6 @@ class _ServerRow extends StatelessWidget {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       leading: Icon(Icons.circle, color: dotColor, size: 12),
       title: Text(url, style: theme.textTheme.bodyMedium),
-      subtitle: Text(
-        online ? '在线' : (connecting ? '连接中' : '离线'),
-        style: theme.textTheme.bodySmall,
-      ),
       trailing: trailing,
     );
   }
