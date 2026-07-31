@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../app/theme.dart';
+import '../../models/event.dart';
 import '../../nostr/relay_pool.dart';
 import '../../widgets/costr_logo.dart';
 import 'event_card.dart';
@@ -18,12 +19,81 @@ class FeedPage extends ConsumerStatefulWidget {
   ConsumerState<FeedPage> createState() => _FeedPageState();
 }
 
+/// Apply the read-freeze to a feed list. While frozen ([barrierCreatedAt] +
+/// [barrierId] set), keep only events not newer than the barrier (the
+/// freeze-time list + any older posts loaded later); newer live events are
+/// held back as pending. Pure + testable.
+@visibleForTesting
+List<Event> frozenVisible(
+  List<Event> events,
+  int? barrierCreatedAt,
+  String? barrierId,
+) {
+  if (barrierId == null || barrierCreatedAt == null) return events;
+  if (!events.any((e) => e.id == barrierId)) return events; // evicted → live
+  return events
+      .where((e) {
+        final c = e.createdAt.compareTo(barrierCreatedAt);
+        if (c != 0) return c < 0; // strictly older → visible
+        return e.id.compareTo(barrierId) >= 0; // same time: barrier or tie-older
+      })
+      .toList();
+}
+
 class _FeedPageState extends ConsumerState<FeedPage> {
   bool _loadingMore = false;
   static const int _loadMoreThreshold = 300; // px from bottom
 
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// Amethyst-style "don't disrupt reading" freeze. When the user scrolls
+  /// away from the top, we freeze the feed at the then-newest post (the
+  /// "barrier") and route newer live events into a pending counter shown as a
+  /// "N 条新帖" pill instead of prepending them (which would push the post
+  /// being read downward). Returning to the top or tapping the pill releases
+  /// the pending posts and jumps to the top. `null` = live (no freeze).
+  int? _barrierCreatedAt;
+  String? _barrierId;
+
+  void _freeze() {
+    final ev = ref.read(currentFeedEventsProvider);
+    if (ev.isEmpty) return;
+    final newest = ev.first;
+    setState(() {
+      _barrierCreatedAt = newest.createdAt;
+      _barrierId = newest.id;
+    });
+  }
+
+  void _release() {
+    setState(() {
+      _barrierCreatedAt = null;
+      _barrierId = null;
+    });
+  }
+
+  void _onPillTap() {
+    _release();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_controller.hasClients) {
+        _controller.animateTo(
+          0,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   Future<void> _refresh() async {
     // Re-issue the feed subscription (closes the old sub, opens a new one).
+    _release();
     ref.invalidate(feedSubscriptionProvider);
     // Show the spinner briefly while relays respond.
     await Future<void>.delayed(const Duration(milliseconds: 1200));
@@ -63,6 +133,12 @@ class _FeedPageState extends ConsumerState<FeedPage> {
         mode == FeedMode.following &&
         following.hasValue &&
         (following.value ?? const []).isEmpty;
+
+    // Apply the freeze: while frozen, only show events not newer than the
+    // barrier (the freeze-time list + any older posts loaded via _loadMore);
+    // newer live events are held back as pending.
+    final visible = frozenVisible(events, _barrierCreatedAt, _barrierId);
+    final pending = _barrierId == null ? 0 : events.length - visible.length;
 
     return Scaffold(
       appBar: AppBar(
@@ -105,25 +181,107 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                   ? ListView(
                       children: [_EmptyState(followingEmpty: followingEmpty)],
                     )
-                  : NotificationListener<ScrollNotification>(
-                      onNotification: (ScrollNotification n) {
-                        if (n is ScrollEndNotification &&
-                            n.metrics.pixels >=
-                                n.metrics.maxScrollExtent -
-                                    _loadMoreThreshold) {
-                          _loadMore();
-                        }
-                        return false;
-                      },
-                      child: ListView.builder(
-                        itemCount: events.length,
-                        itemBuilder: (BuildContext context, int i) =>
-                            EventCard(event: events[i]),
-                      ),
+                  : Stack(
+                      children: <Widget>[
+                        NotificationListener<ScrollNotification>(
+                          onNotification: (ScrollNotification n) {
+                            if (n is ScrollUpdateNotification) {
+                              final atTop = n.metrics.pixels <= 0;
+                              if (!atTop && _barrierId == null) {
+                                _freeze();
+                              } else if (atTop && _barrierId != null) {
+                                _release();
+                              }
+                            }
+                            if (n is ScrollEndNotification &&
+                                n.metrics.pixels >=
+                                    n.metrics.maxScrollExtent -
+                                        _loadMoreThreshold) {
+                              _loadMore();
+                            }
+                            return false;
+                          },
+                          child: ListView.builder(
+                            controller: _controller,
+                            // Increase the build window downward so scrolling
+                            // back up doesn't flash empty cards while the
+                            // builder catches up.
+                            addAutomaticKeepAlives: false,
+                            itemCount: visible.length,
+                            itemBuilder: (BuildContext context, int i) =>
+                                EventCard(event: visible[i]),
+                          ),
+                        ),
+                        if (pending > 0)
+                          Positioned(
+                            top: 8,
+                            left: 0,
+                            right: 0,
+                            child: Center(
+                              child: _NewPostsPill(
+                                count: pending,
+                                onTap: _onPillTap,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Floating "N 条新帖" pill shown at the top of the feed while new live
+/// events are held back during a read freeze. Tap releases them and jumps to
+/// the top.
+class _NewPostsPill extends StatelessWidget {
+  const _NewPostsPill({required this.count, required this.onTap});
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(
+            color: CostrColors.brand,
+            borderRadius: BorderRadius.circular(999),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0x44000000),
+                blurRadius: 6,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Icon(
+                Icons.arrow_upward,
+                size: 14,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                '$count 条新帖',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
