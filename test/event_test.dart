@@ -175,6 +175,89 @@ void main() {
       expect(Event.fromList(list).mediaAttachments, isEmpty);
     });
 
+    test('mediaAttachments parses ["image",url,mime] tags', () {
+      // Real-world pattern (e.g. the 441fcf3c image post): images attached via
+      // `["image", url, mimetype]` tags, NOT NIP-92 imeta. These must render.
+      final list = <dynamic>[
+        'id',
+        'pk',
+        1,
+        1,
+        <dynamic>[
+          <dynamic>['t', '煎蛋'],
+          <dynamic>['image', 'http://img.toto.im/mw600/a.jpg', 'image/jpeg'],
+          <dynamic>['image', 'https://img.wangmoyu.com/mw600/b.jpeg', 'image/jpeg'],
+        ],
+        'http://img.toto.im/mw600/a.jpg\nhttps://img.wangmoyu.com/mw600/b.jpeg',
+        'sig',
+      ];
+      final media = Event.fromList(list).mediaAttachments;
+      expect(media.length, 2);
+      expect(media[0].url, 'http://img.toto.im/mw600/a.jpg');
+      expect(media[0].mimeType, 'image/jpeg');
+      expect(media[0].isImage, isTrue);
+      expect(media[1].url, 'https://img.wangmoyu.com/mw600/b.jpeg');
+      expect(media[1].isImage, isTrue);
+    });
+
+    test('mediaAttachments parses ["video",url] and infers kind from URL', () {
+      final list = <dynamic>[
+        'id',
+        'pk',
+        1,
+        1,
+        <dynamic>[
+          <dynamic>['video', 'https://x/clip.webm'],
+        ],
+        'c',
+        's',
+      ];
+      final media = Event.fromList(list).mediaAttachments;
+      expect(media.length, 1);
+      expect(media[0].url, 'https://x/clip.webm');
+      expect(media[0].isVideo, isTrue);
+    });
+
+    test('mediaAttachments dedups same url across imeta and ["image",...]', () {
+      final list = <dynamic>[
+        'id',
+        'pk',
+        1,
+        1,
+        <dynamic>[
+          <dynamic>['imeta', 'url https://x/a.jpg', 'm image/jpeg', 'x 100'],
+          <dynamic>['image', 'https://x/a.jpg', 'image/jpeg'], // dup
+          <dynamic>['image', 'https://x/b.png'], // distinct
+        ],
+        'c',
+        's',
+      ];
+      final media = Event.fromList(list).mediaAttachments;
+      expect(media.length, 2);
+      expect(media[0].url, 'https://x/a.jpg');
+      expect(media[1].url, 'https://x/b.png');
+    });
+
+    test('isRepost / isPostLike classify feed kinds', () {
+      Event mk(int kind) => Event(
+        id: 'i',
+        pubkey: 'p',
+        createdAt: 1,
+        kind: kind,
+        tags: const [],
+        content: '',
+        sig: 's' * 128,
+      );
+      expect(mk(1).isPostLike, isTrue);
+      expect(mk(6).isRepost, isTrue);
+      expect(mk(6).isPostLike, isTrue);
+      expect(mk(16).isRepost, isTrue); // generic repost
+      expect(mk(30023).isPostLike, isTrue); // long-form
+      // Reactions / contact lists are NOT post-like.
+      expect(mk(7).isPostLike, isFalse);
+      expect(mk(3).isPostLike, isFalse);
+    });
+
     test('hashtags parses NIP-12 t-tags, lowercased + deduped', () {
       final list = <dynamic>[
         'id',

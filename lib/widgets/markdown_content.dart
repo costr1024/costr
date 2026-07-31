@@ -38,12 +38,24 @@ final RegExp _pubkeyEntityRegex = RegExp(
 final RegExp _eventEntityRegex = RegExp(
   r'(?:nostr:)?((?:nevent1|note1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
 );
-final RegExp _mdImageRegex = RegExp(r'!\[([^\]]*)\]\(([^)\s]+)\)');
 
 /// Bare media URLs in content (image/video/file extensions) — stripped from
-/// text segments so they don't show as plain text; rendered via imeta extra.
+/// text segments so they don't show as plain text; rendered via imeta extra
+/// or, for image/video, by [tokenizeContent] below. Negative lookbehind on
+/// `](` keeps it from matching the URL inside a markdown link/image
+/// `](url)`, so `[text](x.jpg)` links aren't broken.
 final RegExp _bareMediaUrl = RegExp(
-  r'https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|pdf|zip|txt|md|mp3|wav|ogg)',
+  r'(?<!\]\()https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|pdf|zip|txt|md|mp3|wav|ogg)',
+);
+
+/// Combined media token: a markdown image `![alt](url)` OR a bare image/video
+/// URL. Group 1+2 = markdown image alt + url; group 3 = bare url. The bare
+/// alternative's negative lookbehind `(?<!\]\()` prevents it from matching the
+/// URL inside `![](url)` or `[text](url)`, so only genuinely bare media URLs
+/// are extracted as images.
+final RegExp _mediaTokenRegex = RegExp(
+  r'!\[([^\]]*)\]\(([^)\s]+)\)|(?<!\]\()(https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv))',
+  caseSensitive: false,
 );
 
 /// Posts with content longer than this many chars collapse to [_kCollapsedMaxHeight]
@@ -201,11 +213,14 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       }
     }
 
-    // 3. Append NIP-92 imeta media. Only filter out URLs that appear as
-    // markdown images ](url) in the content — bare URLs in content are
-    // stripped from text (above) and need imeta extra to render the image.
+    // 3. Append NIP-92 imeta / `["image",...]` media whose URL is NOT already
+    // rendered from the content. [tokenizeContent] now extracts both markdown
+    // `![](url)` and bare image/video URLs into image groups, so any media URL
+    // that appears in the content has already been rendered — skip it to avoid
+    // duplication. Media whose URL is absent from the content (pure imeta
+    // attachments) still renders here.
     final extra = event.mediaAttachments
-        .where((m) => !event.content.contains('](${m.url})'))
+        .where((m) => !event.content.contains(m.url))
         .toList();
     final extraImages = extra
         .where((m) => m.isImage)
@@ -376,9 +391,11 @@ List<ContentSeg> tokenizeContent(String content) {
     }
   }
 
-  for (final m in _mdImageRegex.allMatches(content)) {
+  for (final m in _mediaTokenRegex.allMatches(content)) {
     final between = content.substring(lastEnd, m.start);
-    final url = m.group(2)!;
+    // group(2) = markdown image url; group(3) = bare media url.
+    final url = (m.group(2) ?? m.group(3) ?? '').toString();
+    if (url.isEmpty) continue;
     final isVideo = MediaAttachment(url: url).isVideo;
     if (between.trim().isEmpty) {
       if (isVideo) {
@@ -550,6 +567,13 @@ class _EventEmbed extends ConsumerWidget {
       );
     }
     final meta = ref.watch(metadataProvider(ev.pubkey)).value;
+    // Non-post events (reactions, contact lists, …) referenced via nevent must
+    // NOT be rendered as a quote post card. Show a compact inline label
+    // instead (Amethyst pattern). Only post-like kinds (1/6/16/30023) get the
+    // full author + snippet card below.
+    if (!ev.isPostLike) {
+      return _NonPostRefLabel(ev: ev);
+    }
     return GestureDetector(
       onTap: () => context.push('/n/${ev.id}'),
       child: Container(
@@ -593,6 +617,51 @@ class _EventEmbed extends ConsumerWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Compact inline label shown when a post references a non-post event via
+/// `nostr:nevent1…` (e.g. a kind-7 reaction or kind-3 contact list). Instead
+/// of rendering it as a full quote post card, show a small chip describing
+/// what was referenced — Amethyst does the same (reactions never become
+/// posts).
+class _NonPostRefLabel extends StatelessWidget {
+  const _NonPostRefLabel({required this.ev});
+  final Event ev;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final (label, icon) = switch (ev.kind) {
+      7 => (
+        '引用了一个赞',
+        ev.content.isNotEmpty && ev.content.length <= 8
+            ? ev.content
+            : '👍',
+      ),
+      3 => ('引用了联系人列表', '👥'),
+      _ => ('引用了类型 ${ev.kind} 的事件', '📎'),
+    };
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: CostrColors.bg2,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: theme.colorScheme.outline, width: 0.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(icon, style: const TextStyle(fontSize: 13)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.text3),
+          ),
+        ],
       ),
     );
   }

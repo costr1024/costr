@@ -70,4 +70,47 @@ void main() {
       expect(segs[2], isA<TextSeg>());
     });
   });
+
+  group('tokenizeContent (bare media URLs)', () {
+    test('single bare image URL → one image group of 1', () {
+      final segs = tokenizeContent('see this https://x/a.jpg');
+      expect(segs.length, 2);
+      expect(segs[0], isA<TextSeg>());
+      expect((segs[1] as ImageGroupSeg).urls, ['https://x/a.jpg']);
+    });
+
+    test('two contiguous bare image URLs → one group of 2', () {
+      final segs = tokenizeContent(
+        'http://img.toto.im/mw600/a.jpg\nhttps://img.wangmoyu.com/mw600/b.jpeg',
+      );
+      expect(segs.length, 1);
+      expect((segs[0] as ImageGroupSeg).urls.length, 2);
+    });
+
+    test('bare URL between text → text + image + text', () {
+      final segs = tokenizeContent('look\nhttps://x/a.jpg\nmore');
+      expect(segs.length, 3);
+      expect(segs[0], isA<TextSeg>());
+      expect((segs[1] as ImageGroupSeg).urls, ['https://x/a.jpg']);
+      expect(segs[2], isA<TextSeg>());
+    });
+
+    test('markdown link to an image is NOT extracted as a bare image', () {
+      // [text](https://x/a.jpg) — the URL is inside markdown link syntax; the
+      // negative lookbehind on ]( keeps it from being tokenized as an image,
+      // so it stays in the text segment for the markdown renderer to linkify.
+      final segs = tokenizeContent('click [photo](https://x/a.jpg) here');
+      expect(segs.length, 1);
+      expect(segs[0], isA<TextSeg>());
+    });
+
+    test('bare video URL → SingleVideoSeg', () {
+      final segs = tokenizeContent('clip https://x/v.mp4 end');
+      expect(segs.length, 3);
+      expect(segs[0], isA<TextSeg>());
+      expect(segs[1], isA<SingleVideoSeg>());
+      expect((segs[1] as SingleVideoSeg).url, 'https://x/v.mp4');
+      expect(segs[2], isA<TextSeg>());
+    });
+  });
 }

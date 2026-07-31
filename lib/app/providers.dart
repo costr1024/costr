@@ -1466,6 +1466,21 @@ final reactionsProvider =
       return tallies;
     });
 
+/// True if [e] is a kind-1 text note that directly references [eventId] via an
+/// `e` tag — i.e. a genuine reply. Used by [repliesProvider]'s global-stream
+/// listener, which receives the un-deduped `rawEvents` stream shared with
+/// every subscription. The feed sub also requests kind-7 reactions, and a
+/// reaction that #e-references the focused post would otherwise be collected
+/// as a reply and rendered as a post — only kind-1 notes are replies.
+@visibleForTesting
+bool isReplyToEvent(Event e, String eventId) {
+  if (!e.isTextNote) return false;
+  for (final t in e.tags) {
+    if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) return true;
+  }
+  return false;
+}
+
 /// Replies (kind-1) to an event. REQ {kinds:[1], "#e":[eventId]}.
 /// Returns `List<Event>` sorted newest-first.
 final repliesProvider = FutureProvider.family<List<Event>, String>((
@@ -1479,13 +1494,13 @@ final repliesProvider = FutureProvider.family<List<Event>, String>((
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
   evSub = pool.rawEvents.listen((e) {
-    if (e.isTextNote && !seen.add(e.id)) return;
-    for (final t in e.tags) {
-      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
-        collected.add(e);
-        break;
-      }
-    }
+    // Only collect kind-1 text notes that directly reply to [eventId]. The
+    // REQ filter restricts to kinds:[1], but `rawEvents` is the GLOBAL
+    // (un-deduped) stream shared with every subscription — the feed sub
+    // requests kind-7 reactions, and a reaction that #e-references this
+    // post would otherwise leak in and be rendered as a post.
+    if (!isReplyToEvent(e, eventId) || !seen.add(e.id)) return;
+    collected.add(e);
   });
   final subId = nextSubId('replies');
   final connectedCount = pool.states

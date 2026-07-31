@@ -96,8 +96,30 @@ class Event {
   /// NIP-02 contact list (the user's follows).
   static const int kindContactList = 3;
 
+  /// NIP-18 repost (a repost is a kind-6 event whose single `e` tag points at
+  /// the reposted note).
+  static const int kindRepost = 6;
+
+  /// NIP-18 generic repost (kind 16) — same shape as kind 6 but for non-text
+  /// events; treated the same way for feed rendering.
+  static const int kindGenericRepost = 16;
+
+  /// NIP-23 long-form content (an article). Shown in the feed like a post.
+  static const int kindLongForm = 30023;
+
   bool get isTextNote => kind == kindTextNote;
   bool get isContactList => kind == kindContactList;
+  bool get isRepost => kind == kindRepost || kind == kindGenericRepost;
+
+  /// True for kinds that should render as a post in the feed / as a quote-embed
+  /// card: text notes (1), reposts (6, 16), and long-form articles (30023).
+  /// Other kinds (e.g. reactions 7, contact lists 3) are NOT posts and must
+  /// not be displayed as one.
+  bool get isPostLike =>
+      kind == kindTextNote ||
+      kind == kindRepost ||
+      kind == kindGenericRepost ||
+      kind == kindLongForm;
 
   /// True if the event has a `["t", "nsfw"]` tag (convention for NSFW content).
   bool get isNsfw => hashtags.contains('nsfw');
@@ -178,50 +200,70 @@ class Event {
     return out;
   }
 
-  /// Media attachments from NIP-92 `imeta` tags. Each imeta tag is
+  /// Media attachments from NIP-92 `imeta` tags AND the simpler
+  /// `["image", url, mime?]` / `["video", url, mime?]` tags some clients emit
+  /// (Damus/Jumble-era convention, not standardized in a NIP but widespread).
+  /// Each imeta tag is
   /// `["imeta", "url <u>", "m <mimetype>", "x <w>", "y <h>", "dim WxH", ...]`.
-  /// `blurhash`/`alt` are parsed but not surfaced in v1.
+  /// `blurhash`/`alt` are parsed but not surfaced in v1. Attachments are
+  /// deduped by URL across both tag forms.
   List<MediaAttachment> get mediaAttachments {
     final out = <MediaAttachment>[];
+    final seen = <String>{};
     for (final tag in tags) {
-      if (tag.isEmpty || tag[0] != 'imeta') continue;
-      String? url;
-      String? mimeType;
-      int? width;
-      int? height;
-      for (int i = 1; i < tag.length; i++) {
-        final part = tag[i];
-        if (part is! String) continue;
-        final sp = part.indexOf(' ');
-        if (sp <= 0) continue;
-        final key = part.substring(0, sp);
-        final value = part.substring(sp + 1);
-        switch (key) {
-          case 'url':
-            url = value;
-          case 'm':
-            mimeType = value;
-          case 'x':
-            width = int.tryParse(value);
-          case 'y':
-            height = int.tryParse(value);
-          case 'dim':
-            final parts = value.split('x');
-            if (parts.length == 2) {
-              width = int.tryParse(parts[0]);
-              height = int.tryParse(parts[1]);
-            }
+      if (tag.isEmpty) continue;
+      final kind = tag[0];
+      if (kind == 'imeta') {
+        String? url;
+        String? mimeType;
+        int? width;
+        int? height;
+        for (int i = 1; i < tag.length; i++) {
+          final part = tag[i];
+          if (part is! String) continue;
+          final sp = part.indexOf(' ');
+          if (sp <= 0) continue;
+          final key = part.substring(0, sp);
+          final value = part.substring(sp + 1);
+          switch (key) {
+            case 'url':
+              url = value;
+            case 'm':
+              mimeType = value;
+            case 'x':
+              width = int.tryParse(value);
+            case 'y':
+              height = int.tryParse(value);
+            case 'dim':
+              final parts = value.split('x');
+              if (parts.length == 2) {
+                width = int.tryParse(parts[0]);
+                height = int.tryParse(parts[1]);
+              }
+          }
         }
-      }
-      if (url != null && url.isNotEmpty) {
-        out.add(
-          MediaAttachment(
-            url: url,
-            mimeType: mimeType,
-            width: width,
-            height: height,
-          ),
-        );
+        if (url != null && url.isNotEmpty && seen.add(url)) {
+          out.add(
+            MediaAttachment(
+              url: url,
+              mimeType: mimeType,
+              width: width,
+              height: height,
+            ),
+          );
+        }
+      } else if (kind == 'image' || kind == 'video') {
+        // `["image", url, mimetype?]` / `["video", url, mimetype?]` — a
+        // simpler, non-NIP-92 convention some clients emit. mimetype is
+        // optional; when absent it's inferred from the URL extension later.
+        if (tag.length < 2 || tag[1] is! String) continue;
+        final url = tag[1] as String;
+        if (url.isEmpty || !seen.add(url)) continue;
+        String? mimeType;
+        if (tag.length >= 3 && tag[2] is String && (tag[2] as String).isNotEmpty) {
+          mimeType = tag[2] as String;
+        }
+        out.add(MediaAttachment(url: url, mimeType: mimeType));
       }
     }
     return out;
