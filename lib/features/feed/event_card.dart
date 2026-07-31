@@ -82,14 +82,7 @@ class EventCard extends ConsumerWidget {
                     _NsfwAwareContent(event: event),
                     if (event.hashtags.isNotEmpty) ...[
                       const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          for (final tag in event.hashtags)
-                            _HashtagChip(tag: tag),
-                        ],
-                      ),
+                      _Hashtags(tags: event.hashtags),
                     ],
                     const SizedBox(height: 2),
                     _ReactionChips(eventId: event.id),
@@ -453,6 +446,42 @@ class _ReactionChips extends ConsumerWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// Hashtag row on a post. When there are more than ~2 rows of chips, collapse
+/// to the first [_kCollapsedChips] + a "+N" expand chip; tap to expand/collapse.
+class _Hashtags extends StatefulWidget {
+  const _Hashtags({required this.tags});
+  final List<String> tags;
+
+  @override
+  State<_Hashtags> createState() => _HashtagsState();
+}
+
+class _HashtagsState extends State<_Hashtags> {
+  static const int _kCollapsedChips = 6;
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final tags = widget.tags;
+    final show =
+        _expanded ? tags : tags.take(_kCollapsedChips).toList();
+    final hidden = tags.length - show.length;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: <Widget>[
+        for (final tag in show) _HashtagChip(tag: tag),
+        if (hidden > 0)
+          ActionChip(
+            label: Text(_expanded ? '收起' : '+$hidden'),
+            visualDensity: VisualDensity.compact,
+            onPressed: () => setState(() => _expanded = !_expanded),
+          ),
+      ],
     );
   }
 }
