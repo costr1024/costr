@@ -39,26 +39,49 @@ String hexToNote(String idHex) => encodeBech32('note', _hexToBytes(idHex));
 /// Decode a `note1...` string to a hex event id.
 String noteToHex(String note) => _bytesToHex(decodeBech32(note).data);
 
-/// Decode an `nprofile1...` (NIP-19) to the 32-byte pubkey hex. The nprofile
-/// payload is TLV: [type, length, value...] repeating; type 0x00 is the
-/// pubkey (32 bytes). Relays (type 0x01) and petname (0x02) are ignored.
-/// Returns null if the string isn't a valid nprofile or has no pubkey TLV.
-String? nprofileToPubkeyHex(String nprofile) {
-  if (!nprofile.toLowerCase().startsWith('nprofile1')) return null;
-  final bytes = decodeBech32(nprofile).data;
+/// Decoded `nprofile1...` parts (NIP-19).
+class Nprofile {
+  const Nprofile({this.pubkey, this.relays = const []});
+  final String? pubkey; // 32-byte hex pubkey
+  final List<String> relays; // relay hints (where to find this user's events)
+}
+
+/// Decode an `nprofile1...` to its pubkey + relay hints. Accepts an optional
+/// `nostr:` prefix. Returns null if not an nprofile or has no pubkey TLV.
+/// Relay hints (TLV type 0x01) are the URLs where this user publishes their
+/// events (NIP-65 outbox model) — preserve them so callers can DIRECT REQs
+/// at the user's own relays instead of broadcasting.
+Nprofile? nprofileDecode(String nprofile) {
+  var e = nprofile;
+  if (e.toLowerCase().startsWith('nostr:')) e = e.substring(6);
+  if (!e.toLowerCase().startsWith('nprofile1')) return null;
+  final bytes = decodeBech32(e).data;
   int i = 0;
+  String? pubkey;
+  final relays = <String>[];
   while (i + 2 <= bytes.length) {
     final type = bytes[i];
     final len = bytes[i + 1];
     if (i + 2 + len > bytes.length) break;
     final value = bytes.sublist(i + 2, i + 2 + len);
     if (type == 0 && len == 32) {
-      return _bytesToHex(value);
+      pubkey = _bytesToHex(value);
+    } else if (type == 1) {
+      relays.add(utf8.decode(value));
     }
     i += 2 + len;
   }
-  return null;
+  if (pubkey == null) return null;
+  return Nprofile(pubkey: pubkey, relays: relays);
 }
+
+/// Decode an `nprofile1...` (NIP-19) to the 32-byte pubkey hex. The nprofile
+/// payload is TLV: [type, length, value...] repeating; type 0x00 is the
+/// pubkey (32 bytes). Relay hints (type 0x01) are decoded by [nprofileDecode]
+/// but not returned here — use it directly when you need the relay hints.
+/// Returns null if the string isn't a valid nprofile or has no pubkey TLV.
+String? nprofileToPubkeyHex(String nprofile) =>
+    nprofileDecode(nprofile)?.pubkey;
 
 /// Decode any NIP-19 pubkey entity (`npub1` or `nprofile1`) to pubkey hex.
 /// Strips an optional `nostr:` prefix (mentions in post content are often

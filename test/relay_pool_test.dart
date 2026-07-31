@@ -296,4 +296,59 @@ void main() {
       await pool.dispose();
     });
   });
+
+  group('fetchFromUrls (NIP-65 outbox routing)', () {
+    test('empty urls → no fetch, empty result', () async {
+      final pool = RelayPool([]);
+      expect(await pool.fetchFromUrls({'kinds': [1]}, const []), isEmpty);
+      await pool.dispose();
+    });
+
+    test('non-ws urls are skipped', () async {
+      final pool = RelayPool([]);
+      expect(
+        await pool.fetchFromUrls({'kinds': [1]}, const ['http://x', 'ftp://y']),
+        isEmpty,
+      );
+      await pool.dispose();
+    });
+
+    test('collects events + dedups by id + closes on EOSE', () async {
+      final fake = _FakeRelay('wss://a');
+      final pool = RelayPool([])..makeClient = (url) => fake;
+      final fut = pool.fetchFromUrls({
+        'kinds': [1],
+      }, const ['wss://a']);
+      // Let connect() + request() run (async).
+      await Future<void>.delayed(Duration.zero);
+      final req = fake.sent.where((m) => m[0] == 'REQ').single;
+      final subId = req[1] as String;
+      fake.emit(_event('e1', content: 'hi'));
+      fake.emit(_event('e1')); // dup — deduped
+      fake.emitEose(subId);
+      final result = await fut;
+      expect(result.map((e) => e.id), ['e1']);
+      // The transient client was closed + disposed.
+      expect(fake.sent.last, ['CLOSE', subId]);
+      await pool.dispose();
+    });
+
+    test('no EOSE → timeout returns whatever was collected, still disposes',
+        () async {
+          final fake = _FakeRelay('wss://a');
+          final pool = RelayPool([])..makeClient = (url) => fake;
+          final fut = pool.fetchFromUrls(
+            {'kinds': [1]},
+            const ['wss://a'],
+            timeout: const Duration(milliseconds: 50),
+          );
+          await Future<void>.delayed(Duration.zero);
+          // Emit an event but never EOSE.
+          fake.emit(_event('e1'));
+          final result = await fut;
+          expect(result.map((e) => e.id), ['e1']);
+          expect(fake.sent.last[0], 'CLOSE'); // disposed regardless
+          await pool.dispose();
+        });
+  });
 }

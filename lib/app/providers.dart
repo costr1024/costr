@@ -111,6 +111,41 @@ Map<String, dynamic> buildFeedFilter(FeedMode mode, List<String> follows) {
   return filter;
 }
 
+/// A user's NIP-65 relay list (kind 10002): outbox (read) + inbox (write)
+/// relays. Parsed from the `["r", url, marker?]` tags. A tag with no marker
+/// means the relay is used for both read + write; `marker == "read"` →
+/// read-only, `"write"` → write-only.
+@visibleForTesting
+class RelayList {
+  const RelayList({this.read = const [], this.write = const []});
+  final List<String> read;
+  final List<String> write;
+
+  /// Parse a kind-10002 event. Returns null if [e] isn't kind 10002. Dedupes
+  /// by URL, preserving first-seen order.
+  static RelayList? parse(Event e) {
+    if (e.kind != 10002) return null;
+    final read = <String>{};
+    final write = <String>{};
+    for (final t in e.tags) {
+      if (t.length < 2 || t[0] != 'r' || t[1] is! String) continue;
+      final url = (t[1] as String).trim();
+      if (url.isEmpty) continue;
+      final marker =
+          (t.length >= 3 && t[2] is String) ? (t[2] as String).trim() : '';
+      if (marker == 'read') {
+        read.add(url);
+      } else if (marker == 'write') {
+        write.add(url);
+      } else {
+        read.add(url);
+        write.add(url);
+      }
+    }
+    return RelayList(read: read.toList(), write: write.toList());
+  }
+}
+
 // --- Identity ---------------------------------------------------------------
 
 final storageProvider = Provider<SecureStorageService>((ref) {
@@ -173,6 +208,75 @@ final searchPoolProvider = Provider<RelayPool>((ref) {
   ref.onDispose(pool.dispose);
   return pool;
 });
+
+/// A user's NIP-65 relay list (kind 10002) — their outbox/inbox relays.
+/// Fetched by broadcasting a REQ to the main pool (we don't know the user's
+/// relays yet, so we can't target them), parsing the newest matching kind-10002
+/// event via [RelayList.parse]. In-memory TTL cache (5 min) per pubkey so
+/// repeated profile views don't re-fetch. Returns null if the user has no
+/// published relay list. Used to DIRECT profile/posts REQs at the author's
+/// own relays ([RelayPool.fetchFromUrls]) instead of broadcasting — much
+/// higher hit rate for users whose events live only on their outbox relays.
+final userRelayListProvider = FutureProvider.family<RelayList?, String>((
+  ref,
+  pubkey,
+) async {
+  final cached = _relayListCache[pubkey];
+  if (cached != null) {
+    final age = DateTime.now().difference(cached.fetchedAt);
+    if (age < const Duration(minutes: 5)) return cached.list;
+  }
+  final pool = ref.watch(relayPoolProvider);
+  final completer = Completer<void>();
+  Event? newest;
+  final seen = <String>{};
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  final subId = nextSubId('rl');
+  evSub = pool.rawEvents.listen((e) {
+    if (e.pubkey != pubkey || e.kind != 10002) return;
+    if (!seen.add(e.id)) return;
+    if (newest == null || e.createdAt > newest!.createdAt) {
+      newest = e;
+    }
+  });
+  final connectedCount = pool.states
+      .where((s) => s.status == RelayStatus.connected)
+      .length;
+  var eoses = 0;
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (eoses >= connectedCount && !completer.isCompleted) completer.complete();
+  });
+  pool.request(
+    subId,
+    <String, dynamic>{
+      'kinds': [10002],
+      'authors': [pubkey],
+      'limit': 1,
+    },
+    closeOnEose: true,
+  );
+  ref.onDispose(() {
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  await completer.future.timeout(const Duration(seconds: 8), onTimeout: () {});
+  final list = newest == null ? null : RelayList.parse(newest!);
+  if (list != null) {
+    _relayListCache[pubkey] = _CachedRelayList(list, DateTime.now());
+  }
+  return list;
+});
+
+class _CachedRelayList {
+  const _CachedRelayList(this.list, this.fetchedAt);
+  final RelayList list;
+  final DateTime fetchedAt;
+}
+
+final Map<String, _CachedRelayList> _relayListCache = {};
 
 /// Loads identity from secure storage, then opens relay connections. The router
 /// waits on this before resolving redirects, avoiding a cold-start race.
@@ -350,6 +454,20 @@ class EventStoreNotifier extends Notifier<List<Event>> {
         tags: e.tags,
       );
     } catch (_) {}
+  }
+
+  /// Add an externally-fetched event to the in-memory store + SQLite. Used by
+  /// [RelayPool.fetchFromUrls] (NIP-65 outbox routing): those events bypass
+  /// the pool's merged stream, so the normal [pool.events] listener never
+  /// sees them — ingest them here so the rest of the app (feed, detail pages,
+  /// replies) finds them, and persist so a later visit is instant. Persists
+  /// regardless of social-graph membership, like [cacheThreadEvent] (the user
+  /// opened the profile, so cache its posts).
+  Future<void> ingest(Event e) async {
+    if (_store.add(e)) {
+      state = _store.events;
+      unawaited(cacheThreadEvent(e));
+    }
   }
 
   Event _cacheRowToEvent(cache.EventRow row) {
@@ -976,33 +1094,51 @@ final userPostsProvider = FutureProvider.family<List<Event>, String>((
       cached.add(_cacheRowToEvent(row));
     }
   }
-  // 2. Relay REQ (fresh data, merges into cache via _persist).
+  // 2. Relay REQ (fresh data, merges into cache via ingest). Try NIP-65
+  //    outbox routing first: fetch the user's kind-10002 relays and direct the
+  //    REQ at them (much higher hit rate — their posts live on their outbox
+  //    relays). Falls back to a broadcast REQ if the user has no published
+  //    relay list. Relay list is TTL-cached so repeat visits skip the lookup.
   final pool = ref.watch(relayPoolProvider);
-  final collected = <Event>[];
-  final seen = <String>{};
-  final completer = Completer<void>();
-  late StreamSubscription<Event> evSub;
-  late StreamSubscription<String> eoseSub;
-  evSub = pool.rawEvents.listen((e) {
-    if (e.isTextNote && e.pubkey == pubkey && seen.add(e.id)) {
-      collected.add(e);
-    }
-  });
-  final subId = nextSubId('user');
-  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    if (!completer.isCompleted) completer.complete();
-  });
-  pool.request(subId, <String, dynamic>{
+  final store = ref.read(eventStoreProvider.notifier);
+  final filter = <String, dynamic>{
     'authors': [pubkey],
     'kinds': [1],
     'limit': 100,
-  }, closeOnEose: true);
-  ref.onDispose(() {
-    evSub.cancel();
-    eoseSub.cancel();
-    pool.closeSubscription(subId);
-  });
-  await completer.future.timeout(const Duration(seconds: 10), onTimeout: () {});
+  };
+  final collected = <Event>[];
+  final seen = <String>{};
+  final relays = await ref.watch(userRelayListProvider(pubkey).future);
+  final outbox = relays?.read ?? const <String>[];
+  if (outbox.isNotEmpty) {
+    for (final e in await pool.fetchFromUrls(filter, outbox)) {
+      if (e.isTextNote && e.pubkey == pubkey && seen.add(e.id)) {
+        collected.add(e);
+        unawaited(store.ingest(e));
+      }
+    }
+  } else {
+    // No published relay list — broadcast to the main pool.
+    final completer = Completer<void>();
+    late StreamSubscription<Event> evSub;
+    late StreamSubscription<String> eoseSub;
+    evSub = pool.rawEvents.listen((e) {
+      if (e.isTextNote && e.pubkey == pubkey && seen.add(e.id)) {
+        collected.add(e);
+      }
+    });
+    final subId = nextSubId('user');
+    eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+      if (!completer.isCompleted) completer.complete();
+    });
+    pool.request(subId, filter, closeOnEose: true);
+    ref.onDispose(() {
+      evSub.cancel();
+      eoseSub.cancel();
+      pool.closeSubscription(subId);
+    });
+    await completer.future.timeout(const Duration(seconds: 10), onTimeout: () {});
+  }
   // Merge cached + fresh, dedup by id, newest-first.
   final all = <Event>[...collected, ...cached];
   final seenMerge = <String>{};

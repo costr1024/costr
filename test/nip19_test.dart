@@ -72,6 +72,31 @@ void main() {
       expect(nprofileToPubkeyHex('not-a-key'), isNull);
     });
 
+    test('nprofileDecode preserves pubkey + relay hints', () {
+      final pubkeyBytes = List<int>.generate(32, (i) => i);
+      final relay1 = 'wss://relay.ditto.pub/';
+      final relay2 = 'wss://search.nos.today/';
+      final tlv = <int>[
+        0, 32, ...pubkeyBytes,
+        1, relay1.length, ...relay1.codeUnits,
+        1, relay2.length, ...relay2.codeUnits,
+      ];
+      final nprofile = encodeBech32('nprofile', tlv);
+      final decoded = nprofileDecode(nprofile);
+      expect(decoded, isNotNull);
+      expect(decoded!.pubkey, HEX.encode(pubkeyBytes));
+      expect(decoded.relays, [relay1, relay2]);
+      // nostr: prefix handled
+      expect(nprofileDecode('nostr:$nprofile')?.pubkey, HEX.encode(pubkeyBytes));
+    });
+
+    test('nprofileDecode returns null without a pubkey TLV', () {
+      // relay only, no pubkey
+      final tlv = <int>[1, 5, 0x68, 0x65, 0x6c, 0x6c, 0x6f];
+      final nprofile = encodeBech32('nprofile', tlv);
+      expect(nprofileDecode(nprofile), isNull);
+    });
+
     test('entityToPubkeyHex handles npub / nprofile / else null', () {
       const pub =
           '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';

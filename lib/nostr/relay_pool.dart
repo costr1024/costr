@@ -42,11 +42,17 @@ class RelayPool {
   final LinkedHashSet<String> _seenIds = LinkedHashSet();
   bool _mergedWired = false;
   bool _connecting = false;
+  int _fetchSeq = 0;
 
   /// Lazily returns the current identity, used to sign NIP-42 AUTH responses.
   /// Set by the app so the pool can auth after login (identity may arrive
   /// after the pool is created).
   Identity? Function() identityGetter = () => null;
+
+  /// Factory for the TRANSIENT [RelayConnection]s opened by [fetchFromUrls].
+  /// Defaults to real WebSocket [RelayClient]s; tests inject a fake to avoid
+  /// network I/O.
+  RelayConnection Function(String url) makeClient = RelayClient.new;
 
   final StreamController<Event> _merged = StreamController<Event>.broadcast();
   final StreamController<Event> _raw = StreamController<Event>.broadcast();
@@ -107,6 +113,60 @@ class RelayPool {
       }
     }
     return null;
+  }
+
+  /// One-shot fetch against [urls] (NIP-65 outbox routing): open a TRANSIENT
+  /// [RelayClient] per URL, send REQ [filter], collect events until every
+  /// relay EOSEs (or [timeout] elapses), then close + dispose — leaving the
+  /// pool's persistent connection set + active-subscription map untouched.
+  /// Lets a profile/posts fetch target the author's own outbox relays (from
+  /// their kind-10002) instead of broadcasting to the whole pool. Events are
+  /// deduped by id across relays. Empty/invalid URLs are skipped.
+  Future<List<Event>> fetchFromUrls(
+    Map<String, dynamic> filter,
+    List<String> urls, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final cleaned = urls
+        .map((u) => u.trim())
+        .where((u) => u.isNotEmpty && (u.startsWith('ws://') || u.startsWith('wss://')))
+        .toSet();
+    if (cleaned.isEmpty) return const <Event>[];
+    final subId = 'costr:fetch:${_fetchSeq++}';
+    final results = <Event>[];
+    final seen = <String>{};
+    await Future.wait(
+      cleaned.map((url) async {
+        final client = makeClient(url);
+        late StreamSubscription<Event> evSub;
+        late StreamSubscription<String> eoseSub;
+        final done = Completer<void>();
+        evSub = client.events.listen((e) {
+          if (seen.add(e.id)) results.add(e);
+        });
+        eoseSub = client.eose.where((s) => s == subId).listen((_) {
+          if (!done.isCompleted) done.complete();
+        });
+        try {
+          // connect() awaits the WS/TLS handshake (up to 10s internally);
+          // cap at 5s so a silent black-hole relay doesn't stall the fetch.
+          await client.connect().timeout(const Duration(seconds: 5));
+          if (!client.isConnected) return; // handshake failed — skip
+          client.request(subId, filter);
+          await done.future.timeout(timeout);
+        } catch (_) {
+          // connect failed or fetch timed out — results so far are kept.
+        } finally {
+          await evSub.cancel();
+          await eoseSub.cancel();
+          try {
+            client.closeSubscription(subId);
+          } catch (_) {}
+          await client.dispose();
+        }
+      }),
+    );
+    return results;
   }
 
   Future<void> connect() async {
