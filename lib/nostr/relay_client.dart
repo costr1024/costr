@@ -121,20 +121,29 @@ class RelayClient implements RelayConnection {
   @override
   Future<void> connect() async {
     if (_disposed || _connected) return;
+    final channel = WebSocketChannel.connect(Uri.parse(url));
+    _channel = channel;
+    // WebSocketChannel.connect is lazy — the WS/TLS handshake isn't done when
+    // it returns. Await `ready` so `_connected` reflects a TRULY open socket.
+    // Without this, GFW-blocked relays (handshake never completes) were marked
+    // "connected" (green/在线) while RTT probes timed out with no data. A 10s
+    // timeout lets silent black-holes fail fast instead of hanging.
     try {
-      final channel = WebSocketChannel.connect(Uri.parse(url));
-      _channel = channel;
-      _sub = channel.stream.listen(
-        _onData,
-        onError: (Object _) => _handleDisconnect(),
-        onDone: _handleDisconnect,
-      );
-      _connected = true;
-      _backoffMs = 1000; // reset on success
-      _onConnected?.call();
+      await channel.ready.timeout(const Duration(seconds: 10));
     } catch (_) {
+      if (_disposed) return;
       _scheduleReconnect();
+      return;
     }
+    if (_disposed) return;
+    _sub = channel.stream.listen(
+      _onData,
+      onError: (Object _) => _handleDisconnect(),
+      onDone: _handleDisconnect,
+    );
+    _connected = true;
+    _backoffMs = 1000; // reset on success
+    _onConnected?.call();
   }
 
   void _handleDisconnect() {

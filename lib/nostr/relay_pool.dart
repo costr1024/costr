@@ -113,14 +113,19 @@ class RelayPool {
     if (_connecting || _mergedWired) return;
     _connecting = true;
     _wireMerged();
-    for (final c in _connections) {
-      c.setOnConnected(() {
-        _resendActive(c);
-        _emitStatus();
-      });
-      c.setOnDisconnected(_emitStatus);
-      await c.connect().catchError((Object _) {});
-    }
+    // Connect all relays concurrently (not sequentially) so a blocked relay
+    // (RelayClient.connect awaits a 10s ready timeout) doesn't stall reachable
+    // relays behind it.
+    await Future.wait(
+      _connections.map((c) async {
+        c.setOnConnected(() {
+          _resendActive(c);
+          _emitStatus();
+        });
+        c.setOnDisconnected(_emitStatus);
+        await c.connect().catchError((Object _) {});
+      }),
+    );
     _connecting = false;
     _emitStatus();
   }

@@ -4,6 +4,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
 import '../../app/theme.dart';
@@ -31,13 +32,11 @@ List<Event> frozenVisible(
 ) {
   if (barrierId == null || barrierCreatedAt == null) return events;
   if (!events.any((e) => e.id == barrierId)) return events; // evicted → live
-  return events
-      .where((e) {
-        final c = e.createdAt.compareTo(barrierCreatedAt);
-        if (c != 0) return c < 0; // strictly older → visible
-        return e.id.compareTo(barrierId) >= 0; // same time: barrier or tie-older
-      })
-      .toList();
+  return events.where((e) {
+    final c = e.createdAt.compareTo(barrierCreatedAt);
+    if (c != 0) return c < 0; // strictly older → visible
+    return e.id.compareTo(barrierId) >= 0; // same time: barrier or tie-older
+  }).toList();
 }
 
 class _FeedPageState extends ConsumerState<FeedPage> {
@@ -265,11 +264,7 @@ class _NewPostsPill extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              const Icon(
-                Icons.arrow_upward,
-                size: 14,
-                color: Colors.white,
-              ),
+              const Icon(Icons.arrow_upward, size: 14, color: Colors.white),
               const SizedBox(width: 5),
               Text(
                 '$count 条新帖',
@@ -420,8 +415,10 @@ class _RelayStatusChip extends StatelessWidget {
     final allConnected = connectedCount == relays.length;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
-      child: Chip(
+      // Tappable → 服务器节点 page (relay + Blossom RTT).
+      child: ActionChip(
         visualDensity: VisualDensity.compact,
+        onPressed: () => context.push('/settings/relays'),
         avatar: Icon(
           allConnected ? Icons.cloud_done : Icons.cloud_off,
           size: 18,

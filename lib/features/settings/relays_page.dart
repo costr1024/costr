@@ -249,6 +249,9 @@ class _ServerRow extends StatelessWidget {
         : (connecting ? Colors.amber : Colors.red);
     final trailing = _trailing(theme);
     return ListTile(
+      dense: true,
+      visualDensity: const VisualDensity(horizontal: 0, vertical: -3),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       leading: Icon(Icons.circle, color: dotColor, size: 12),
       title: Text(url, style: theme.textTheme.bodyMedium),
       subtitle: Text(
