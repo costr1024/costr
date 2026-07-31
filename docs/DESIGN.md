@@ -84,6 +84,11 @@
     - 帖子下方按 emoji 聚合显示 chip：`❤️ 18` `:nostr: 3`，我选中的 chip 高亮区分。
     - 不用 emoji 当动作图标本身（动作图标仍用线性 SVG）。
   - **↗ 分享**：复制 `https://njump.me/<note1>`。
+- **右上角 `⋮` 帖子菜单**（参考 Amethyst）：
+  - **复制帖子 id**：复制 `nostr:nevent1…`（NIP-19 nevent，带 relay + author hint），不是裸 hex——粘到别处或本应用发帖框都能解析回原帖。
+  - **复制全文**：复制正文纯文本。
+  - **⚡ 打闪（NIP-57 Zap）**：在「复制全文」下方，同等级菜单项。弹底部页：自定义聪（satoshi）数量 + 预设 chip（100/500/1k/5k/10k）+ 可选留言 → 解析对方 lud16/lud06 → LNURL-pay → 签 kind-9734 zap 请求 → 取 BOLT11 发票 → 二维码 + 复制发票 + 「在钱包中打开」（`lightning:` deeplink）。对方未配置闪电地址时提示「对方未配置闪电地址，无法打闪」。打闪＝zap，聪＝sat（文案统一中文）。
+- **NIP-27 事件引用嵌入**：发帖框粘贴 `nostr:nevent1…` / `nostr:note1…` → 发布自动补 `e` mention tag（+ nevent 的 `p` author tag），正文保留 `nostr:…` 文本；渲染端把引用帖渲染成内嵌引用卡（作者头像+名+正文片段，点进 `/n/:id`），裸 bech32 文本剥离。
 
 ## 4. 信息架构（重新设计的导航）
 

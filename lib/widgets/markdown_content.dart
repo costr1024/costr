@@ -19,8 +19,10 @@ import 'package:markdown/markdown.dart' hide Text;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app/providers.dart';
+import '../app/theme.dart';
 import '../models/event.dart';
 import '../utils/nip19.dart';
+import 'avatar.dart';
 import 'network_video.dart';
 
 /// Matches nostr: prefix + npub1/nprofile1 entity (consumes the nostr: prefix
@@ -29,6 +31,12 @@ import 'network_video.dart';
 /// not just the `npub1`/`nprofile1` prefix.
 final RegExp _pubkeyEntityRegex = RegExp(
   r'(?:nostr:)?((?:nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
+);
+
+/// Matches `nostr:nevent1…` / `nostr:note1…` (NIP-27 event references). Group
+/// 1 captures the bare entity so we can decode the referenced event id.
+final RegExp _eventEntityRegex = RegExp(
+  r'(?:nostr:)?((?:nevent1|note1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
 );
 final RegExp _mdImageRegex = RegExp(r'!\[([^\]]*)\]\(([^)\s]+)\)');
 
@@ -87,8 +95,27 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       return '[@$label](nostr:$entity)';
     });
 
+    // 1b. NIP-27 event references (`nostr:nevent1…` / `nostr:note1…`, plus `e`
+    // mention tags): collect referenced ids, then strip the raw entity text
+    // from the content (rendered as embedded quote cards below instead).
+    final referencedIds = <String>[];
+    final seenRef = <String>{};
+    for (final m in _eventEntityRegex.allMatches(linkified)) {
+      final id = entityToEventIdHex(m.group(1)!) ?? '';
+      if (id.isNotEmpty && seenRef.add(id)) referencedIds.add(id);
+    }
+    for (final t in event.tags) {
+      if (t.length >= 4 && t[0] == 'e' && t[3] == 'mention' &&
+          seenRef.add(t[1].toString())) {
+        referencedIds.add(t[1].toString());
+      }
+    }
+    final stripped = referencedIds.isEmpty
+        ? linkified
+        : linkified.replaceAllMapped(_eventEntityRegex, (Match m) => '');
+
     // 2. Tokenize into segments: text / image-group (contiguous) / single video.
-    final segments = tokenizeContent(linkified);
+    final segments = tokenizeContent(stripped);
 
     final theme = Theme.of(context);
     final children = <Widget>[];
@@ -157,6 +184,11 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
           ],
         ),
       );
+    }
+
+    // 4. Append embedded quote cards for referenced events (NIP-27).
+    for (final id in referencedIds) {
+      children.add(_EventEmbed(id: id));
     }
 
     final isLong = event.content.length > _kCollapseThreshold;
@@ -436,4 +468,84 @@ class _ErrorBox extends StatelessWidget {
       child: const Icon(Icons.broken_image_outlined),
     ),
   );
+}
+
+/// An embedded quote card for a referenced event (NIP-27 `nostr:nevent1…` /
+/// `nostr:note1…` in content, or an `e` mention tag). Fetches the event via
+/// [eventByIdProvider] (SQLite → in-memory → relay REQ) and renders the
+/// author + a content snippet; tap opens `/n/:id`.
+class _EventEmbed extends ConsumerWidget {
+  const _EventEmbed({required this.id});
+  final String id;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final async = ref.watch(eventByIdProvider(id));
+    final ev = async.value;
+    if (ev == null) {
+      final notFound = !async.isLoading && async.hasValue;
+      return Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: CostrColors.bg2,
+          border: Border(
+            left: BorderSide(color: theme.colorScheme.outline, width: 3),
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          notFound ? '引用内容不可用' : '加载引用…',
+          style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.text3),
+        ),
+      );
+    }
+    final meta = ref.watch(metadataProvider(ev.pubkey)).value;
+    return GestureDetector(
+      onTap: () => context.push('/n/${ev.id}'),
+      child: Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: CostrColors.bg2,
+          border: Border(
+            left: BorderSide(color: theme.colorScheme.outline, width: 3),
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Avatar(pubkey: ev.pubkey, radius: 12),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    displayLabelFor(ev.pubkey, meta),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              ev.content,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: CostrColors.text2,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

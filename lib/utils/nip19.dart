@@ -2,10 +2,13 @@
 ///
 /// Wraps [encodeBech32]/[decodeBech32] for the NIP-19 hrps:
 /// `nsec1` (private key, 32 bytes), `npub1` (public key, 32 bytes),
-/// `note1` (event id, 32 bytes).
+/// `note1` (event id, 32 bytes), `nevent1` (event id + relay/author hints),
+/// `nprofile1` (pubkey + relay hints).
 ///
 /// See https://github.com/nostr-protocol/nips/blob/master/19.md
 library;
+
+import 'dart:convert';
 
 import 'package:hex/hex.dart';
 
@@ -75,6 +78,107 @@ String hexToNprofile(String pubkeyHex) {
   final pubkeyBytes = _hexToBytes(pubkeyHex);
   final tlv = <int>[0x00, 0x20, ...pubkeyBytes];
   return encodeBech32('nprofile', tlv);
+}
+
+/// Encode a TLV record: [type, length, ...value].
+List<int> _tlv(int type, List<int> value) => [type, value.length, ...value];
+
+/// Unsigned LEB128 varint (used for the kind TLV in nevent).
+List<int> _encodeVarint(int v) {
+  final out = <int>[];
+  do {
+    var b = v & 0x7f;
+    v >>= 7;
+    if (v != 0) b |= 0x80;
+    out.add(b);
+  } while (v != 0);
+  return out;
+}
+
+int _decodeVarint(List<int> bytes) {
+  var result = 0;
+  var shift = 0;
+  for (final b in bytes) {
+    result |= (b & 0x7f) << shift;
+    if ((b & 0x80) == 0) break;
+    shift += 7;
+  }
+  return result;
+}
+
+/// Encode an event id (hex) + optional relay hint + author pubkey + kind as
+/// `nevent1...` (NIP-19). The relay + author hints let other clients fetch
+/// the event even when their usual relays don't have it (outbox model).
+String hexToNevent(
+  String idHex, {
+  List<String> relays = const [],
+  String? authorHex,
+  int? kind,
+}) {
+  final idBytes = _hexToBytes(idHex);
+  final tlv = <int>[..._tlv(0x00, idBytes)];
+  for (final r in relays) {
+    if (r.isNotEmpty) tlv.addAll(_tlv(0x01, utf8.encode(r)));
+  }
+  if (authorHex != null && authorHex.isNotEmpty) {
+    tlv.addAll(_tlv(0x02, _hexToBytes(authorHex)));
+  }
+  if (kind != null) tlv.addAll(_tlv(0x03, _encodeVarint(kind)));
+  return encodeBech32('nevent', tlv);
+}
+
+/// Decoded `nevent1...` parts (NIP-19).
+class Nevent {
+  const Nevent({this.id, this.relays = const [], this.author, this.kind});
+  final String? id; // hex event id
+  final List<String> relays;
+  final String? author; // hex author pubkey
+  final int? kind;
+}
+
+/// Decode an `nevent1...` (NIP-19) to its parts. Accepts an optional
+/// `nostr:` prefix. Returns null if not a nevent or has no id TLV.
+Nevent? neventDecode(String nevent) {
+  var e = nevent;
+  if (e.toLowerCase().startsWith('nostr:')) e = e.substring(6);
+  if (!e.toLowerCase().startsWith('nevent1')) return null;
+  final bytes = decodeBech32(e).data;
+  int i = 0;
+  String? id;
+  final relays = <String>[];
+  String? author;
+  int? kind;
+  while (i + 2 <= bytes.length) {
+    final type = bytes[i];
+    final len = bytes[i + 1];
+    if (i + 2 + len > bytes.length) break;
+    final value = bytes.sublist(i + 2, i + 2 + len);
+    switch (type) {
+      case 0x00:
+        if (len == 32) id = _bytesToHex(value);
+      case 0x01:
+        relays.add(utf8.decode(value));
+      case 0x02:
+        if (len == 32) author = _bytesToHex(value);
+      case 0x03:
+        kind = _decodeVarint(value);
+    }
+    i += 2 + len;
+  }
+  if (id == null) return null;
+  return Nevent(id: id, relays: relays, author: author, kind: kind);
+}
+
+/// Decode any NIP-19 event entity (`nevent1` or `note1`, optionally with
+/// `nostr:` prefix) to the hex event id. Returns null for non-event entities
+/// or invalid input.
+String? entityToEventIdHex(String entity) {
+  var e = entity;
+  if (e.toLowerCase().startsWith('nostr:')) e = e.substring(6);
+  final l = e.toLowerCase();
+  if (l.startsWith('nevent1')) return neventDecode(e)?.id;
+  if (l.startsWith('note1')) return noteToHex(e);
+  return null;
 }
 
 /// Shorten an `npub1...`/`nsec1...` for display: first 8 + … + last 4.

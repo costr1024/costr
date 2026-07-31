@@ -266,6 +266,32 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       ['imeta', 'url ${a.url}', 'm ${a.mime}', 'x ${a.sha256}'],
   ];
 
+  /// NIP-27 event references pasted into the content as `nostr:nevent1…` /
+  /// `nostr:note1…`. Emits `e` mention tags (+ `p` author tags for nevent with
+  /// an author hint) so other clients can fetch + render the referenced post.
+  /// The `nostr:…` text stays in the content (rendered as an embed by
+  /// MarkdownContent). Mirrors the @-mention path for npub.
+  List<List<String>> _neventMentionTags() {
+    final text = _controller.text;
+    final regex = RegExp(
+      r'(?:nostr:)?((?:nevent1|note1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
+    );
+    final tags = <List<String>>[];
+    final seenIds = <String>{};
+    for (final m in regex.allMatches(text)) {
+      final entity = m.group(1)!;
+      final ev = neventDecode(entity); // null for note1
+      final id = ev?.id ?? entityToEventIdHex(entity);
+      if (id == null || !seenIds.add(id)) continue;
+      final relay =
+          (ev?.relays.isNotEmpty ?? false) ? ev!.relays.first : '';
+      tags.add(['e', id, relay, 'mention']);
+      final author = ev?.author;
+      if (author != null && author.isNotEmpty) tags.add(['p', author]);
+    }
+    return tags;
+  }
+
   /// If the caret is right after an `@<query>` token that starts on a word
   /// boundary, returns `(query, startOfAt)`. Used to drive @-mention
   /// autocomplete. `@` must be preceded by whitespace / start / punctuation
@@ -357,6 +383,10 @@ class _ComposePageState extends ConsumerState<ComposePage> {
         // carries the `nostr:npub1…` text reference, rendered as a tappable
         // @name mention by MarkdownContent).
         for (final pk in _mentions) ['p', pk],
+        // NIP-27 event references pasted as `nostr:nevent1…` / `nostr:note1…`:
+        // emit `e` mention tags (+ `p` author for nevent) so other clients can
+        // fetch + render the referenced post (Amethyst-compatible).
+        ..._neventMentionTags(),
       ];
       // Content already has attachment URLs (appended by _appendToEditor on
       // upload completion) — don't append again.

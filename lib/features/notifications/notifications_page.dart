@@ -68,6 +68,12 @@ final notificationsProvider =
       final controller = StreamController<List<NotificationItem>>.broadcast();
       Timer? flush;
       bool dirty = false;
+      // Per-session seen set: rawEvents (un-deduped) re-emits events already
+      // seen on the global feed — without this, the targeted #p/#e REQ's
+      // re-fetch of past mentions/replies would be swallowed by the pool's
+      // global dedup and the listener would never fire (the "no
+      // notifications" bug). Dedup locally by event id instead.
+      final seen = <String>{};
 
       void emit() {
         dirty = false;
@@ -75,8 +81,9 @@ final notificationsProvider =
         controller.add(List.unmodifiable(items));
       }
 
-      pool.events.listen((e) {
+      pool.rawEvents.listen((e) {
         if (e.pubkey == myPubkey) return; // skip my own events
+        if (!seen.add(e.id)) return; // already processed this event
 
         // Check #p mention (kind 1, 7, 6 with p tag = me)
         bool mentionsMe = false;

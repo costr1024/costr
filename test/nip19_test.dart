@@ -83,4 +83,51 @@ void main() {
       ); // note isn't a pubkey
     });
   });
+
+  group('NIP-19 nevent', () {
+    const idHex =
+        'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+    const authorHex =
+        '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
+
+    test('round-trips id + relays + author + kind', () {
+      final nevent = hexToNevent(
+        idHex,
+        relays: const ['wss://relay.a/', 'wss://relay.b/'],
+        authorHex: authorHex,
+        kind: 1,
+      );
+      final decoded = neventDecode(nevent)!;
+      expect(decoded.id, idHex);
+      expect(decoded.author, authorHex);
+      expect(decoded.relays, ['wss://relay.a/', 'wss://relay.b/']);
+      expect(decoded.kind, 1);
+    });
+
+    test('strips nostr: prefix', () {
+      final nevent = hexToNevent(idHex, authorHex: authorHex);
+      expect(neventDecode('nostr:$nevent')!.id, idHex);
+    });
+
+    test('entityToEventIdHex handles nevent / note / else null', () {
+      final nevent = hexToNevent(idHex);
+      expect(entityToEventIdHex(nevent), idHex);
+      expect(entityToEventIdHex('nostr:$nevent'), idHex);
+      expect(entityToEventIdHex(hexToNote(idHex)), idHex);
+      expect(entityToEventIdHex('not-an-entity'), isNull);
+    });
+
+    test('decode rejects non-nevent', () {
+      expect(neventDecode(hexToNpub(authorHex)), isNull);
+    });
+
+    test('no relay/author produces minimal nevent', () {
+      final nevent = hexToNevent(idHex);
+      final decoded = neventDecode(nevent)!;
+      expect(decoded.id, idHex);
+      expect(decoded.relays, isEmpty);
+      expect(decoded.author, isNull);
+      expect(decoded.kind, isNull);
+    });
+  });
 }

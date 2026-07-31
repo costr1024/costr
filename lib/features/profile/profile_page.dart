@@ -142,6 +142,7 @@ class _Header extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (meta?.banner != null && meta!.banner!.isNotEmpty)
@@ -173,6 +174,7 @@ class _Header extends ConsumerWidget {
         Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Transform.translate(
@@ -215,16 +217,14 @@ class _Header extends ConsumerWidget {
                     _FollowButton(pubkey: pubkey),
                 ],
               ),
-              // Row 3: NIP-05 (wraps if long).
+              // Row 3: NIP-05 (wraps if long). The badge distinguishes
+              // verified (server confirmed the pubkey) from unverified
+              // (failed / couldn't check) — see _Nip05Badge.
               if (meta?.nip05 != null && meta!.nip05!.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    Icon(
-                      Icons.verified,
-                      size: 16,
-                      color: theme.colorScheme.primary,
-                    ),
+                    _Nip05Badge(pubkey: pubkey),
                     const SizedBox(width: 4),
                     Flexible(
                       child: Text(
@@ -546,35 +546,50 @@ class _PostsTabState extends ConsumerState<_PostsTab> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(userPostsProvider(widget.pubkey));
-    return Column(
-      children: [
-        _SearchBar(
-          controller: _controller,
-          hint: '搜索该用户的帖子…',
-          onChanged: _onChanged,
-        ),
-        Expanded(
-          child: async.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (Object e, _) => Center(child: Text('加载失败：$e')),
-            data: (List<Event> all) {
-              var posts = all.where((e) => !e.isReply).toList();
-              if (_query.isNotEmpty) {
-                final q = _query.toLowerCase();
-                posts = posts
-                    .where((e) => e.content.toLowerCase().contains(q))
-                    .toList();
-              }
-              if (posts.isEmpty) {
-                return Center(child: Text(_query.isEmpty ? '暂无帖子' : '无匹配帖子'));
-              }
-              return ListView.builder(
-                itemCount: posts.length,
-                itemBuilder: (BuildContext context, int i) =>
-                    UserPostItem(event: posts[i]),
-              );
-            },
+    // Sliver-based body (not Column[SearchBar, Expanded]) so the fixed-height
+    // search bar doesn't overflow when the NestedScrollView body is given a
+    // bounded height smaller than the bar during header scroll (the recurring
+    // "bottom overflowed by N pixels" when the bio is long). Slivers tolerate
+    // any bounded height; a Column with a fixed-height child does not.
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _SearchBar(
+            controller: _controller,
+            hint: '搜索该用户的帖子…',
+            onChanged: _onChanged,
           ),
+        ),
+        async.when(
+          loading: () => const SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(child: CircularProgressIndicator()),
+          ),
+          error: (Object e, _) => SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(child: Text('加载失败：$e')),
+          ),
+          data: (List<Event> all) {
+            var posts = all.where((e) => !e.isReply).toList();
+            if (_query.isNotEmpty) {
+              final q = _query.toLowerCase();
+              posts = posts
+                  .where((e) => e.content.toLowerCase().contains(q))
+                  .toList();
+            }
+            if (posts.isEmpty) {
+              return SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(child: Text(_query.isEmpty ? '暂无帖子' : '无匹配帖子')),
+              );
+            }
+            return SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (BuildContext context, int i) => UserPostItem(event: posts[i]),
+                childCount: posts.length,
+              ),
+            );
+          },
         ),
       ],
     );
@@ -611,35 +626,46 @@ class _RepliesTabState extends ConsumerState<_RepliesTab> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(userPostsProvider(widget.pubkey));
-    return Column(
-      children: [
-        _SearchBar(
-          controller: _controller,
-          hint: '搜索该用户的回帖…',
-          onChanged: _onChanged,
-        ),
-        Expanded(
-          child: async.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (Object e, _) => Center(child: Text('加载失败：$e')),
-            data: (List<Event> all) {
-              var replies = all.where((e) => e.isReply).toList();
-              if (_query.isNotEmpty) {
-                final q = _query.toLowerCase();
-                replies = replies
-                    .where((e) => e.content.toLowerCase().contains(q))
-                    .toList();
-              }
-              if (replies.isEmpty) {
-                return Center(child: Text(_query.isEmpty ? '暂无回帖' : '无匹配回帖'));
-              }
-              return ListView.builder(
-                itemCount: replies.length,
-                itemBuilder: (BuildContext context, int i) =>
-                    UserPostItem(event: replies[i]),
-              );
-            },
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _SearchBar(
+            controller: _controller,
+            hint: '搜索该用户的回帖…',
+            onChanged: _onChanged,
           ),
+        ),
+        async.when(
+          loading: () => const SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(child: CircularProgressIndicator()),
+          ),
+          error: (Object e, _) => SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(child: Text('加载失败：$e')),
+          ),
+          data: (List<Event> all) {
+            var replies = all.where((e) => e.isReply).toList();
+            if (_query.isNotEmpty) {
+              final q = _query.toLowerCase();
+              replies = replies
+                  .where((e) => e.content.toLowerCase().contains(q))
+                  .toList();
+            }
+            if (replies.isEmpty) {
+              return SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(child: Text(_query.isEmpty ? '暂无回帖' : '无匹配回帖')),
+              );
+            }
+            return SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (BuildContext context, int i) =>
+                    UserPostItem(event: replies[i]),
+                childCount: replies.length,
+              ),
+            );
+          },
         ),
       ],
     );
@@ -711,139 +737,175 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Column(
-      children: [
+    // Sliver-based (see _PostsTab): avoids the Column[fixed bar, Expanded]
+    // overflow when the body is bounded smaller than the bar during scroll.
+    return CustomScrollView(
+      slivers: [
         if (widget.isSelf)
-          _FollowSubTabs(
-            showTags: _showTags,
-            onSelected: (v) => setState(() => _showTags = v),
+          SliverToBoxAdapter(
+            child: _FollowSubTabs(
+              showTags: _showTags,
+              onSelected: (v) => setState(() => _showTags = v),
+            ),
           ),
-        Expanded(
-          child: widget.isSelf && _showTags
-              ? _buildTags(theme)
-              : _buildPeople(theme),
-        ),
+        if (widget.isSelf && _showTags)
+          _buildTagsSliver(theme)
+        else
+          ..._buildPeopleSlivers(theme),
       ],
     );
   }
 
-  Widget _buildPeople(ThemeData theme) {
+  List<Widget> _buildPeopleSlivers(ThemeData theme) {
     final async = ref.watch(userGroupedFollowsProvider(widget.pubkey));
-    return Column(
-      children: [
-        _SearchBar(
+    final slivers = <Widget>[
+      SliverToBoxAdapter(
+        child: _SearchBar(
           controller: _controller,
           hint: '过滤已关注…',
           onChanged: _onChanged,
         ),
-        Expanded(
-          child: async.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (Object e, _) => Center(child: Text('加载失败：$e')),
-            data: (List<FollowGroup> groups) {
-              if (groups.isEmpty) return const Center(child: Text('暂无关注'));
-              // If the selected group vanished after a refresh, fall back to 全部.
-              if (_selectedGroup != null &&
-                  !groups.any((g) => g.name == _selectedGroup)) {
-                _selectedGroup = null;
-              }
-              final segmented = _selectedGroup == null;
-              // Build a flat metadata cache for all pubkeys across groups.
-              final allPks = <String>{};
-              for (final g in groups) {
-                allPks.addAll(g.pubkeys);
-              }
-              final metaCache = <String, Metadata?>{};
-              for (final pk in allPks) {
-                metaCache[pk] = ref.watch(metadataProvider(pk)).value;
-              }
-              // Build filtered sections. Only show per-group section headers
-              // in 全部 (segmented) mode; a single selected group is a flat list.
-              final sections = <Widget>[];
-              for (final g in groups) {
-                if (!segmented && g.name != _selectedGroup) continue;
-                final filtered = _filterGroup(g.pubkeys, metaCache);
-                if (filtered.isEmpty) continue;
-                if (segmented) {
-                  sections.add(
-                    Container(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      child: Text(
-                        '${g.name} (${filtered.length})',
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  );
-                }
-                for (final pk in filtered) {
-                  sections.add(
-                    _FollowRow(
-                      pubkey: pk,
-                      followsMe: false,
-                      onTap: () => context.push('/u/$pk'),
-                    ),
-                  );
-                }
-              }
-              final chips = _GroupChipRow(
-                groups: groups,
-                selected: _selectedGroup,
-                onSelected: (v) => setState(() => _selectedGroup = v),
-              );
-              final empty = sections.isEmpty
-                  ? Center(child: Text(_query.isEmpty ? '暂无关注' : '无匹配'))
-                  : ListView(children: sections);
-              return Column(
-                children: [
-                  chips,
-                  Expanded(child: empty),
-                ],
-              );
-            },
-          ),
+      ),
+    ];
+    async.when(
+      loading: () => slivers.add(
+        const SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(child: CircularProgressIndicator()),
         ),
-      ],
+      ),
+      error: (Object e, _) => slivers.add(
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(child: Text('加载失败：$e')),
+        ),
+      ),
+      data: (List<FollowGroup> groups) {
+        if (groups.isEmpty) {
+          slivers.add(
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: Text('暂无关注')),
+            ),
+          );
+          return;
+        }
+        // If the selected group vanished after a refresh, fall back to 全部.
+        if (_selectedGroup != null &&
+            !groups.any((g) => g.name == _selectedGroup)) {
+          _selectedGroup = null;
+        }
+        final segmented = _selectedGroup == null;
+        // Build a flat metadata cache for all pubkeys across groups.
+        final allPks = <String>{};
+        for (final g in groups) {
+          allPks.addAll(g.pubkeys);
+        }
+        final metaCache = <String, Metadata?>{};
+        for (final pk in allPks) {
+          metaCache[pk] = ref.watch(metadataProvider(pk)).value;
+        }
+        // Build filtered sections. Only show per-group section headers
+        // in 全部 (segmented) mode; a single selected group is a flat list.
+        final sections = <Widget>[];
+        for (final g in groups) {
+          if (!segmented && g.name != _selectedGroup) continue;
+          final filtered = _filterGroup(g.pubkeys, metaCache);
+          if (filtered.isEmpty) continue;
+          if (segmented) {
+            sections.add(
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: Text(
+                  '${g.name} (${filtered.length})',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            );
+          }
+          for (final pk in filtered) {
+            sections.add(
+              _FollowRow(
+                pubkey: pk,
+                followsMe: false,
+                onTap: () => context.push('/u/$pk'),
+              ),
+            );
+          }
+        }
+        slivers.add(
+          SliverToBoxAdapter(
+            child: _GroupChipRow(
+              groups: groups,
+              selected: _selectedGroup,
+              onSelected: (v) => setState(() => _selectedGroup = v),
+            ),
+          ),
+        );
+        if (sections.isEmpty) {
+          slivers.add(
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: Text(_query.isEmpty ? '暂无关注' : '无匹配')),
+            ),
+          );
+        } else {
+          slivers.add(SliverList(delegate: SliverChildListDelegate(sections)));
+        }
+      },
     );
+    return slivers;
   }
 
   /// 关注的标签 — synced via NIP-51 kind-30015 (DESIGN §8 / ui_demo.html
   /// `.tag-grid`). Each chip shows `#tag + 帖子数`; tap → jump to the home feed
   /// filtered by that tag; long-press → confirm unfollow. The leading "+ 标签"
   /// chip lets the user add a tag manually.
-  Widget _buildTags(ThemeData theme) {
+  Widget _buildTagsSliver(ThemeData theme) {
     final tagsAsync = ref.watch(followedTagsProvider);
     return tagsAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (Object e, _) => Center(child: Text('加载失败：$e')),
+      loading: () => const SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (Object e, _) => SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(child: Text('加载失败：$e')),
+      ),
       data: (List<String> tags) {
         if (tags.isEmpty) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 32, vertical: 48),
-              child: Text(
-                '还没关注的标签。\n'
-                '在帖子正文里长按 #标签 可关注；\n'
-                '在首页按某标签过滤时也能点星标关注。',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: CostrColors.text2, height: 1.6),
+          return const SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+                child: Text(
+                  '还没关注的标签。\n'
+                  '在帖子正文里长按 #标签 可关注；\n'
+                  '在首页按某标签过滤时也能点星标关注。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: CostrColors.text2, height: 1.6),
+                ),
               ),
             ),
           );
         }
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _AddTagChip(
-                onAdd: (t) => ref.read(followedTagsProvider.notifier).add(t),
-              ),
-              for (final tag in tags) _FollowedTagChip(tag: tag),
-            ],
+        return SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _AddTagChip(
+                  onAdd: (t) => ref.read(followedTagsProvider.notifier).add(t),
+                ),
+                for (final tag in tags) _FollowedTagChip(tag: tag),
+              ],
+            ),
           ),
         );
       },
@@ -882,60 +944,71 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(userFollowersProvider(widget.pubkey));
-    return Column(
-      children: [
-        _SearchBar(
-          controller: _controller,
-          hint: '过滤关注者…',
-          onChanged: _onChanged,
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _SearchBar(
+            controller: _controller,
+            hint: '过滤关注者…',
+            onChanged: _onChanged,
+          ),
         ),
-        Expanded(
-          child: async.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (Object e, _) => Center(child: Text('加载失败：$e')),
-            data: (List<String> followers) {
-              final metaCache = <String, Metadata?>{};
-              for (final pk in followers) {
-                metaCache[pk] = ref.watch(metadataProvider(pk)).value;
+        async.when(
+          loading: () => const SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(child: CircularProgressIndicator()),
+          ),
+          error: (Object e, _) => SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(child: Text('加载失败：$e')),
+          ),
+          data: (List<String> followers) {
+            final metaCache = <String, Metadata?>{};
+            for (final pk in followers) {
+              metaCache[pk] = ref.watch(metadataProvider(pk)).value;
+            }
+            var list = followers;
+            if (_query.isNotEmpty) {
+              final q = _query.toLowerCase();
+              String? npubHex;
+              if (q.startsWith('npub1')) {
+                try {
+                  npubHex = npubToHex(_query).toLowerCase();
+                } catch (_) {}
               }
-              var list = followers;
-              if (_query.isNotEmpty) {
-                final q = _query.toLowerCase();
-                String? npubHex;
-                if (q.startsWith('npub1')) {
-                  try {
-                    npubHex = npubToHex(_query).toLowerCase();
-                  } catch (_) {}
+              list = followers.where((pk) {
+                if (pk.toLowerCase().contains(q)) return true;
+                if (npubHex != null && pk.toLowerCase().contains(npubHex)) {
+                  return true;
                 }
-                list = followers.where((pk) {
-                  if (pk.toLowerCase().contains(q)) return true;
-                  if (npubHex != null && pk.toLowerCase().contains(npubHex)) {
-                    return true;
-                  }
-                  final m = metaCache[pk];
-                  if (m == null) return false;
-                  if ((m.name ?? '').toLowerCase().contains(q)) return true;
-                  if ((m.displayName ?? '').toLowerCase().contains(q)) {
-                    return true;
-                  }
-                  if ((m.nip05 ?? '').toLowerCase().contains(q)) return true;
-                  if ((m.about ?? '').toLowerCase().contains(q)) return true;
-                  return false;
-                }).toList();
-              }
-              if (list.isEmpty) {
-                return Center(child: Text(_query.isEmpty ? '暂无关注者' : '无匹配'));
-              }
-              return ListView.builder(
-                itemCount: list.length,
-                itemBuilder: (BuildContext context, int i) => _FollowRow(
+                final m = metaCache[pk];
+                if (m == null) return false;
+                if ((m.name ?? '').toLowerCase().contains(q)) return true;
+                if ((m.displayName ?? '').toLowerCase().contains(q)) {
+                  return true;
+                }
+                if ((m.nip05 ?? '').toLowerCase().contains(q)) return true;
+                if ((m.about ?? '').toLowerCase().contains(q)) return true;
+                return false;
+              }).toList();
+            }
+            if (list.isEmpty) {
+              return SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(child: Text(_query.isEmpty ? '暂无关注者' : '无匹配')),
+              );
+            }
+            return SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (BuildContext context, int i) => _FollowRow(
                   pubkey: list[i],
                   followsMe: widget.isSelf,
                   onTap: () => context.push('/u/${list[i]}'),
                 ),
-              );
-            },
-          ),
+                childCount: list.length,
+              ),
+            );
+          },
         ),
       ],
     );
@@ -1232,6 +1305,45 @@ class _CopyableNprofile extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// NIP-05 verification badge. Verified (the domain's nostr.json maps the
+/// handle to this pubkey) → the check icon in the brand color. Failed / could
+/// not reach the domain → a muted error-outline so unverified handles are
+/// visually distinct from verified ones. While checking, a tiny spinner.
+class _Nip05Badge extends ConsumerWidget {
+  const _Nip05Badge({required this.pubkey});
+  final String pubkey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final async = ref.watch(nip05VerifiedProvider(pubkey));
+    if (async.isLoading) {
+      return SizedBox(
+        width: 14,
+        height: 14,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: theme.colorScheme.outline,
+        ),
+      );
+    }
+    final status = async.value ?? Nip05Status.unknown;
+    final IconData icon;
+    final Color color;
+    switch (status) {
+      case Nip05Status.verified:
+        icon = Icons.verified;
+        color = theme.colorScheme.primary;
+      case Nip05Status.failed:
+      case Nip05Status.unknown:
+      case Nip05Status.none:
+        icon = Icons.error_outline;
+        color = theme.colorScheme.outline;
+    }
+    return Icon(icon, size: 16, color: color);
   }
 }
 

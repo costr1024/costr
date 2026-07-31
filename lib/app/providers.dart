@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
 
 import '../models/event.dart';
 import '../models/metadata.dart';
@@ -37,6 +38,17 @@ const List<String> defaultRelays = <String>[
   'wss://nostr.wine/',
   'wss://relay.nostr.net/',
   'wss://relay.0xchat.com/',
+];
+
+/// Dedicated NIP-50 search relays. Global search (searchPostsProvider /
+/// searchUsersProvider) is routed ONLY to these, NOT [defaultRelays], because
+/// most relays don't support the NIP-50 `search` filter and silently ignore
+/// it — returning a firehose of recent kind-1/kind-0 events unrelated to the
+/// query (the "irrelevant results" bug). search.nos.today + relay.ditto.pub
+/// both implement NIP-50 full-text search.
+const List<String> searchRelays = <String>[
+  'wss://relay.ditto.pub/',
+  'wss://search.nos.today/',
 ];
 
 // --- Local cache (drift/SQLite) — provider ---
@@ -109,6 +121,19 @@ final relayPoolProvider = Provider<RelayPool>((ref) {
   final pool = RelayPool.fromUrls(defaultRelays);
   // Lazy identity getter for NIP-42 AUTH responses (works after login).
   pool.identityGetter = () => ref.read(identityProvider).value;
+  ref.onDispose(pool.dispose);
+  return pool;
+});
+
+/// A separate, isolated relay pool for NIP-50 full-text search. Connected
+/// lazily on first read (first search). Kept separate from [relayPoolProvider]
+/// so (a) search REQs only reach NIP-50-capable relays and (b) search
+/// results don't mix with the live global feed on a shared merged stream.
+final searchPoolProvider = Provider<RelayPool>((ref) {
+  final pool = RelayPool.fromUrls(searchRelays);
+  pool.identityGetter = () => ref.read(identityProvider).value;
+  // Connect lazily; RelayClient reconnects with backoff on failure.
+  pool.connect();
   ref.onDispose(pool.dispose);
   return pool;
 });
@@ -437,7 +462,7 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
     final pool = ref.read(relayPoolProvider);
     Event? newest;
     final completer = Completer<void>();
-    _sub = pool.events.listen((e) {
+    _sub = pool.rawEvents.listen((e) {
       if (e.kind != 30015 || e.pubkey != pubkey) return;
       if (!_isDefaultInterests(e)) return; // ignore named interest sets
       if (newest == null || e.createdAt > newest!.createdAt) newest = e;
@@ -643,7 +668,7 @@ class FollowingNotifier extends AsyncNotifier<List<String>> {
     final pubkey = identity.pubkeyHex;
     final subId = nextSubId('kind3');
 
-    _sub = pool.events.listen((e) {
+    _sub = pool.rawEvents.listen((e) {
       if (e.isContactList && e.pubkey == pubkey && !completer.isCompleted) {
         // Cache the full kind-3 event for followUser to use.
         ref.read(contactListCacheProvider.notifier).set(e);
@@ -758,7 +783,7 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
   final pool = ref.watch(relayPoolProvider);
   final completer = Completer<Event?>();
   late StreamSubscription<Event> sub;
-  sub = pool.events.listen((e) {
+  sub = pool.rawEvents.listen((e) {
     if (e.id == id && !completer.isCompleted) completer.complete(e);
   });
   final subId = nextSubId('note');
@@ -796,7 +821,7 @@ final userPostsProvider = FutureProvider.family<List<Event>, String>((
   final completer = Completer<void>();
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
-  evSub = pool.events.listen((e) {
+  evSub = pool.rawEvents.listen((e) {
     if (e.isTextNote && e.pubkey == pubkey && seen.add(e.id)) {
       collected.add(e);
     }
@@ -837,7 +862,7 @@ final userFollowsProvider = FutureProvider.family<List<String>, String>((
   final completer = Completer<List<String>>();
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
-  evSub = pool.events.listen((e) {
+  evSub = pool.rawEvents.listen((e) {
     if (e.isContactList && e.pubkey == pubkey && !completer.isCompleted) {
       completer.complete(e.pTagPubkeys);
     }
@@ -875,7 +900,7 @@ final userFollowersProvider = FutureProvider.family<List<String>, String>((
   final completer = Completer<void>();
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
-  evSub = pool.events.listen((e) {
+  evSub = pool.rawEvents.listen((e) {
     if (e.isContactList && seen.add(e.pubkey)) {
       collected.add(e.pubkey);
     }
@@ -926,7 +951,7 @@ final userGroupedFollowsProvider =
       final kind3Completer = Completer<List<String>>();
       late StreamSubscription<Event> evSub1;
       late StreamSubscription<String> eoseSub1;
-      evSub1 = pool.events.listen((e) {
+      evSub1 = pool.rawEvents.listen((e) {
         if (e.isContactList &&
             e.pubkey == pubkey &&
             !kind3Completer.isCompleted) {
@@ -960,7 +985,7 @@ final userGroupedFollowsProvider =
       final k30000Completer = Completer<void>();
       late StreamSubscription<Event> evSub2;
       late StreamSubscription<String> eoseSub2;
-      evSub2 = pool.events.listen((e) {
+      evSub2 = pool.rawEvents.listen((e) {
         if (e.kind == 30000 && e.pubkey == pubkey) k30000Events.add(e);
       });
       final sub2 = nextSubId('grouped-k30k');
@@ -1050,7 +1075,7 @@ final userGroupNamesProvider = FutureProvider.family<List<String>, String>((
   final completer = Completer<void>();
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
-  evSub = pool.events.listen((e) {
+  evSub = pool.rawEvents.listen((e) {
     if (e.kind == 30000 && e.pubkey == pubkey) {
       for (final t in e.tags) {
         if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
@@ -1136,7 +1161,8 @@ class UserResult {
 }
 
 /// Global post search: SQLite FTS5 (instant local results) + NIP-50 relay
-/// search (fresh results from nostr.wine, 6s window). Merged + deduped.
+/// search (fresh results from the dedicated search pool, 6s window). Merged +
+/// deduped.
 final searchPostsProvider = FutureProvider.family<List<Event>, String>((
   ref,
   query,
@@ -1153,12 +1179,16 @@ final searchPostsProvider = FutureProvider.family<List<Event>, String>((
       }
     } catch (_) {}
   }
-  // 2. NIP-50 relay search (fresh results).
-  final pool = ref.watch(relayPoolProvider);
+  // 2. NIP-50 relay search via the DEDICATED search pool (not the main pool):
+  // most relays ignore the `search` filter and would return a firehose of
+  // unrelated kind-1 events. The search pool only connects NIP-50 relays.
+  final pool = ref.watch(searchPoolProvider);
   final collected = <Event>[];
   final seen = <String>{};
   late StreamSubscription<Event> evSub;
-  evSub = pool.events.listen((e) {
+  // rawEvents (not events): re-searching the same term must still return
+  // results even though the search pool already saw those event ids.
+  evSub = pool.rawEvents.listen((e) {
     if (e.isTextNote && seen.add(e.id)) collected.add(e);
   });
   final subId = nextSubId('search');
@@ -1183,18 +1213,19 @@ final searchPostsProvider = FutureProvider.family<List<Event>, String>((
   return merged;
 });
 
-/// Global user search (NIP-50 `search` filter, kind 0 metadata).
+/// Global user search (NIP-50 `search` filter, kind 0 metadata) via the
+/// dedicated search pool.
 final searchUsersProvider = FutureProvider.family<List<UserResult>, String>((
   ref,
   query,
 ) async {
   final q = query.trim();
   if (q.isEmpty) return const <UserResult>[];
-  final pool = ref.watch(relayPoolProvider);
+  final pool = ref.watch(searchPoolProvider);
   final collected = <UserResult>[];
   final seen = <String>{};
   late StreamSubscription<Event> evSub;
-  evSub = pool.events.listen((e) {
+  evSub = pool.rawEvents.listen((e) {
     if (e.kind == 0 && seen.add(e.pubkey)) {
       Metadata? meta;
       try {
@@ -1252,7 +1283,7 @@ final repliesProvider = FutureProvider.family<List<Event>, String>((
   final completer = Completer<void>();
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
-  evSub = pool.events.listen((e) {
+  evSub = pool.rawEvents.listen((e) {
     if (e.isTextNote && !seen.add(e.id)) return;
     for (final t in e.tags) {
       if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
@@ -1361,7 +1392,7 @@ Future<void> _addToCategoryList(
   final completer = Completer<Event?>();
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
-  evSub = pool.events.listen((e) {
+  evSub = pool.rawEvents.listen((e) {
     if (e.kind == 30000 &&
         e.pubkey == identity.pubkeyHex &&
         !completer.isCompleted) {
@@ -1426,7 +1457,7 @@ Future<RelayOk> bookmarkEvent(
   final completer = Completer<Event?>();
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
-  evSub = pool.events.listen((e) {
+  evSub = pool.rawEvents.listen((e) {
     if (e.kind == 10003 &&
         e.pubkey == identity.pubkeyHex &&
         !completer.isCompleted) {
@@ -1567,7 +1598,7 @@ final metadataProvider = FutureProvider.family<Metadata?, String>((
   final pool = ref.watch(relayPoolProvider);
   final completer = Completer<Metadata?>();
   late StreamSubscription<Event> sub;
-  sub = pool.events.listen((e) {
+  sub = pool.rawEvents.listen((e) {
     if (e.kind == 0 && e.pubkey == pubkey && !completer.isCompleted) {
       try {
         final json = jsonDecode(e.content);
@@ -1595,6 +1626,91 @@ final metadataProvider = FutureProvider.family<Metadata?, String>((
     const Duration(seconds: 5),
     onTimeout: () => null,
   );
+});
+
+// --- NIP-05 verification ----------------------------------------------------
+
+/// Outcome of verifying a user's NIP-05 identifier against its domain's
+/// `.well-known/nostr.json` endpoint.
+enum Nip05Status {
+  /// The pubkey has no nip05 field — nothing to badge.
+  none,
+
+  /// The domain's nostr.json maps the local-part to this pubkey. Verified ✓.
+  verified,
+
+  /// The domain responded but does NOT map the local-part to this pubkey
+  /// (or the response was malformed) — the handle is a claim that doesn't
+  /// hold up. Show a different marker than verified.
+  failed,
+
+  /// Couldn't reach the domain (network error / timeout) — verification
+  /// inconclusive. Treat like `failed` visually (not confirmed).
+  unknown,
+}
+
+/// Verifies a NIP-05 identifier against a domain's nostr.json. Pure function
+/// (takes a [fetch] callback returning the decoded JSON or throwing) so it
+/// can be unit-tested with a fake fetcher. Public for testing.
+@visibleForTesting
+Future<Nip05Status> verifyNip05(
+  String nip05,
+  String pubkey,
+  Future<Object?> Function(Uri) fetch,
+) async {
+  if (nip05.isEmpty) return Nip05Status.none;
+  final at = nip05.lastIndexOf('@');
+  if (at <= 0 || at >= nip05.length - 1) {
+    return Nip05Status.failed; // malformed — no domain
+  }
+  final local = nip05.substring(0, at);
+  final domain = nip05.substring(at + 1);
+  try {
+    final decoded = await fetch(
+      Uri.parse('https://$domain/.well-known/nostr.json?name=$local'),
+    );
+    if (decoded is! Map<String, dynamic>) return Nip05Status.failed;
+    final names = decoded['names'];
+    String? claimed;
+    if (names is Map<String, dynamic>) {
+      claimed = names[local]?.toString();
+    }
+    // "_" local-part conventionally refers to the domain owner, which may be
+    // declared via the root `pubkey` field.
+    if (claimed == null && local == '_') {
+      claimed = decoded['pubkey']?.toString();
+    }
+    final pk = pubkey.toLowerCase();
+    if (claimed != null && claimed.toLowerCase() == pk) {
+      return Nip05Status.verified;
+    }
+    return Nip05Status.failed;
+  } catch (_) {
+    return Nip05Status.unknown;
+  }
+}
+
+/// Verifies a user's NIP-05 identifier. Fetches
+/// `https://<domain>/.well-known/nostr.json?name=<localpart>` and checks the
+/// `names` map (or the root `pubkey` field when the local-part is `_`) maps
+/// to [pubkey]. Cached per pubkey for the session (FutureProvider.family).
+///
+/// NIP-05: https://github.com/nostr-protocol/nips/blob/master/05.md
+final nip05VerifiedProvider = FutureProvider.family<Nip05Status, String>((
+  ref,
+  pubkey,
+) async {
+  final meta = await ref.watch(metadataProvider(pubkey).future);
+  final nip05 = meta?.nip05 ?? '';
+  return verifyNip05(nip05, pubkey, (uri) async {
+    final res = await http
+        .get(uri, headers: {'Accept': 'application/json'})
+        .timeout(const Duration(seconds: 5));
+    if (res.statusCode != 200) {
+      throw Exception('status ${res.statusCode}');
+    }
+    return jsonDecode(res.body);
+  });
 });
 
 /// ChangeNotifier bridge so GoRouter re-evaluates redirects on login/logout.

@@ -1,5 +1,6 @@
 import 'package:costr/app/providers.dart';
 import 'package:costr/features/profile/profile_page.dart';
+import 'package:costr/models/event.dart';
 import 'package:costr/models/metadata.dart';
 import 'package:costr/nostr/identity.dart';
 import 'package:costr/nostr/relay_pool.dart';
@@ -76,4 +77,81 @@ void main() {
       reason: 'tall profile must not overflow on scroll',
     );
   });
+
+  // Regression for the user-reported scenario: long bio EXPANDED + posts in
+  // the list + a small screen. The body's Column[SearchBar, Expanded(ListView)]
+  // used to overflow ("bottom overflowed by N pixels") when the NestedScrollView
+  // body was given a bounded height smaller than the fixed search bar — at the
+  // initial render and while scrolling toward the search bar.
+  testWidgets(
+    'ProfilePage: expanded long about + posts + small screen, no overflow',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.platformDispatcher.onMetricsChanged?.call());
+      final details = <FlutterErrorDetails>[];
+      final oldOnError = FlutterError.onError;
+      FlutterError.onError = (FlutterErrorDetails d) {
+        details.add(d);
+        FlutterError.presentError(d);
+      };
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            relayPoolProvider.overrideWith((ref) => RelayPool(const [])),
+            bootstrapProvider.overrideWith((ref) async {}),
+            identityProvider.overrideWith(() => _LoggedInIdentity()),
+            followingStateProvider.overrideWith(() => _EmptyFollowing()),
+            metadataProvider.overrideWith((ref, pk) async => _tallMeta(pk)),
+            userGroupedFollowsProvider.overrideWith(
+              (ref, pk) async => const [],
+            ),
+            userFollowersProvider.overrideWith((ref, pk) async => const []),
+            userPostsProvider.overrideWith((ref, pk) async {
+              final posts = <Event>[];
+              for (int i = 0; i < 30; i++) {
+                posts.add(
+                  Event(
+                    id: 'ev$i'.padRight(64, '0'),
+                    pubkey: pk,
+                    createdAt: 1700000000 + i,
+                    kind: 1,
+                    tags: const [],
+                    content: '这是第 $i 条帖子内容。',
+                    sig: '0'.padRight(128, '0'),
+                  ),
+                );
+              }
+              return posts;
+            }),
+          ],
+          child: const MaterialApp(home: ProfilePage()),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(seconds: 1));
+      // Expand the long about (makes the header taller than the viewport).
+      final expandButton = find.text('展开');
+      if (expandButton.evaluate().isNotEmpty) {
+        await tester.tap(expandButton);
+        await tester.pumpAndSettle();
+      }
+      // 1. No overflow at the initial render (top).
+      await tester.pump(const Duration(milliseconds: 100));
+      // 2. No overflow while scrolling toward the post search bar.
+      await tester.drag(find.byType(NestedScrollView), const Offset(0, -2500));
+      await tester.pumpAndSettle();
+      FlutterError.onError = oldOnError;
+      for (final d in details) {
+        debugPrint('=== OVERFLOW DETAIL ===\n${d.toString()}\n=== END ===');
+      }
+      expect(
+        details,
+        isEmpty,
+        reason:
+            'expanded about + posts + small screen must not overflow at top or '
+            'while scrolling to the search bar',
+      );
+    },
+  );
 }

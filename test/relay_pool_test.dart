@@ -197,6 +197,35 @@ void main() {
       await pool.dispose();
     });
 
+    test(
+      'rawEvents re-emits an event already seen on the deduped stream',
+      () async {
+        // Regression for bug 3: the profile 关注/关注者 tabs re-fetch a user's
+        // kind-3, but the global feed already saw it → the deduped `events`
+        // stream swallowed the re-send → empty follows list. rawEvents must
+        // re-emit it so targeted fetches work.
+        final a = _FakeRelay('wss://a');
+        final pool = RelayPool([a]);
+        await pool.connect();
+        final deduped = <String>[];
+        final raw = <String>[];
+        final s1 = pool.events.listen((e) => deduped.add(e.id));
+        final s2 = pool.rawEvents.listen((e) => raw.add(e.id));
+
+        a.emit(_event('id1'));
+        await Future<void>.delayed(Duration.zero);
+        // A second subscription re-sends the same event.
+        a.emit(_event('id1'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(deduped, ['id1']); // deduped stream: only once
+        expect(raw, ['id1', 'id1']); // raw stream: every send
+        await s1.cancel();
+        await s2.cancel();
+        await pool.dispose();
+      },
+    );
+
     test('reconnect re-issues active subscriptions to that relay', () async {
       final a = _FakeRelay('wss://a');
       final pool = RelayPool([a]);

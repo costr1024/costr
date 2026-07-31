@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../auth/login_page.dart' show showLogoutSheet;
 
@@ -33,6 +34,7 @@ class SettingsPage extends ConsumerWidget {
             subtitle: 'Costr 连接的服务器，一般不用改',
             onTap: () => context.push('/settings/relays'),
           ),
+          const _SelfPostsToggle(),
           const _SectionHeader('关于'),
           _Row(
             title: '关于 Costr',
@@ -48,7 +50,8 @@ class SettingsPage extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
           Text(
-            'Chinese Nostr · 更适合中文用户的 Nostr 开源社交客户端',
+            'Costr = Chinese Nostr\n'
+            '更适合中文用户的 Nostr 开源社交客户端',
             style: Theme.of(context).textTheme.labelSmall,
             textAlign: TextAlign.center,
           ),
@@ -114,20 +117,21 @@ class AboutPage extends StatelessWidget {
           const _NostrProtocolDiagram(),
           const SizedBox(height: 14),
           const _ExplainCard(
-            title: '你和中继服务器：多对多',
+            title: '发帖＝写进你的「发件箱」中继',
             body:
-                'Costr（你的 app）同时连着全球多台中继服务器。你发一条帖子，'
-                '是同时广播给所有连上的中继，不是只发给其中一台。'
-                '所以任何一台中继宕机、跑路，其他中继照常替你分发，你的帖子不会丢、不会断。',
+                '每个 Nostr 用户为自己挑几台中继服务器，当作自己的「发件箱」（outbox）。'
+                '你发的帖子会写进你自己的发件箱中继——就像在自己开的公告栏上贴告示，'
+                '而不是漫天撒网。Costr 同时连着好几台中继，所以任何一台掉线、跑路，'
+                '其他中继照常替你保管分发，帖子不会丢、不会断。',
           ),
           const _ExplainCard(
-            title: '用户和用户之间：不直连',
+            title: '看帖＝去别人的「发件箱」取',
             body:
-                'A 发帖，并不直接发给 B。流程是：A 的 app 把帖子广播给自己连的中继群；'
-                'B 的 app 订阅了自己感兴趣的内容（比如关注了 A），B 连的中继群一旦收到 A 的帖子，'
-                '就推给 B。中继之间也会互相转发，所以只要 A 和 B 之间有共同的中继'
-                '——或能通过中继之间的转发链路到达——帖子就能从 A 送到 B。'
-                '没有人能拦下这条广播，因为没有"中心"可拦。',
+                '想看 A 的帖子，就去 A 的发件箱中继订阅——就像去 A 的公告栏看告示，'
+                '而不是等告示飞到你面前。A 用一张「中继清单」（NIP-65）告诉全网'
+                '「我的发件箱在哪几台中继」，Costr 按这张清单找过去取。你关注了谁，'
+                '就去谁的发件箱取。私信等只给特定人的内容，则写到对方的「收件箱」'
+                '（inbox）中继（NIP-17），只有对方能收到。没有中心服务器，谁也拦不下这条路径。',
           ),
           const SizedBox(height: 18),
           Text(
@@ -236,7 +240,7 @@ class _NostrProtocolDiagram extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            '每个 app 同时连多台中继；中继之间也会互相转发。没有中心服务器。',
+            '每个 app 同时连多台中继；你把帖子写进自己的「发件箱」中继，别人去你的发件箱取。没有中心服务器。',
             style: TextStyle(
               fontSize: 12,
               color: CostrColors.text3,
@@ -307,6 +311,62 @@ class _SectionHeader extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// "在关注信息流显示自己的帖子" — follows the logged-in user's own pubkey
+/// (into the default group) so their own posts appear in the 关注 feed. The
+/// switch reflects whether self is already in the kind-3 follow list (e.g.
+/// followed from another client → shows ON). Toggling follows / unfollows
+/// self via the standard NIP-02 path.
+class _SelfPostsToggle extends ConsumerStatefulWidget {
+  const _SelfPostsToggle();
+  @override
+  ConsumerState<_SelfPostsToggle> createState() => _SelfPostsToggleState();
+}
+
+class _SelfPostsToggleState extends ConsumerState<_SelfPostsToggle> {
+  bool _busy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final identity = ref.watch(identityProvider).value;
+    final followsAsync = ref.watch(followingStateProvider);
+    final self = identity?.pubkeyHex;
+    // `.value` keeps the previous follows during a reload (no flicker).
+    final follows = followsAsync.value ?? const <String>[];
+    final following = self != null && follows.contains(self);
+    final loading = identity == null || !followsAsync.hasValue;
+    return SwitchListTile(
+      title: const Text('在关注信息流显示自己的帖子'),
+      subtitle: const Text('关注自己后，你发的帖子也会出现在「关注」信息流'),
+      value: following,
+      // Disable while the follow list isn't loaded yet, so the user can't
+      // flip it blindly and accidentally unfollow self.
+      onChanged: _busy || loading
+          ? null
+          : (v) => v ? _followSelf(self!) : _unfollowSelf(self!),
+    );
+  }
+
+  Future<void> _followSelf(String self) async {
+    setState(() => _busy = true);
+    final res = await followUser(ref, self, category: null);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(res.ok ? '已关注自己' : '操作失败：${res.reason}')),
+    );
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _unfollowSelf(String self) async {
+    setState(() => _busy = true);
+    final res = await unfollowUser(ref, self);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(res.ok ? '已取消关注自己' : '操作失败：${res.reason}')),
+    );
+    if (mounted) setState(() => _busy = false);
+  }
 }
 
 class _Row extends StatelessWidget {

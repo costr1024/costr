@@ -15,6 +15,7 @@ import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/markdown_content.dart';
 import '../../widgets/post_actions.dart';
+import 'zap_sheet.dart';
 
 class EventCard extends ConsumerWidget {
   const EventCard({super.key, required this.event});
@@ -370,7 +371,7 @@ class _HashtagChip extends ConsumerWidget {
   }
 }
 
-/// Top-right `⋮` menu for a post: copy post id / copy full content.
+/// Top-right `⋮` menu for a post: copy post id / copy full content / zap (打闪).
 class _PostMenu extends StatelessWidget {
   const _PostMenu({required this.event});
   final Event event;
@@ -383,16 +384,40 @@ class _PostMenu extends StatelessWidget {
       itemBuilder: (BuildContext context) => const <PopupMenuEntry<String>>[
         PopupMenuItem<String>(value: 'copy_id', child: Text('复制帖子 id')),
         PopupMenuItem<String>(value: 'copy_content', child: Text('复制全文')),
+        PopupMenuItem<String>(value: 'zap', child: Text('打闪')),
       ],
       onSelected: (String value) async {
-        final text = value == 'copy_id' ? event.id : event.content;
+        if (value == 'zap') {
+          showZapSheet(context, event);
+          return;
+        }
+        if (value == 'copy_id') {
+          // Copy as `nostr:nevent1…` (NIP-19) with relay + author hints, like
+          // Amethyst — so pasting it elsewhere can fetch + render the post.
+          final nevent = hexToNevent(
+            event.id,
+            relays: defaultRelays.take(2).toList(),
+            authorHex: event.pubkey,
+            kind: event.kind,
+          );
+          await Clipboard.setData(ClipboardData(text: 'nostr:$nevent'));
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('已复制帖子 id（nostr:nevent1…）'),
+                duration: Duration(seconds: 1),
+              ),
+            );
+          }
+          return;
+        }
+        final text = event.content;
         await Clipboard.setData(ClipboardData(text: text));
         if (context.mounted) {
-          final label = value == 'copy_id' ? '帖子 id' : '全文';
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('已复制 $label'),
-              duration: const Duration(seconds: 1),
+            const SnackBar(
+              content: Text('已复制全文'),
+              duration: Duration(seconds: 1),
             ),
           );
         }

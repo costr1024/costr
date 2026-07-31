@@ -49,6 +49,7 @@ class RelayPool {
   Identity? Function() identityGetter = () => null;
 
   final StreamController<Event> _merged = StreamController<Event>.broadcast();
+  final StreamController<Event> _raw = StreamController<Event>.broadcast();
   final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
   final StreamController<String> _eose = StreamController<String>.broadcast();
   // late so the initializer can reference the instance method _emitStatus.
@@ -58,7 +59,23 @@ class RelayPool {
       );
 
   /// Merged, deduped stream of all events from all relays.
+  ///
+  /// Use for the live global feed (where the same event arriving from multiple
+  /// relays should be processed once). For short-lived targeted fetches that
+  /// RE-FETCH an event already seen on the global feed (e.g. a user's kind-3
+  /// contact list, which was already received when the app loaded the
+  /// following list), use [rawEvents] instead — the dedup set would otherwise
+  /// swallow the re-sent event and the fetch would return empty.
   Stream<Event> get events => _merged.stream;
+
+  /// Merged, UN-deduped stream of all events from all relays. Each event is
+  /// emitted every time a relay sends it, even if it was already seen on
+  /// another relay or in an earlier subscription. Consumers MUST dedup by id
+  /// themselves (a `Set<String>` of seen ids). Use this for one-shot targeted
+  /// fetches (a specific user's kind-3, a kind-3 #p followers query, NIP-50
+  /// search) so that re-fetching an event the global feed already saw still
+  /// returns it. The global feed should keep using [events].
+  Stream<Event> get rawEvents => _raw.stream;
 
   /// Merged stream of OK acks from all relays (publish verdicts).
   Stream<RelayOk> get oks => _oks.stream;
@@ -112,6 +129,9 @@ class RelayPool {
     _mergedWired = true;
     for (final c in _connections) {
       c.events.listen((e) {
+        // Raw stream: always emit (consumers dedup themselves) so targeted
+        // re-fetches work even when the global feed already saw the event.
+        if (!_raw.isClosed) _raw.add(e);
         if (_seenIds.add(e.id)) {
           _merged.add(e);
         }
@@ -279,6 +299,7 @@ class RelayPool {
       await c.dispose();
     }
     await _merged.close();
+    await _raw.close();
     await _oks.close();
     await _eose.close();
     await _status.close();
