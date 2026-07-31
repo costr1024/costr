@@ -52,8 +52,10 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   // Per-server cached RTT samples (last 3), keyed by url, per section.
   final Map<String, List<int>> _relayCache = {};
   final Map<String, List<int>> _blossomCache = {};
+  final Map<String, List<int>> _searchCache = {};
   // Live relay connection status from the pool's status stream.
   final Map<String, RelayStatus> _relayStatus = {};
+  final Map<String, RelayStatus> _searchStatus = {};
   // Blossom reachability from the last HTTP probe: true=online, false=offline,
   // absent=not yet probed.
   final Map<String, bool> _blossomOnline = {};
@@ -65,6 +67,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   List<String> _blossom = const <String>[];
   Timer? _timer;
   StreamSubscription<List<RelayState>>? _statusSub;
+  StreamSubscription<List<RelayState>>? _searchStatusSub;
 
   @override
   void initState() {
@@ -78,6 +81,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   void dispose() {
     _timer?.cancel();
     _statusSub?.cancel();
+    _searchStatusSub?.cancel();
     super.dispose();
   }
 
@@ -90,6 +94,19 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
       if (!mounted) return;
       for (final s in snapshot) {
         _relayStatus[s.url] = s.status;
+      }
+      setState(() {});
+    });
+    // Search pool (NIP-50) — separate, lazily connected. Surface its status
+    // too so the node page lists search relays distinctly.
+    final searchPool = ref.read(searchPoolProvider);
+    for (final s in searchPool.states) {
+      _searchStatus[s.url] = s.status;
+    }
+    _searchStatusSub = searchPool.statusStream.listen((snapshot) {
+      if (!mounted) return;
+      for (final s in snapshot) {
+        _searchStatus[s.url] = s.status;
       }
       setState(() {});
     });
@@ -107,6 +124,9 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     for (final url in _blossom) {
       _blossomCache[url] = await cache.readRtt(url, prefix: 'blossom_rtt');
     }
+    for (final url in searchRelays) {
+      _searchCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
+    }
     if (!mounted) return;
     setState(() {});
     await _measureAll();
@@ -114,6 +134,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
 
   Future<void> _measureAll() async {
     final pool = ref.read(relayPoolProvider);
+    final searchPool = ref.read(searchPoolProvider);
     // Relay targets: only connected relays.
     final relayTargets = _relays
         .where((u) => _relayStatus[u] == RelayStatus.connected)
@@ -121,12 +142,22 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
         .where((k) => _measuring.add(k))
         .map((k) => k.substring('relay|'.length))
         .toList();
+    final searchTargets = searchRelays
+        .where((u) => _searchStatus[u] == RelayStatus.connected)
+        .map((u) => 'search|$u')
+        .where((k) => _measuring.add(k))
+        .map((k) => k.substring('search|'.length))
+        .toList();
     final blossomTargets = _blossom
         .map((u) => 'blossom|$u')
         .where((k) => _measuring.add(k))
         .map((k) => k.substring('blossom|'.length))
         .toList();
-    if (relayTargets.isEmpty && blossomTargets.isEmpty) return;
+    if (relayTargets.isEmpty &&
+        searchTargets.isEmpty &&
+        blossomTargets.isEmpty) {
+      return;
+    }
     if (mounted) setState(() {});
     final cache = await ref.read(localCacheProvider.future);
     final futures = <Future<void>>[
@@ -137,6 +168,14 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
           _relayCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
         }
         _measuring.remove('relay|$url');
+      }),
+      ...searchTargets.map((url) async {
+        final ms = await searchPool.measureRttFor(url);
+        if (ms != null && mounted) {
+          await cache.pushRtt(url, ms, prefix: 'relay_rtt');
+          _searchCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
+        }
+        _measuring.remove('search|$url');
       }),
       ...blossomTargets.map((url) async {
         final ms = await measureBlossomRtt(url);
@@ -190,6 +229,15 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               connecting: _relayStatus[url] == RelayStatus.connecting,
               samples: _relayCache[url] ?? const <int>[],
               measuring: _measuring.contains('relay|$url'),
+            ),
+          _SectionHeader('搜索中继（NIP-50）'),
+          for (final url in searchRelays)
+            _ServerRow(
+              url: url,
+              online: _searchStatus[url] == RelayStatus.connected,
+              connecting: _searchStatus[url] == RelayStatus.connecting,
+              samples: _searchCache[url] ?? const <int>[],
+              measuring: _measuring.contains('search|$url'),
             ),
           _SectionHeader('Blossom 图床服务器'),
           for (final url in _blossom)

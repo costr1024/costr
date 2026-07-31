@@ -64,13 +64,45 @@ final notificationsProvider =
       final pool = ref.watch(relayPoolProvider);
       final items = <NotificationItem>[];
       final myEventIds = <String>{};
+      // One-time snapshot (NOT ref.watch): watching eventStoreProvider
+      // reactively would RESTART this whole generator on every incoming feed
+      // event (esp. kind-0 metadata bursts), and each restart yields [] first
+      // → the list flickers empty repeatedly until the burst settles. Read
+      // once so the generator runs a single time; grow myEventIds via
+      // ref.listen below as the user's own posts arrive.
       final myRecentEvents = ref
-          .watch(eventStoreProvider)
+          .read(eventStoreProvider)
           .where((e) => e.pubkey == myPubkey && e.isTextNote)
           .take(200)
           .map((e) => e.id)
           .toList();
       myEventIds.addAll(myRecentEvents);
+      // Reactively grow myEventIds when the user's own new posts arrive —
+      // WITHOUT restarting the generator (which would clear the list). Re-fetch
+      // interactions on just the newly-seen ids.
+      ref.listen(eventStoreProvider, (_, next) {
+        final fresh = <String>[];
+        for (final e in next) {
+          if (e.pubkey == myPubkey &&
+              e.isTextNote &&
+              myEventIds.add(e.id)) {
+            fresh.add(e.id);
+          }
+        }
+        if (fresh.isNotEmpty) {
+          final subId = nextSubId('notif-late');
+          pool.request(
+            subId,
+            <String, dynamic>{
+              'kinds': [1, 7, 6],
+              '#e': fresh,
+              'limit': 500,
+            },
+            closeOnEose: false,
+          );
+          ref.onDispose(() => pool.closeSubscription(subId));
+        }
+      });
 
       final controller = StreamController<List<NotificationItem>>.broadcast();
       Timer? flush;
