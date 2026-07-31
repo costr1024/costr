@@ -373,13 +373,38 @@ class LocalCache extends _$LocalCache {
     await (delete(configTable)..where((c) => c.key.equals(key))).go();
   }
 
-  // --- Relay RTT cache (last N samples per relay, FIFO) ---
+  // --- Server list persistence (relay + Blossom), source of truth for the
+  // 服务器节点 page and (later) editing. Seeded from the code constants on
+  // first run; published to Nostr (kind 10002 relays / kind 10063 Blossom). ---
+
+  /// Read a JSON array of server URLs stored under [key]. Null if absent or
+  /// malformed (caller falls back to the code default + re-seeds).
+  Future<List<String>?> readServerList(String key) async {
+    final raw = await readConfig(key);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final list = jsonDecode(raw);
+      if (list is List) {
+        return list.whereType<String>().toList(growable: false);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Persist a list of server URLs under [key] as a JSON array.
+  Future<void> writeServerList(String key, List<String> urls) async {
+    await writeConfig(key, jsonEncode(urls));
+  }
+
+  // --- Relay/Blossom RTT cache (last N samples per server, FIFO) ---
 
   static const int _rttKeep = 3;
 
-  /// Read the cached RTT samples (ms) for [url]. Empty list if none/invalid.
-  Future<List<int>> readRtt(String url) async {
-    final raw = await readConfig('relay_rtt:$url');
+  /// Read the cached RTT samples (ms) for [url] under [prefix]. Empty if
+  /// none/invalid. [prefix] separates relay vs blossom samples
+  /// (`relay_rtt` / `blossom_rtt`).
+  Future<List<int>> readRtt(String url, {String prefix = 'relay_rtt'}) async {
+    final raw = await readConfig('$prefix:$url');
     if (raw == null || raw.isEmpty) return const <int>[];
     try {
       final list = jsonDecode(raw);
@@ -390,14 +415,18 @@ class LocalCache extends _$LocalCache {
     return const <int>[];
   }
 
-  /// Append [ms] to the cached samples for [url], keeping only the most recent
-  /// [_rttKeep] (FIFO eviction). Persists immediately.
-  Future<void> pushRtt(String url, int ms) async {
-    final samples = (await readRtt(url)).toList()..add(ms);
+  /// Append [ms] to the cached samples for [url] under [prefix], keeping only
+  /// the most recent [_rttKeep] (FIFO eviction). Persists immediately.
+  Future<void> pushRtt(
+    String url,
+    int ms, {
+    String prefix = 'relay_rtt',
+  }) async {
+    final samples = (await readRtt(url, prefix: prefix)).toList()..add(ms);
     final kept = samples.length > _rttKeep
         ? samples.sublist(samples.length - _rttKeep)
         : samples;
-    await writeConfig('relay_rtt:$url', jsonEncode(kept));
+    await writeConfig('$prefix:$url', jsonEncode(kept));
   }
 
   // --- Drafts (outbox: events that failed to publish, for retry) ---

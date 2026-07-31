@@ -19,10 +19,14 @@ import 'package:http/http.dart' as http;
 import '../models/event.dart';
 import '../nostr/identity.dart';
 
-/// Default Blossom servers (user-specified), tried in order.
+/// Default Blossom servers, tried in order (= upload retry priority = display
+/// order on the 服务器节点 page). ditto.pub stays primary; libernet next;
+/// nostr.download + jumble.social are error-fallback retries.
 const List<String> blossomServers = <String>[
   'https://blossom.ditto.pub/',
   'https://media.libernet.app/',
+  'https://nostr.download/',
+  'https://blossom.jumble.social/',
 ];
 
 class BlossomResult {
@@ -69,6 +73,26 @@ String mimeForExt(String? ext) {
 
 bool isImageMime(String m) => m.startsWith('image/');
 bool isVideoMime(String m) => m.startsWith('video/');
+
+/// Measure real HTTP round-trip latency to a Blossom server: a HEAD request
+/// to the server root, timed from send to first response. Any HTTP response
+/// (even non-2xx, e.g. 405 for HEAD) means the server is reachable → returns
+/// elapsed ms. A network error / timeout → returns null (offline). NOT an
+/// ICMP ping; this is the real upload-path HTTP round-trip the app uses.
+final http.Client _blossomRttClient = http.Client();
+
+Future<int?> measureBlossomRtt(
+  String serverUrl, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final sw = Stopwatch()..start();
+  try {
+    await _blossomRttClient.head(Uri.parse(serverUrl)).timeout(timeout);
+    return sw.elapsedMilliseconds;
+  } catch (_) {
+    return null;
+  }
+}
 
 /// Upload [bytes] as [mimetype]. Tries [blossomServers] in order, retrying on
 /// failure. Returns the public URL (with a file extension per BUD-01) or null

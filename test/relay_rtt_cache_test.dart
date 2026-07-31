@@ -44,6 +44,13 @@ void main() {
       await db.writeConfig('relay_rtt:wss://a', 'not-json');
       expect(await db.readRtt('wss://a'), isEmpty);
     });
+
+    test('relay and blossom prefixes are isolated', () async {
+      await db.pushRtt('wss://a', 100, prefix: 'relay_rtt');
+      await db.pushRtt('wss://a', 200, prefix: 'blossom_rtt');
+      expect(await db.readRtt('wss://a', prefix: 'relay_rtt'), [100]);
+      expect(await db.readRtt('wss://a', prefix: 'blossom_rtt'), [200]);
+    });
   });
 
   group('averageRtt', () {

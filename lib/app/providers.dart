@@ -22,6 +22,7 @@ import '../nostr/identity.dart';
 import '../nostr/relay_client.dart';
 import '../nostr/relay_pool.dart';
 import '../services/local_cache.dart' as cache;
+import '../services/blossom_upload.dart';
 import '../services/secure_storage_service.dart';
 import '../utils/language.dart';
 import 'package:path_provider/path_provider.dart';
@@ -61,6 +62,37 @@ final localCacheProvider = FutureProvider<cache.LocalCache>((ref) async {
   ref.onDispose(db.close);
   return db;
 });
+
+/// The user's configured server lists (relays + Blossom), sourced from the
+/// local SQLite cache (the editable source of truth, seeded from the code
+/// constants on first run) and published to Nostr (kind 10002 relays /
+/// kind 10063 Blossom). The 服务器节点 page reads from here. Edit UI is
+/// future work; for now the lists equal the seeded constants.
+class ServerLists {
+  const ServerLists(this.relays, this.blossom);
+  final List<String> relays;
+  final List<String> blossom;
+}
+
+final serverListsProvider = FutureProvider<ServerLists>((ref) async {
+  final db = await ref.read(localCacheProvider.future);
+  var relays = await db.readServerList('relay_list');
+  if (relays == null || relays.isEmpty) {
+    relays = defaultRelays;
+    await db.writeServerList('relay_list', relays);
+  }
+  var blossom = await db.readServerList('blossom_list');
+  if (blossom == null || blossom.isEmpty) {
+    blossom = blossomServersConst;
+    await db.writeServerList('blossom_list', blossom);
+  }
+  return ServerLists(relays, blossom);
+});
+
+// Re-export the Blossom server list constant (defined in
+// services/blossom_upload.dart) so serverListsProvider can seed the local
+// cache without callers needing to import the upload module directly.
+const List<String> blossomServersConst = blossomServers;
 
 // Monotonic subId counter, namespaced for relay-log readability.
 int _seq = 0;
