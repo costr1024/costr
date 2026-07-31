@@ -38,6 +38,7 @@ const List<String> defaultRelays = <String>[
   'wss://nostr.wine/',
   'wss://relay.nostr.net/',
   'wss://relay.0xchat.com/',
+  'wss://top.testrelay.top/',
 ];
 
 /// Dedicated NIP-50 search relays. Global search (searchPostsProvider /
