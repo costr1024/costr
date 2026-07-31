@@ -174,6 +174,20 @@ class NostrActions {
     );
   }
 
+  /// NIP-09 deletion (kind 5). Publish to ask relays to delete [target]; the
+  /// `e` tag references the event id being deleted. Relays that implement
+  /// NIP-09 will stop serving the deleted event — not all relays honor this,
+  /// so deletion is best-effort.
+  Event deleteEvent(Event target, {String reason = ''}) {
+    return id.signEvent(
+      kind: 5,
+      content: reason,
+      tags: [
+        ['e', target.id],
+      ],
+    );
+  }
+
   /// Quote (kind-1 referencing [quoted]). The user's [content] is followed by a
   /// `nostr:note1…` reference; an `e` mention tag + `p` tag reference the quote.
   /// [extraTags] (e.g. imeta) are appended.

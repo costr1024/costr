@@ -511,6 +511,21 @@ class EventStoreNotifier extends Notifier<List<Event>> {
     }
   }
 
+  /// Remove an event from the in-memory store + SQLite (after a NIP-09 kind-5
+  /// deletion). The feed (which watches [eventStoreProvider]) re-renders
+  /// without the deleted post.
+  Future<void> removeEvent(String id) async {
+    if (_store.remove(id)) {
+      state = _store.events;
+    }
+    final db = _cache;
+    if (db != null) {
+      try {
+        await db.deleteEvent(id);
+      } catch (_) {}
+    }
+  }
+
   Event _cacheRowToEvent(cache.EventRow row) {
     return Event(
       id: row.id,
@@ -1644,6 +1659,23 @@ final reactionsProvider =
       }
       return tallies;
     });
+
+/// The current user's own kind-7 reaction to [eventId], if present in the
+/// in-memory store (their just-published reaction is echoed locally by
+/// [RelayPool.publish] and stored). Used to highlight the reaction icon + let
+/// a second tap cancel (NIP-09 kind-5 delete of the reaction event).
+final myReactionProvider = Provider.family<Event?, String>((ref, eventId) {
+  final me = ref.watch(identityProvider).value?.pubkeyHex;
+  if (me == null) return null;
+  final store = ref.watch(eventStoreProvider);
+  for (final e in store) {
+    if (e.kind != 7 || e.pubkey != me) continue;
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) return e;
+    }
+  }
+  return null;
+});
 
 /// True if [e] is a kind-1 text note that directly references [eventId] via an
 /// `e` tag — i.e. a genuine reply. Used by [repliesProvider]'s global-stream

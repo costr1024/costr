@@ -91,6 +91,14 @@ void main() {
       expect(actions.userStatus('').content, '');
     });
 
+    test('deleteEvent (NIP-09 kind 5): e tag points at target', () {
+      final target = _ev('deadbeef');
+      final d = actions.deleteEvent(target);
+      expect(d.kind, 5);
+      expect(d.tags, _tag(['e', 'deadbeef']));
+      expect(id.verifyEventSignature(id: d.id, sig: d.sig), isTrue);
+    });
+
     test('quote: kind 1 with nostr:note1 ref + e mention tag', () {
       final quoted = _ev('a' * 64);
       final r = actions.quote(quoted, 'well said');

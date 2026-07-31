@@ -44,6 +44,15 @@ class EventStore {
 
   int get length => _sorted.length;
 
+  /// Remove an event by id (e.g. after a NIP-09 kind-5 deletion). Returns true
+  /// if it was present.
+  bool remove(String id) {
+    final e = _byId.remove(id);
+    if (e == null) return false;
+    _sorted.remove(e);
+    return true;
+  }
+
   void clear() {
     _byId.clear();
     _sorted.clear();

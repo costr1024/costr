@@ -41,6 +41,7 @@ class PostActions extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final fg = theme.colorScheme.onSurfaceVariant;
+    final myReaction = ref.watch(myReactionProvider(event.id));
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -55,9 +56,15 @@ class PostActions extends ConsumerWidget {
           onTap: () => _showRepostMenu(context, ref),
         ),
         _Action(
-          icon: Icons.favorite_border,
-          color: fg,
-          onTap: () => _pickReaction(context, ref),
+          icon: myReaction == null ? Icons.favorite_border : Icons.favorite,
+          color: myReaction == null ? fg : Colors.red,
+          onTap: () {
+            if (myReaction == null) {
+              _pickReaction(context, ref);
+            } else {
+              _cancelReaction(context, ref, myReaction);
+            }
+          },
         ),
         _Action(
           icon: Icons.bookmark_border,
@@ -150,6 +157,24 @@ class PostActions extends ConsumerWidget {
     final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
     if (context.mounted) {
       _snack(context, ok.ok ? '已发送 $emoji' : '反应失败：${ok.reason}');
+    }
+  }
+
+  /// Cancel the user's own reaction to this post (NIP-09 kind-5 delete of the
+  /// kind-7 reaction event). Second tap on a highlighted reaction icon.
+  Future<void> _cancelReaction(
+    BuildContext context,
+    WidgetRef ref,
+    Event myReaction,
+  ) async {
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return;
+    final signed = NostrActions(identity).deleteEvent(myReaction);
+    await ref.read(relayPoolProvider).publishAndWait(signed);
+    // Remove locally so the icon un-fills + the tally drops immediately.
+    await ref.read(eventStoreProvider.notifier).removeEvent(myReaction.id);
+    if (context.mounted) {
+      _snack(context, '已取消反应');
     }
   }
 

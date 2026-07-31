@@ -11,6 +11,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
+import '../../nostr/actions.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/markdown_content.dart';
@@ -536,23 +537,57 @@ class _HashtagChip extends ConsumerWidget {
 }
 
 /// Top-right `⋮` menu for a post: copy post id / copy full content / zap (打闪).
-class _PostMenu extends StatelessWidget {
+/// For the user's OWN posts, a 删除 (NIP-09 kind-5) item is appended.
+class _PostMenu extends ConsumerWidget {
   const _PostMenu({required this.event});
   final Event event;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final myPubkey = ref.watch(identityProvider).value?.pubkeyHex;
+    final isSelf = myPubkey != null && myPubkey == event.pubkey;
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, size: 18),
       padding: EdgeInsets.zero,
-      itemBuilder: (BuildContext context) => const <PopupMenuEntry<String>>[
-        PopupMenuItem<String>(value: 'copy_id', child: Text('复制帖子 id')),
-        PopupMenuItem<String>(value: 'copy_content', child: Text('复制全文')),
-        PopupMenuItem<String>(value: 'zap', child: Text('打闪')),
+      itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+        const PopupMenuItem<String>(
+          value: 'copy_id',
+          child: Text('复制帖子 id'),
+        ),
+        const PopupMenuItem<String>(
+          value: 'copy_content',
+          child: Text('复制全文'),
+        ),
+        const PopupMenuItem<String>(value: 'zap', child: Text('打闪')),
+        if (isSelf) ...[
+          const PopupMenuDivider(),
+          const PopupMenuItem<String>(
+            value: 'delete',
+            child: Text('删除'),
+          ),
+        ],
       ],
       onSelected: (String value) async {
         if (value == 'zap') {
           showZapSheet(context, event);
+          return;
+        }
+        if (value == 'delete') {
+          final ok = await _confirmDelete(context);
+          if (!ok) return;
+          final id = ref.read(identityProvider).value;
+          if (id == null) return;
+          final signed = NostrActions(id).deleteEvent(event);
+          await ref.read(relayPoolProvider).publishAndWait(signed);
+          await ref.read(eventStoreProvider.notifier).removeEvent(event.id);
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('已请求删除（部分中继可能不支持）'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
           return;
         }
         if (value == 'copy_id') {
@@ -587,5 +622,29 @@ class _PostMenu extends StatelessWidget {
         }
       },
     );
+  }
+
+  Future<bool> _confirmDelete(BuildContext context) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除帖子？'),
+        content: const Text(
+          '将向中继发送 NIP-09 删除请求。注意：并非所有中继都支持删除，'
+          '已传播的帖子可能仍被其他客户端/中继保留。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 }

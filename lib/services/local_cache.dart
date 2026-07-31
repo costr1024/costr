@@ -476,6 +476,13 @@ class LocalCache extends _$LocalCache {
     await customStatement('DELETE FROM drafts WHERE rowid = ?', [rowid]);
   }
 
+  /// Delete an immutable event (events + its tags). The events AFTER DELETE
+  /// trigger cleans events_fts. Used after a NIP-09 kind-5 deletion.
+  Future<void> deleteEvent(String id) async {
+    await customStatement('DELETE FROM event_tags WHERE event_id = ?', [id]);
+    await customStatement('DELETE FROM events WHERE id = ?', [id]);
+  }
+
   /// Increment attempt count on a draft (for backoff decisions).
   Future<void> incrementDraftAttempts(int rowid) async {
     await customStatement(
