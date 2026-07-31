@@ -155,6 +155,14 @@ final bootstrapProvider = FutureProvider<void>((ref) async {
   final identity = ref.read(identityProvider).value;
   if (identity != null) {
     publishRelayList(ref.read(relayPoolProvider), identity);
+    // Bulk-prefetch metadata (kind 0) for the whole social graph (follows +
+    // followers + self) so avatars/profiles resolve instantly. Deferred 5s
+    // so the feed renders first; fire-and-forget.
+    Timer(const Duration(seconds: 5), () {
+      if (ref.read(identityProvider).value != null) {
+        unawaited(ref.read(socialGraphMetadataPrefetchProvider.future));
+      }
+    });
   }
   // Cache cleanup 30s after startup (avoids startup jank).
   Timer(const Duration(seconds: 30), () async {
@@ -1688,66 +1696,132 @@ final relayStatusProvider = StreamProvider<List<RelayState>>(
 
 // --- User metadata (NIP-01 kind 0) ----------------------------------------
 
-/// Per-pubkey metadata cache. Checks SQLite first (O(1) PK lookup), then
-/// in-memory EventStore, then falls back to a dedicated REQ.
-final metadataProvider = FutureProvider.family<Metadata?, String>((
+/// Per-pubkey metadata. A **StreamProvider** so it can emit the cached value
+/// instantly, then async-refresh from relay when newer metadata arrives —
+/// callers (`Avatar`, profile header, …) use `.value` and rebuild on the
+/// second emission automatically, so the profile page shows cached data
+/// first and updates in place.
+///
+/// Flow: yield SQLite/in-memory cache (if any) → open a kind-0 REQ → yield
+/// any newer event (compares `created_at` to avoid regressing to older
+/// metadata) → close on EOSE / timeout. On a cold miss with no relay hit the
+/// stream closes after yielding null, so callers see "no metadata" rather
+/// than a perpetual spinner.
+final metadataProvider = StreamProvider.family<Metadata?, String>((
   ref,
   pubkey,
-) async {
+) async* {
   // 1. SQLite (O(1) PK lookup — fastest, persisted).
-  final cache = ref.watch(localCacheProvider).value;
+  Metadata? cached;
+  var cachedCreatedAt = -1;
+  final cache = ref.read(localCacheProvider).value;
   if (cache != null) {
     final row = await cache.queryMetadata(pubkey);
     if (row != null) {
       try {
         final json = jsonDecode(row.content);
-        if (json is Map<String, dynamic>) return Metadata.fromJson(json);
+        if (json is Map<String, dynamic>) {
+          cached = Metadata.fromJson(json);
+          cachedCreatedAt = row.createdAt;
+        }
       } catch (_) {}
     }
   }
   // 2. In-memory EventStore (kind-0 may have arrived via global feed).
-  final store = ref.watch(eventStoreProvider);
-  for (final e in store) {
-    if (e.kind == 0 && e.pubkey == pubkey) {
-      try {
-        final json = jsonDecode(e.content);
-        if (json is Map<String, dynamic>) return Metadata.fromJson(json);
-      } catch (_) {}
-    }
-  }
-  // 3. Fall back to a dedicated REQ.
-  final pool = ref.watch(relayPoolProvider);
-  final completer = Completer<Metadata?>();
-  late StreamSubscription<Event> sub;
-  sub = pool.rawEvents.listen((e) {
-    if (e.kind == 0 && e.pubkey == pubkey && !completer.isCompleted) {
-      try {
-        final json = jsonDecode(e.content);
-        if (json is Map<String, dynamic>) {
-          completer.complete(Metadata.fromJson(json));
-        }
-      } catch (_) {
-        // Malformed metadata content — leave unresolved; timeout returns null.
+  if (cached == null) {
+    for (final e in ref.read(eventStoreProvider)) {
+      if (e.kind == 0 && e.pubkey == pubkey) {
+        try {
+          final json = jsonDecode(e.content);
+          if (json is Map<String, dynamic>) {
+            cached = Metadata.fromJson(json);
+            cachedCreatedAt = e.createdAt;
+          }
+        } catch (_) {}
+        break;
       }
     }
-  });
+  }
+  if (cached != null) yield cached;
 
+  // 3. Async refresh from relay (also fills cold misses).
+  final pool = ref.read(relayPoolProvider);
+  final ctrl = StreamController<Metadata?>();
+  late StreamSubscription<Event> sub;
+  late StreamSubscription<String> eoseSub;
+  var relayHit = false;
+  sub = pool.rawEvents.listen((e) {
+    if (e.kind != 0 || e.pubkey != pubkey) return;
+    try {
+      final json = jsonDecode(e.content);
+      if (json is! Map<String, dynamic>) return;
+      // Don't regress to older metadata.
+      if (e.createdAt < cachedCreatedAt) return;
+      cachedCreatedAt = e.createdAt;
+      relayHit = true;
+      ctrl.add(Metadata.fromJson(json));
+    } catch (_) {
+      // Malformed metadata content — ignore, keep waiting for EOSE.
+    }
+  });
   final subId = nextSubId('meta');
   pool.request(subId, <String, dynamic>{
     'authors': [pubkey],
     'kinds': [0],
     'limit': 1,
   }, closeOnEose: true);
+  void finish() {
+    if (ctrl.isClosed) return;
+    // Cold miss: resolve to null so callers don't spin forever.
+    if (!relayHit && cached == null) ctrl.add(null);
+    ctrl.close();
+  }
+
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) => finish());
+  final timer = Timer(const Duration(seconds: 8), finish);
   ref.onDispose(() {
     sub.cancel();
-    pool.closeSubscription(subId);
+    eoseSub.cancel();
+    timer.cancel();
+    ctrl.close();
   });
-
-  return completer.future.timeout(
-    const Duration(seconds: 5),
-    onTimeout: () => null,
-  );
+  yield* ctrl.stream;
 });
+
+/// Bulk-prefetch profile metadata (kind 0) for the whole social graph
+/// (follows + followers + self) so avatars/profiles resolve instantly on
+/// first paint. One REQ per ~200-author chunk (relay author-list limit).
+/// Received kind-0 events flow through [pool.rawEvents] →
+/// [EventStoreNotifier._persist] (kind 0 is always cached to SQLite) and warm
+/// each per-pubkey [metadataProvider] via its tier-1/tier-2 lookup.
+final socialGraphMetadataPrefetchProvider = FutureProvider<void>((ref) async {
+  final id = ref.watch(identityProvider).value;
+  if (id == null) return;
+  // Ensure followers have been merged into the graph before bulk-fetching.
+  await ref.watch(userFollowersProvider(id.pubkeyHex).future).catchError((_) =>
+      <String>[]);
+  final graph = ref.read(socialGraphProvider);
+  if (graph.isEmpty) return;
+  final pool = ref.read(relayPoolProvider);
+  const chunkSize = 200;
+  final pubkeys = graph.toList();
+  final subIds = <String>[];
+  for (var i = 0; i < pubkeys.length; i += chunkSize) {
+    final end = (i + chunkSize).clamp(0, pubkeys.length);
+    final subId = nextSubId('meta-bulk');
+    subIds.add(subId);
+    pool.request(subId, <String, dynamic>{
+      'authors': pubkeys.sublist(i, end),
+      'kinds': [0],
+    }, closeOnEose: true);
+  }
+  ref.onDispose(() {
+    for (final s in subIds) {
+      pool.closeSubscription(s);
+    }
+  });
+});
+
 
 // --- NIP-05 verification ----------------------------------------------------
 

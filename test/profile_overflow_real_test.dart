@@ -49,9 +49,9 @@ void main() {
           bootstrapProvider.overrideWith((ref) async {}),
           identityProvider.overrideWith(() => _LoggedInIdentity()),
           followingStateProvider.overrideWith(() => _EmptyFollowing()),
-          metadataProvider.overrideWith((ref, pk) async {
+          metadataProvider.overrideWith((ref, pk) async* {
             meta = _tallMeta(pk);
-            return meta;
+            yield meta;
           }),
           userGroupedFollowsProvider.overrideWith((ref, pk) async => const []),
           userFollowersProvider.overrideWith((ref, pk) async => const []),
@@ -102,7 +102,7 @@ void main() {
             bootstrapProvider.overrideWith((ref) async {}),
             identityProvider.overrideWith(() => _LoggedInIdentity()),
             followingStateProvider.overrideWith(() => _EmptyFollowing()),
-            metadataProvider.overrideWith((ref, pk) async => _tallMeta(pk)),
+            metadataProvider.overrideWith((ref, pk) async* { yield _tallMeta(pk); }),
             userGroupedFollowsProvider.overrideWith(
               (ref, pk) async => const [],
             ),
