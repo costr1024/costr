@@ -53,9 +53,15 @@ void main() {
             meta = _tallMeta(pk);
             yield meta;
           }),
-          userGroupedFollowsProvider.overrideWith((ref, pk) async => const []),
-          userFollowersProvider.overrideWith((ref, pk) async => const []),
-          userPostsProvider.overrideWith((ref, pk) async => const []),
+          userGroupedFollowsProvider.overrideWith((ref, pk) async* {
+            yield const [];
+          }),
+          userFollowersProvider.overrideWith((ref, pk) async* {
+            yield const [];
+          }),
+          userPostsProvider.overrideWith((ref, pk) async* {
+            yield const [];
+          }),
         ],
         child: const MaterialApp(home: ProfilePage()),
       ),
@@ -104,10 +110,14 @@ void main() {
             followingStateProvider.overrideWith(() => _EmptyFollowing()),
             metadataProvider.overrideWith((ref, pk) async* { yield _tallMeta(pk); }),
             userGroupedFollowsProvider.overrideWith(
-              (ref, pk) async => const [],
+              (ref, pk) async* {
+                yield const [];
+              },
             ),
-            userFollowersProvider.overrideWith((ref, pk) async => const []),
-            userPostsProvider.overrideWith((ref, pk) async {
+            userFollowersProvider.overrideWith((ref, pk) async* {
+              yield const [];
+            }),
+            userPostsProvider.overrideWith((ref, pk) async* {
               final posts = <Event>[];
               for (int i = 0; i < 30; i++) {
                 posts.add(
@@ -122,7 +132,7 @@ void main() {
                   ),
                 );
               }
-              return posts;
+              yield posts;
             }),
           ],
           child: const MaterialApp(home: ProfilePage()),

@@ -160,6 +160,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       appBar: AppBar(
         title: const CostrWordmark(logoSize: 26, fontSize: 19),
         actions: [
+          if (mode == FeedMode.following) const _FollowingFilterButton(),
           _LanguageGlobeButton(value: lang),
           _RelayStatusChip(relays: relays.value ?? const []),
         ],
@@ -311,6 +312,96 @@ class _EmptyState extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 80, horizontal: 24),
       child: Center(child: Text(text, textAlign: TextAlign.center)),
+    );
+  }
+}
+
+/// Following-feed filter dropdown (DESIGN §8): 全部关注 / a custom follow
+/// group / a followed hashtag. Only shown in 关注 mode. Selection persists
+/// across relaunch ([FollowingFilterNotifier]). Client-side filter — see
+/// [currentFeedEventsProvider].
+class _FollowingFilterButton extends ConsumerWidget {
+  const _FollowingFilterButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final identity = ref.watch(identityProvider).value;
+    final me = identity?.pubkeyHex;
+    final groups = me == null
+        ? const <FollowGroup>[]
+        : (ref.watch(userGroupedFollowsProvider(me)).value ?? const <FollowGroup>[]);
+    final tags = me == null
+        ? const <String>[]
+        : (ref.watch(followedTagsProvider).value ?? const <String>[]);
+    final ff = ref.watch(followingFilterProvider);
+
+    String label;
+    if (ff == null) {
+      label = '全部关注';
+    } else if (ff.startsWith('group:')) {
+      label = ff.substring(6);
+    } else if (ff.startsWith('tag:')) {
+      label = '#${ff.substring(4)}';
+    } else {
+      label = '全部关注';
+    }
+
+    return PopupMenuButton<String>(
+      tooltip: '过滤关注信息流',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.filter_list, size: 18),
+            const SizedBox(width: 4),
+            Text(label, style: Theme.of(context).textTheme.labelMedium),
+          ],
+        ),
+      ),
+      onSelected: (String v) =>
+          ref.read(followingFilterProvider.notifier).set(v.isEmpty ? null : v),
+      itemBuilder: (BuildContext ctx) => <PopupMenuEntry<String>>[
+        PopupMenuItem(
+          value: '',
+          child: Row(
+            children: [
+              Icon(ff == null ? Icons.check : Icons.check_box_outline_blank,
+                  size: 18),
+              const SizedBox(width: 8),
+              const Text('全部关注'),
+            ],
+          ),
+        ),
+        if (groups.length > 1) const PopupMenuDivider(),
+        for (final g in groups)
+          if (g.name != '默认分组')
+            PopupMenuItem(
+              value: 'group:${g.name}',
+              child: Row(
+                children: [
+                  Icon(ff == 'group:${g.name}' ? Icons.check : Icons.label_outline,
+                      size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(g.name)),
+                  Text('${g.pubkeys.length}',
+                      style: Theme.of(ctx).textTheme.labelSmall),
+                ],
+              ),
+            ),
+        if (tags.isNotEmpty) const PopupMenuDivider(),
+        for (final t in tags)
+          PopupMenuItem(
+            value: 'tag:$t',
+            child: Row(
+              children: [
+                Icon(ff == 'tag:$t' ? Icons.check : Icons.tag, size: 18),
+                const SizedBox(width: 8),
+                Text('#$t'),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }

@@ -121,11 +121,18 @@ class RelayPool {
   /// pool's persistent connection set + active-subscription map untouched.
   /// Lets a profile/posts fetch target the author's own outbox relays (from
   /// their kind-10002) instead of broadcasting to the whole pool. Events are
-  /// deduped by id across relays. Empty/invalid URLs are skipped.
+  /// deduped by id across relays.
+  ///
+  /// [onEvent], if given, is invoked for each freshly-seen event AS IT ARRIVES
+  /// (before this future resolves) — so callers can stream events into the UI
+  /// with a debounce instead of waiting for the whole batch. The transient
+  /// clients don't emit to the pool's [rawEvents] stream, so without this hook
+  /// the caller would only see the final list.
   Future<List<Event>> fetchFromUrls(
     Map<String, dynamic> filter,
     List<String> urls, {
     Duration timeout = const Duration(seconds: 10),
+    void Function(Event)? onEvent,
   }) async {
     final cleaned = urls
         .map((u) => u.trim())
@@ -142,7 +149,10 @@ class RelayPool {
         late StreamSubscription<String> eoseSub;
         final done = Completer<void>();
         evSub = client.events.listen((e) {
-          if (seen.add(e.id)) results.add(e);
+          if (seen.add(e.id)) {
+            results.add(e);
+            onEvent?.call(e);
+          }
         });
         eoseSub = client.eose.where((s) => s == subId).listen((_) {
           if (!done.isCompleted) done.complete();

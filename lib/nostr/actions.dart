@@ -294,4 +294,47 @@ class NostrActions {
     }
     return id.signEvent(kind: 10003, content: content, tags: tags);
   }
+
+  /// Extract the bookmarked EVENT ids from a kind-10003 event: public `e`
+  /// tags (plaintext, visible to anyone) +, when this is the logged-in user's
+  /// own list, the private `e` tags decrypted from the NIP-44-encrypted
+  /// `.content`. `a` (address) bookmarks are skipped — only note ids returned.
+  /// Deduped, order-preserved. Returns empty for a null event.
+  List<String> bookmarkIds(Event? e, {bool includePrivate = true}) {
+    if (e == null) return const <String>[];
+    final out = <String>[];
+    final seen = <String>{};
+    void add(String id) {
+      if (seen.add(id)) out.add(id);
+    }
+
+    // Public e-tags.
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'e' && t[1] is String) {
+        add(t[1] as String);
+      }
+    }
+
+    // Private entries (only decryptable for the owner — needs the privkey).
+    if (includePrivate && e.content.isNotEmpty) {
+      try {
+        final decoded = nip44Decrypt(
+          id.privkeyHex,
+          id.pubkeyHex,
+          e.content,
+        );
+        final arr = jsonDecode(decoded);
+        if (arr is List) {
+          for (final t in arr) {
+            if (t is List && t.length >= 2 && t[0] == 'e' && t[1] is String) {
+              add(t[1] as String);
+            }
+          }
+        }
+      } catch (_) {
+        // Not the owner (can't decrypt) or malformed — ignore.
+      }
+    }
+    return out;
+  }
 }

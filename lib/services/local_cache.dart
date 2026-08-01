@@ -260,6 +260,25 @@ class LocalCache extends _$LocalCache {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// All replaceable events of [kind] authored by [pubkey] — e.g. every
+  /// kind-30000 follow set (one per `d` tag = group name) for a user. Used to
+  /// hydrate the profile's grouped-follows / group-names from SQLite on cold
+  /// start instead of waiting for relays. Ordered by `dTag` for stable output.
+  Future<List<ReplaceableEvent>> queryReplaceableByAuthor(
+    String pubkey,
+    int kind,
+  ) async {
+    final q = select(replaceableEvents)
+      ..where((e) => e.pubkey.equals(pubkey) & e.kind.equals(kind))
+      ..orderBy([(e) => OrderingTerm.asc(e.dTag)]);
+    return q.get();
+  }
+
+  /// Convenience: all kind-30000 follow sets for [pubkey]. See
+  /// [queryReplaceableByAuthor].
+  Future<List<ReplaceableEvent>> queryFollowSets(String pubkey) =>
+      queryReplaceableByAuthor(pubkey, 30000);
+
   Future<List<EventRow>> queryReactions(String eventId) async {
     final results = await customSelect(
       'SELECT e.* FROM events e JOIN event_tags t ON e.id = t.event_id WHERE e.kind = 7 AND t.name = ? AND t.value = ?',
@@ -294,6 +313,35 @@ class LocalCache extends _$LocalCache {
     final results = await customSelect(
       'SELECT e.* FROM events e JOIN event_tags t ON e.id = t.event_id WHERE e.kind = 1 AND t.name = ? AND t.value = ? ORDER BY e.created_at DESC',
       variables: [Variable('e'), Variable(eventId)],
+    ).get();
+    return results
+        .map(
+          (r) => EventRow(
+            id: r.read<String>('id'),
+            pubkey: r.read<String>('pubkey'),
+            kind: r.read<int>('kind'),
+            createdAt: r.read<int>('created_at'),
+            content: r.read<String>('content'),
+            sig: r.read<String>('sig'),
+            raw: r.read<String>('raw'),
+            tagsJson: r.read<String>('tags_json'),
+            receivedAt: r.read<int>('received_at'),
+          ),
+        )
+        .toList();
+  }
+
+  /// Cached kind-1 notes carrying a `t` tag = [tag] (NIP-12 hashtags), so the
+  /// hashtag feed can hydrate from SQLite on cold start / offline instead of
+  /// scanning only the in-memory EventStore (≤5000, recent-window only).
+  /// [tag] is matched case-insensitively (NIP-12 values are lowercased on
+  /// write), newest-first.
+  Future<List<EventRow>> queryPostsByTag(String tag, {int limit = 200}) async {
+    final results = await customSelect(
+      'SELECT e.* FROM events e JOIN event_tags t ON e.id = t.event_id '
+      'WHERE e.kind = 1 AND t.name = ? AND LOWER(t.value) = LOWER(?) '
+      'ORDER BY e.created_at DESC LIMIT ?',
+      variables: [Variable('t'), Variable(tag), Variable(limit)],
     ).get();
     return results
         .map(

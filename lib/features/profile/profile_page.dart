@@ -14,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/providers.dart';
 import '../../app/theme.dart';
+import '../feed/event_card.dart';
 import '../../models/event.dart';
 import '../../models/metadata.dart';
 import '../../nostr/identity.dart';
@@ -62,7 +63,7 @@ class ProfilePage extends ConsumerWidget {
           final isSelf = pubkey == null || pubkey == identity?.pubkeyHex;
           if (pk == null) return const Center(child: Text('未登录'));
           return DefaultTabController(
-            length: 4,
+            length: 5,
             child: _ProfileBody(pubkey: pk, isSelf: isSelf, identity: identity),
           );
         },
@@ -108,6 +109,7 @@ class _ProfileBody extends ConsumerWidget {
                   Tab(text: '回帖'),
                   Tab(text: '关注'),
                   Tab(text: '关注者'),
+                  Tab(text: '收藏'),
                 ],
               ),
               color: theme.colorScheme.surface,
@@ -121,6 +123,7 @@ class _ProfileBody extends ConsumerWidget {
           _RepliesTab(pubkey: pubkey),
           _FollowsTab(pubkey: pubkey, isSelf: isSelf),
           _FollowersTab(pubkey: pubkey, isSelf: isSelf),
+          _BookmarksTab(pubkey: pubkey),
         ],
       ),
     );
@@ -210,13 +213,14 @@ class _Header extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  if (isSelf)
-                    FilledButton.tonalIcon(
-                      icon: const Icon(Icons.edit, size: 18),
-                      label: const Text('编辑资料'),
+                  if (isSelf) ...[
+                    _FollowButton(pubkey: pubkey, isSelf: true, iconOnly: true),
+                    IconButton(
+                      icon: const Icon(Icons.edit, size: 20),
+                      tooltip: '编辑资料',
                       onPressed: () => context.push('/profile/edit'),
-                    )
-                  else
+                    ),
+                  ] else
                     _FollowButton(pubkey: pubkey),
                 ],
               ),
@@ -375,13 +379,23 @@ class _ProfileStats extends ConsumerWidget {
 /// already follows them (per followingStateProvider); tap publishes an updated
 /// kind-3 via [followUser].
 class _FollowButton extends ConsumerStatefulWidget {
-  const _FollowButton({required this.pubkey, this.followsMe = false});
+  const _FollowButton({required this.pubkey, this.followsMe = false, this.isSelf = false, this.iconOnly = false});
   final String pubkey;
 
   /// True when this pubkey follows the logged-in user (→ show "回关" until
   /// mutual). Set by callers that know it (e.g. the logged-in user's followers
   /// tab). Default false → plain "关注".
   final bool followsMe;
+
+  /// True when [pubkey] IS the logged-in user (follow-self on own profile).
+  /// Relabels to 关注自己 / 已关注自己; the multi-select sheet + NIP-02 path
+  /// are identical to following anyone else (DESIGN §8 follow-yourself).
+  final bool isSelf;
+
+  /// Render icon-only (with tooltip) — used on the self profile where two
+  /// buttons (关注自己 + 编辑资料) share the name row, so a long name on a
+  /// narrow screen doesn't overflow horizontally.
+  final bool iconOnly;
 
   @override
   ConsumerState<_FollowButton> createState() => _FollowButtonState();
@@ -394,9 +408,22 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
   Widget build(BuildContext context) {
     final follows = ref.watch(followingStateProvider).value ?? const <String>[];
     final followed = follows.contains(widget.pubkey);
-    final label = followed ? '已关注' : (widget.followsMe ? '回关' : '关注');
+    final String label;
+    if (widget.isSelf) {
+      label = followed ? '已关注自己' : '关注自己';
+    } else {
+      label = followed ? '已关注' : (widget.followsMe ? '回关' : '关注');
+    }
+    final icon = followed ? Icons.check : Icons.person_add_outlined;
+    if (widget.iconOnly) {
+      return IconButton.filledTonal(
+        icon: Icon(icon, size: 20),
+        tooltip: label,
+        onPressed: _busy ? null : (followed ? _unfollow : _follow),
+      );
+    }
     return FilledButton.tonalIcon(
-      icon: Icon(followed ? Icons.check : Icons.person_add_outlined, size: 18),
+      icon: Icon(icon, size: 18),
       label: Text(label),
       onPressed: _busy ? null : (followed ? _unfollow : _follow),
     );
@@ -437,54 +464,24 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
         ref.read(userGroupNamesProvider(identity.pubkeyHex)).value ??
         const <String>[];
 
-    // Show a category picker: 默认分组 + existing custom groups + 新建分组.
-    final category = await showModalBottomSheet<String>(
+    // Multi-select follow sheet (Amethyst-style): pick the custom groups to
+    // ALSO add the user to (kind-3 默认分组 is always added by the follow
+    // itself). New groups can be created inline. Returns the set of selected
+    // custom group names (empty = follow into 默认分组 only).
+    final selected = await showModalBottomSheet<Set<String>>(
       context: context,
-      builder: (BuildContext ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('选择关注分组', style: Theme.of(ctx).textTheme.titleSmall),
-            ),
-            ListTile(
-              leading: const Icon(Icons.label_off_outlined, size: 20),
-              title: const Text('默认分组'),
-              onTap: () => Navigator.pop(ctx, ''),
-            ),
-            for (final g in groups)
-              ListTile(
-                leading: const Icon(Icons.label_outline, size: 20),
-                title: Text(g),
-                onTap: () => Navigator.pop(ctx, g),
-              ),
-            ListTile(
-              leading: const Icon(Icons.add, size: 20),
-              title: const Text('新建分组…'),
-              // Show the name dialog FIRST — the bottom sheet is still alive
-              // so `ctx` is mounted — then pop the sheet ONCE with the name.
-              // The old code popped the sheet before showing the dialog,
-              // leaving `ctx` unmounted (dialog never appeared / name never
-              // returned) so following into a NEW group never happened.
-              onTap: () async {
-                final name = await _showNewGroupDialog(ctx);
-                if (!ctx.mounted) return;
-                if (name != null && name.isNotEmpty) {
-                  Navigator.pop(ctx, name);
-                }
-              },
-            ),
-          ],
-        ),
+      isScrollControlled: true,
+      builder: (BuildContext ctx) => _MultiGroupFollowSheet(
+        groups: groups,
+        onNewGroup: _showNewGroupDialog,
       ),
     );
-    if (category == null) return; // dismissed
+    if (selected == null) return; // dismissed
     setState(() => _busy = true);
     final ok = await followUser(
       ref,
       widget.pubkey,
-      category: category.isEmpty ? null : category,
+      categories: selected.toList(),
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -514,6 +511,102 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
             child: const Text('确定'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Multi-select follow-group bottom sheet (Amethyst-style). Lists the user's
+/// existing custom groups (NIP-51 kind-30000) as checkboxes + a "新建分组"
+/// row that adds new names inline. Following always adds to kind-3 (默认分组);
+/// the checked groups are EXTRA kind-30000 memberships. Confirm pops with the
+/// selected set of custom group names (newly-created ones included).
+class _MultiGroupFollowSheet extends StatefulWidget {
+  const _MultiGroupFollowSheet({
+    required this.groups,
+    required this.onNewGroup,
+  });
+  final List<String> groups;
+  final Future<String?> Function(BuildContext) onNewGroup;
+
+  @override
+  State<_MultiGroupFollowSheet> createState() => _MultiGroupFollowSheetState();
+}
+
+class _MultiGroupFollowSheetState extends State<_MultiGroupFollowSheet> {
+  late final Set<String> _selected = {};
+  late final List<String> _all = List<String>.from(widget.groups);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text('加入关注分组', style: theme.textTheme.titleSmall),
+                  ),
+                  TextButton(
+                    onPressed: () =>
+                        Navigator.pop(context, _selected.where((g) => g.isNotEmpty).toSet()),
+                    child: const Text('关注'),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '默认分组始终包含。勾选的分组会额外把对方加进去。',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final g in _all)
+                    CheckboxListTile(
+                      controlAffinity: ListTileControlAffinity.leading,
+                      value: _selected.contains(g),
+                      onChanged: (v) => setState(() {
+                        if (v == true) {
+                          _selected.add(g);
+                        } else {
+                          _selected.remove(g);
+                        }
+                      }),
+                      title: Text(g),
+                    ),
+                  ListTile(
+                    leading: const Icon(Icons.add, size: 20),
+                    title: const Text('新建分组…'),
+                    onTap: () async {
+                      final name = await widget.onNewGroup(context);
+                      if (name == null || name.isEmpty) return;
+                      if (!mounted) return;
+                      setState(() {
+                        if (_all.contains(name)) return;
+                        _all.add(name);
+                        _selected.add(name);
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1048,6 +1141,88 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
           },
         ),
       ],
+    );
+  }
+}
+
+/// 收藏 tab (NIP-51 kind-10003). Shows the user's bookmarked posts — public
+/// bookmarks for everyone, plus the owner's private (NIP-44-decrypted) ones.
+/// Amethyst-style: [bookmarksProvider] yields the SQLite-cached id list
+/// instantly then background-refreshes from relays; each id resolves to an
+/// [EventCard] via [eventByIdProvider]'s 3-tier lookup (SQLite → memory →
+/// relay). DESIGN §8 — placed right after 关注者.
+class _BookmarksTab extends ConsumerWidget {
+  const _BookmarksTab({required this.pubkey});
+  final String pubkey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(bookmarksProvider(pubkey));
+    return RefreshIndicator(
+      onRefresh: () => ref.refresh(bookmarksProvider(pubkey).future),
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          async.when(
+            loading: () => const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (Object e, _) => SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: Text('加载失败：$e')),
+            ),
+            data: (List<String> ids) {
+              if (ids.isEmpty) {
+                return const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(child: Text('暂无收藏')),
+                );
+              }
+              return SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (BuildContext context, int i) =>
+                      _BookmarkRow(eventId: ids[i]),
+                  childCount: ids.length,
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A single bookmarked post — resolves [eventId] → [Event] via
+/// [eventByIdProvider] (SQLite → memory → relay) and renders an [EventCard].
+/// Loading / not-found states degrade gracefully (a bookmark may reference an
+/// event not yet fetched; it streams in when the relay responds).
+class _BookmarkRow extends ConsumerWidget {
+  const _BookmarkRow({required this.eventId});
+  final String eventId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(eventByIdProvider(eventId));
+    return async.when(
+      loading: () => const ListTile(
+        dense: true,
+        leading: SizedBox(
+          width: 18,
+          height: 18,
+          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        ),
+        title: Text('加载中…'),
+      ),
+      error: (Object e, _) => ListTile(
+        dense: true,
+        title: const Text('收藏的帖子加载失败'),
+        subtitle: Text('$e'),
+      ),
+      data: (Event? e) => e == null
+          ? const ListTile(dense: true, title: Text('收藏的帖子暂不可用'))
+          : EventCard(event: e),
     );
   }
 }

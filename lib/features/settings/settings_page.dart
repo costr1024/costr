@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../auth/login_page.dart' show showLogoutSheet;
 
@@ -34,7 +33,6 @@ class SettingsPage extends ConsumerWidget {
             subtitle: 'Costr 连接的服务器，一般不用改',
             onTap: () => context.push('/settings/relays'),
           ),
-          const _SelfPostsToggle(),
           const _SectionHeader('关于'),
           _Row(
             title: '关于 Costr',
@@ -311,62 +309,6 @@ class _SectionHeader extends StatelessWidget {
       ),
     ),
   );
-}
-
-/// "在关注信息流显示自己的帖子" — follows the logged-in user's own pubkey
-/// (into the default group) so their own posts appear in the 关注 feed. The
-/// switch reflects whether self is already in the kind-3 follow list (e.g.
-/// followed from another client → shows ON). Toggling follows / unfollows
-/// self via the standard NIP-02 path.
-class _SelfPostsToggle extends ConsumerStatefulWidget {
-  const _SelfPostsToggle();
-  @override
-  ConsumerState<_SelfPostsToggle> createState() => _SelfPostsToggleState();
-}
-
-class _SelfPostsToggleState extends ConsumerState<_SelfPostsToggle> {
-  bool _busy = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final identity = ref.watch(identityProvider).value;
-    final followsAsync = ref.watch(followingStateProvider);
-    final self = identity?.pubkeyHex;
-    // `.value` keeps the previous follows during a reload (no flicker).
-    final follows = followsAsync.value ?? const <String>[];
-    final following = self != null && follows.contains(self);
-    final loading = identity == null || !followsAsync.hasValue;
-    return SwitchListTile(
-      title: const Text('在关注信息流显示自己的帖子'),
-      subtitle: const Text('关注自己后，你发的帖子也会出现在「关注」信息流'),
-      value: following,
-      // Disable while the follow list isn't loaded yet, so the user can't
-      // flip it blindly and accidentally unfollow self.
-      onChanged: _busy || loading
-          ? null
-          : (v) => v ? _followSelf(self!) : _unfollowSelf(self!),
-    );
-  }
-
-  Future<void> _followSelf(String self) async {
-    setState(() => _busy = true);
-    final res = await followUser(ref, self, category: null);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(res.ok ? '已关注自己' : '操作失败：${res.reason}')),
-    );
-    if (mounted) setState(() => _busy = false);
-  }
-
-  Future<void> _unfollowSelf(String self) async {
-    setState(() => _busy = true);
-    final res = await unfollowUser(ref, self);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(res.ok ? '已取消关注自己' : '操作失败：${res.reason}')),
-    );
-    if (mounted) setState(() => _busy = false);
-  }
 }
 
 class _Row extends StatelessWidget {
