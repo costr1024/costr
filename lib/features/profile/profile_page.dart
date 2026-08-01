@@ -402,6 +402,16 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
 
   @override
   Widget build(BuildContext context) {
+    final identity = ref.watch(identityProvider).value;
+    // Pre-warm the logged-in user's custom group names so the follow sheet
+    // opens instantly with the list populated. Without keeping this provider
+    // alive via watch, reading it on tap returns a cold AsyncValue whose
+    // .value is null (loading) → the sheet looked empty; awaiting .future
+    // from a one-shot event handler on a family StreamProvider can hang,
+    // leaving the button looking dead ("无法点击").
+    if (identity != null) {
+      ref.watch(userGroupNamesProvider(identity.pubkeyHex));
+    }
     final follows = ref.watch(followingStateProvider).value ?? const <String>[];
     final followed = follows.contains(widget.pubkey);
     final String label;
@@ -437,23 +447,32 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
     );
     if (ok != true) return;
     setState(() => _busy = true);
-    final res = await unfollowUser(ref, widget.pubkey);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(res.ok ? '已取消关注' : '取消失败：${res.reason}')),
-    );
-    if (mounted) setState(() => _busy = false);
+    try {
+      final res = await unfollowUser(ref, widget.pubkey);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(res.ok ? '已取消关注' : '取消失败：${res.reason}')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('取消失败：$e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _follow() async {
-    // Fetch the logged-in user's existing custom group names. Await the
-    // provider's first emission (the SQLite snapshot) — reading `.value` on a
-    // freshly-created StreamProvider returns null (loading), which `?? []`
-    // would render as "no groups" every time the sheet opened.
     final identity = ref.read(identityProvider).value;
     if (identity == null) return;
+    // Read the pre-warmed group list (kept alive via ref.watch in build).
+    // No await here — awaiting a family StreamProvider's .future from a
+    // one-shot handler can hang, leaving the button unresponsive.
     final groups =
-        await ref.read(userGroupNamesProvider(identity.pubkeyHex).future);
+        ref.read(userGroupNamesProvider(identity.pubkeyHex)).value ??
+        const <String>[];
 
     if (!mounted) return;
     // Multi-select follow sheet (Amethyst-style): pick the custom groups to
@@ -470,16 +489,25 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
     );
     if (selected == null) return; // dismissed
     setState(() => _busy = true);
-    final ok = await followUser(
-      ref,
-      widget.pubkey,
-      categories: selected.toList(),
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(ok.ok ? '已关注' : '关注失败：${ok.reason}')),
-    );
-    if (mounted) setState(() => _busy = false);
+    try {
+      final ok = await followUser(
+        ref,
+        widget.pubkey,
+        categories: selected.toList(),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ok.ok ? '已关注' : '关注失败：${ok.reason}')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('关注失败：$e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<String?> _showNewGroupDialog(BuildContext context) async {
