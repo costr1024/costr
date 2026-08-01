@@ -96,10 +96,17 @@ String? entityToPubkeyHex(String entity) {
   return null;
 }
 
-/// Encode a 32-byte pubkey hex as `nprofile1...` (NIP-19, TLV type 0x00).
-String hexToNprofile(String pubkeyHex) {
+/// Encode a 32-byte pubkey hex as `nprofile1...` (NIP-19). Carries the pubkey
+/// as TLV type 0x00 and, when [relays] is non-empty, one TLV type 0x01 record
+/// per relay URL (NIP-65 outbox hints). The decode side (`nprofileDecode`)
+/// already reads type-0x01 relays, so this round-trips. Mirrors the nprofile
+/// Amethyst publishes for @-mentions.
+String hexToNprofile(String pubkeyHex, {List<String> relays = const []}) {
   final pubkeyBytes = _hexToBytes(pubkeyHex);
-  final tlv = <int>[0x00, 0x20, ...pubkeyBytes];
+  final tlv = <int>[..._tlv(0x00, pubkeyBytes)];
+  for (final r in relays) {
+    if (r.isNotEmpty) tlv.addAll(_tlv(0x01, utf8.encode(r)));
+  }
   return encodeBech32('nprofile', tlv);
 }
 

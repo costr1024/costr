@@ -80,6 +80,12 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **关注功能失效**：`followUser` 先把新签的 kind-3 写入内存 `contactListCacheProvider`、再 `ref.invalidate(followingStateProvider)`；`FollowingNotifier.build` 重跑时直接 `queryContactList` 读 SQLite——而 `EventStoreNotifier._persist` 的后台 isolate 写库还在飞行中 → 读到旧 kind-3 → 覆盖掉刚写入的内存值 → `followingStateProvider` 返回旧关注列表 → 关注按钮弹回「关注」、直到中继回响才更新，看上去关注完全失效。`_newestContactList` 取内存与 SQLite 中 `createdAt` 较新者（平手取内存即刚签的），彻底消除该竞态。`unfollowUser` 同理。
 - **自己主页个人简介不折叠**：`_AboutText` 旧用 `widget.text.length > 200`（按字符数）判断是否折叠——自己简介字符数 ≤200 但换行多、实际渲染很高时不会折叠，而他人更长简介能折叠，表现为「我的简介不折叠、别人的能」。改为按实际渲染高度判定：首帧以 `GlobalKey` 测 `MarkdownBody` 的 `size.height`，超过 `_collapsedHeight=150`（+8px 容差）才折叠并显「展开/收起」；元数据刷新（文本变化）则重测。
 
+### 修复（语言过滤 + 事件 client 标签，对齐 Amethyst）
+
+- **中文过滤器漏韩文**：`detectLanguage`（`lib/utils/language.dart`）只判假名→日文、Han→中文、拉丁→英文；韩文帖若含汉字（Hanja）即被误判「中文」漏进中文过滤器。新增 Hangul（`[가-힯]`）检测→归类 `ko`，韩文帖从 zh/en/ja 过滤器全部排除（仅在「全部」可见）。检测顺序：假名→Hangul→Han→拉丁。
+- **日文过滤器漏纯中文**：片假名范围 `[゠-ヿ]`（U+30A0–U+30FF）含 `・`（U+30FB 片假名中点）与 `ー`（U+30FC 长音），中文帖在音译人名时用 `・`（如「玛丽・居里」）→ 误判日文漏进日文过滤器。收窄假名范围为 `[ぁ-ゟ][ァ-ヺ]`（U+3041–309F + U+30A1–30FA，剔除 U+30A0/U+30FB–30FF 标点），纯中文帖不再误判日文。
+- **事件缺 `["client","Costr"]`**：Amethyst 每条发布事件都带 `["client","Amethyst"]` 标识来源，costr 此前完全没有。给 `NostrActions` 全部 builder（reply/reaction/repost/follow/unfollow/followCategory/interests/setMetadata/relayList/userStatus/deleteEvent/bookmark/quote）+ compose `_send` 的 plain post 一律追加 `["client","Costr"]`（`identity.signEvent` 签名层保持纯净不耦合应用名）。后续 e/p tag 补 relay hint 见 [[task]]。
+
 ## 设计与交互
 
 - [docs/DESIGN.md](docs/DESIGN.md) —— 设计原则与交互规范（设计"宪法"）：用户定位、设计优先级（复刻 X app UI > 简约年轻 > 开箱即用 > 性能）、视觉语言（X 浅色基线：纯白底 + 黑主色，弃用 Material3 紫色）、Costr Logo 规范、4-tab + FAB 导航、通知中心数据源与界面、表情选择器（NIP-25/NIP-30）与转发/引用菜单、应用介绍页 / 新手引导、登录/注册/退出、搜索与主页筛选/关注分组、文案规范、性能约束。

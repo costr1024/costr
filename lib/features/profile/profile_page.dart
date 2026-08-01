@@ -1904,8 +1904,12 @@ class _AboutTextState extends ConsumerState<_AboutText> {
     });
   }
 
+  // `(?<!\]\()` so an entity already inside a markdown link's `](href)` isn't
+  // re-matched (legacy `[@name](nostr:npub1…)` mentions would otherwise
+  // double-wrap). The intact markdown link is rendered by MarkdownBody, and
+  // the `onTapLink` handler routes `nostr:` hrefs to the profile.
   static final RegExp _entityRegex = RegExp(
-    r'(?:nostr:)?((?:nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
+    r'(?<!\]\()(?:nostr:)?((?:nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
   );
   static final RegExp _hashtagRegex = RegExp(
     r'(?<![\w/:.])#([\p{L}\p{N}_]+)',

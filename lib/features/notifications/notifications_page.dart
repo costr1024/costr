@@ -16,6 +16,7 @@ import '../../models/event.dart';
 import '../../utils/nav.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/mention_linkifier.dart';
 
 // --- Notification data model ---
 
@@ -450,11 +451,19 @@ class _NotificationTile extends ConsumerWidget {
                   ),
                   if (item.preview != null) ...[
                     const SizedBox(height: 4),
-                    Text(
-                      item.preview!,
+                    Text.rich(
+                      linkifyMentions(
+                        item.preview!,
+                        ref,
+                        baseStyle: TextStyle(fontSize: 14, color: CostrColors.text2),
+                        mentionStyle: TextStyle(
+                          fontSize: 14,
+                          color: CostrColors.brand,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 14, color: CostrColors.text2),
                     ),
                   ],
                   const SizedBox(height: 4),

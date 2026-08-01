@@ -24,14 +24,20 @@ import '../models/event.dart';
 import '../utils/nav.dart';
 import '../utils/nip19.dart';
 import 'avatar.dart';
+import 'mention_linkifier.dart';
 import 'network_video.dart';
 
 /// Matches nostr: prefix + npub1/nprofile1 entity (consumes the nostr: prefix
 /// so it doesn't linger as orphan text before the link). Group 1 captures the
 /// FULL bare entity (with its data) so the link href carries the whole entity,
-/// not just the `npub1`/`nprofile1` prefix.
+/// not just the `npub1`/`nprofile1` prefix. The `(?<!\]\()` lookbehind stops
+/// it from matching an entity already inside a markdown link's `](href)` —
+/// otherwise a `[@name](nostr:npub1…)` mention (legacy form costr published)
+/// gets double-wrapped into `[@name]([@label](nostr:npub1…))`. flutter_markdown
+/// renders the intact markdown link itself, and the `onTapLink` handler routes
+/// `nostr:` hrefs to the profile.
 final RegExp _pubkeyEntityRegex = RegExp(
-  r'(?:nostr:)?((?:nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
+  r'(?<!\]\()(?:nostr:)?((?:nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
 );
 
 /// Matches `nostr:nevent1…` / `nostr:note1…` (NIP-27 event references). Group
@@ -620,14 +626,21 @@ class _EventEmbed extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 4),
-            Text(
-              ev.content,
+            Text.rich(
+              linkifyMentions(
+                ev.content,
+                ref,
+                baseStyle: theme.textTheme.bodySmall?.copyWith(
+                  color: CostrColors.text2,
+                  height: 1.4,
+                ),
+                mentionStyle: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               maxLines: 4,
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: CostrColors.text2,
-                height: 1.4,
-              ),
             ),
           ],
         ),

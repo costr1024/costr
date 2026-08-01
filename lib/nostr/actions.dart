@@ -11,6 +11,11 @@ import '../utils/nip19.dart';
 import '../utils/nip44.dart';
 import 'identity.dart';
 
+/// NIP-31 client tag identifying Costr as the publishing app (Amethyst parity:
+/// every published event carries `["client","Amethyst"]`). Appended to all
+/// events built here so other clients can attribute the source.
+const List<String> _clientTag = ['client', 'Costr'];
+
 class NostrActions {
   NostrActions(this.id);
   final Identity id;
@@ -31,7 +36,7 @@ class NostrActions {
       ['p', parent.pubkey, ''],
       ...extraTags,
     ];
-    return id.signEvent(kind: 1, content: content, tags: tags);
+    return id.signEvent(kind: 1, content: content, tags: [...tags, _clientTag]);
   }
 
   /// Reaction (NIP-25 kind 7). [content] is the emoji (unicode), "+" for a
@@ -51,7 +56,7 @@ class NostrActions {
     if (customShortcode != null && customUrl != null) {
       tags.add(['emoji', customShortcode, customUrl]);
     }
-    return id.signEvent(kind: 7, content: content, tags: tags);
+    return id.signEvent(kind: 7, content: content, tags: [...tags, _clientTag]);
   }
 
   /// Repost (NIP-18 kind 6). content = the stringified JSON of the reposted
@@ -64,7 +69,7 @@ class NostrActions {
     return id.signEvent(
       kind: 6,
       content: jsonEncode(target.toWireObject()),
-      tags: tags,
+      tags: [...tags, _clientTag],
     );
   }
 
@@ -94,7 +99,7 @@ class NostrActions {
     if (seen.add(pubkey)) {
       tags.add(['p', pubkey, relay]);
     }
-    return id.signEvent(kind: 30000, content: '', tags: tags);
+    return id.signEvent(kind: 30000, content: '', tags: [...tags, _clientTag]);
   }
 
   /// Unfollow [pubkey] (NIP-02 kind 3). Publishes the FULL updated p-tag list
@@ -115,7 +120,7 @@ class NostrActions {
         tags.add(petname.isEmpty ? ['p', pk, r] : ['p', pk, r, petname]);
       }
     }
-    return id.signEvent(kind: 3, content: '', tags: tags);
+    return id.signEvent(kind: 3, content: '', tags: [...tags, _clientTag]);
   }
 
   /// Build a NIP-51 kind-30015 Interests list (followed hashtags). [current]
@@ -143,13 +148,13 @@ class NostrActions {
       final v = norm(add);
       if (v.isNotEmpty && seen.add(v)) tags.add(['t', v]);
     }
-    return id.signEvent(kind: 30015, content: '', tags: tags);
+    return id.signEvent(kind: 30015, content: '', tags: [...tags, _clientTag]);
   }
 
   /// Publish updated profile metadata (NIP-01 kind 0). [contentJson] is the
   /// stringified JSON of the metadata object.
   Event setMetadata(String contentJson) {
-    return id.signEvent(kind: 0, content: contentJson, tags: const []);
+    return id.signEvent(kind: 0, content: contentJson, tags: [_clientTag]);
   }
 
   /// NIP-65 relay list (kind 10002). Declares which relays other clients
@@ -159,7 +164,7 @@ class NostrActions {
   /// prior list.
   Event relayList(List<String> urls) {
     final tags = <List<String>>[for (final url in urls) ['r', url]];
-    return id.signEvent(kind: 10002, content: '', tags: tags);
+    return id.signEvent(kind: 10002, content: '', tags: [...tags, _clientTag]);
   }
 
   /// NIP-38 user status (kind 30315, `d`="general") — the short text shown
@@ -169,9 +174,7 @@ class NostrActions {
     return id.signEvent(
       kind: 30315,
       content: text,
-      tags: const [
-        ['d', 'general'],
-      ],
+      tags: const [_clientTag, ['d', 'general']],
     );
   }
 
@@ -183,9 +186,7 @@ class NostrActions {
     return id.signEvent(
       kind: 5,
       content: reason,
-      tags: [
-        ['e', target.id],
-      ],
+      tags: [_clientTag, ['e', target.id]],
     );
   }
 
@@ -204,7 +205,7 @@ class NostrActions {
       ['p', quoted.pubkey, ''],
       ...extraTags,
     ];
-    return id.signEvent(kind: 1, content: full, tags: tags);
+    return id.signEvent(kind: 1, content: full, tags: [...tags, _clientTag]);
   }
 
   /// Follow [newPubkey] (NIP-02 kind 3). Publishes the FULL updated p-tag list
@@ -229,7 +230,7 @@ class NostrActions {
     if (seen.add(newPubkey)) {
       tags.add(['p', newPubkey, relay]);
     }
-    return id.signEvent(kind: 3, content: '', tags: tags);
+    return id.signEvent(kind: 3, content: '', tags: [...tags, _clientTag]);
   }
 
   /// Bookmark [eventId] in the NIP-51 kind-10003 list (NIP-44-encrypted to self
@@ -293,7 +294,7 @@ class NostrActions {
         jsonEncode(privateTags),
       );
     }
-    return id.signEvent(kind: 10003, content: content, tags: tags);
+    return id.signEvent(kind: 10003, content: content, tags: [...tags, _clientTag]);
   }
 
   /// Extract the bookmarked EVENT ids from a kind-10003 event: public `e`

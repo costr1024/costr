@@ -9,6 +9,7 @@ import '../../app/providers.dart';
 import '../../models/event.dart';
 import '../../utils/nav.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/mention_linkifier.dart';
 import '../feed/event_card.dart';
 
 class UserPostItem extends ConsumerWidget {
@@ -98,13 +99,20 @@ class _QuotedParent extends ConsumerWidget {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      parent.content,
+                    Text.rich(
+                      linkifyMentions(
+                        parent.content,
+                        ref,
+                        baseStyle: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                        mentionStyle: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
                     ),
                   ],
                 ),

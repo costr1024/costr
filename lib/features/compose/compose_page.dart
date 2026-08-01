@@ -527,6 +527,8 @@ class _ComposePageState extends ConsumerState<ComposePage>
       final extraTags = <List<String>>[
         ...imeta,
         if (_nsfw) ['t', 'nsfw'],
+        // NIP-31: identify Costr as the publishing client (Amethyst parity).
+        ['client', 'Costr'],
         // NIP-27: each @-mentioned pubkey gets a `p` tag (the content already
         // carries the `nostr:npub1…` text reference, rendered as a tappable
         // @name mention by MarkdownContent).

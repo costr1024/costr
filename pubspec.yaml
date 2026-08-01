@@ -59,6 +59,10 @@ dependencies:
   markdown: ^7.3.1
   # Inline video playback (network) for video media in posts.
   video_player: ^2.13.0
+  # Editable text with inline widget spans — used by the composer to render
+  # @-mention chips over bare `nostr:nprofile1…` entities (Amethyst UX).
+  # 17.0.0 is built against Flutter 3.44.0 (matches our stable line).
+  extended_text_field: ^17.0.0
   # NIP-44 crypto primitives (secp256k1 ECDH, ChaCha20, HKDF) for private bookmarks.
   pointycastle: ^4.0.0
   # HTTP client for Blossom media upload.
