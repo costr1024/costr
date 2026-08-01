@@ -102,6 +102,11 @@ class RelayClient implements RelayConnection {
       StreamController<(String, String)>.broadcast();
   final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
   final StreamController<String> _auths = StreamController<String>.broadcast();
+  // RTT-probe subIds (`rtt…`). EVENT frames for these are routed here instead
+  // of [_events] so the probe (which deliberately fetches one latest event
+  // from relays that won't EOSE an empty REQ) doesn't pollute the feed/store.
+  final StreamController<String> _probeFrames =
+      StreamController<String>.broadcast();
 
   @override
   Stream<Event> get events => _events.stream;
@@ -175,9 +180,17 @@ class RelayClient implements RelayConnection {
       if (msg is! List || msg.length < 2) return;
       final type = msg[0];
       if (type == 'EVENT' && msg.length >= 3) {
-        // Relays send events as either the NIP-01 array form or (non-standard
-        // but seen in the wild) the object form — fromMessage handles both.
-        _events.add(Event.fromMessage(msg[2]));
+        // RTT-probe subs fetch a real latest event (some relays — notably
+        // multiplexers — never EOSE an empty-result REQ, so the probe must
+        // pull an event to get ANY frame). Route those to [_probeFrames]
+        // instead of [_events] so the probe doesn't pollute the feed/store
+        // with a random latest event.
+        final sub = msg[1];
+        if (sub is String && sub.startsWith('rtt')) {
+          if (!_probeFrames.isClosed) _probeFrames.add(sub);
+        } else {
+          _events.add(Event.fromMessage(msg[2]));
+        }
       } else if (type == 'EOSE' && msg[1] is String) {
         _eose.add(msg[1] as String);
       } else if (type == 'NOTICE' && msg[1] is String) {
@@ -216,25 +229,30 @@ class RelayClient implements RelayConnection {
   }
 
   /// Measure real application-level WebSocket round-trip latency: send a REQ
-  /// whose filter CANNOT match anything (`since` = 1 year in the future) and
-  /// time until the relay replies — the first reply frame for an impossible
-  /// filter is always `EOSE`, which the relay emits with no DB scan, so this
-  /// ≈ network RTT over the live socket (not an ICMP ping). Returns null if
-  /// not connected, or on [timeout] with no reply.
+  /// that returns at least one event (`{kinds:[1], limit:1}`) and time the
+  /// FIRST response frame (EVENT or EOSE) for the probe sub. Completes on the
+  /// first frame rather than waiting for EOSE because some relays — notably
+  /// multiplexers like multiplexer.huszonegy.world — NEVER EOSE an empty-result
+  /// REQ; they only send a frame once an EVENT is ready (their fan-out
+  /// aggregation adds ~5s, captured by the 8s timeout). The probe's EVENT
+  /// frames are routed to [_probeFrames] (not the feed/store) so the probe
+  /// doesn't pollute them with a random latest event. Returns null if not
+  /// connected, or on [timeout] with no reply.
   ///
-  /// NIP-50-only search relays (e.g. search.nos.today) reject a plain REQ
-  /// with a `CLOSED` notice ("error: search filter is required") instead of
-  /// EOSE. On CLOSED, retry with a NIP-50 `search` filter (which those relays
-  /// DO EOSE) so their RTT is also measurable. The subscription is closed in
-  /// all exit paths.
+  /// NIP-50-only search relays reject a plain REQ with `CLOSED` ("error:
+  /// search filter is required") instead of a frame. On CLOSED, retry once
+  /// with a NIP-50 `search` filter (which those relays answer with an EVENT)
+  /// so their RTT is also measurable. The subscription is closed in all exit
+  /// paths.
   Future<int?> measureRtt({
-    Duration timeout = const Duration(seconds: 5),
+    Duration timeout = const Duration(seconds: 8),
   }) async {
     if (_disposed || !_connected) return null;
     final subId = 'rtt${_rttCounter++}';
     final sw = Stopwatch()..start();
     final completer = Completer<int?>();
     late StreamSubscription<String> eoseSub;
+    late StreamSubscription<String> probeSub;
     late StreamSubscription<(String, String)> closedSub;
     void complete(int? v) {
       if (!completer.isCompleted) completer.complete(v);
@@ -243,33 +261,30 @@ class RelayClient implements RelayConnection {
     eoseSub = _eose.stream.where((id) => id == subId).listen((_) {
       complete(sw.elapsedMilliseconds);
     });
+    // First EVENT for this probe sub — the signal for relays that never EOSE
+    // an empty REQ (multiplexers). Suppressed from the feed (see _onData).
+    probeSub = _probeFrames.stream.where((id) => id == subId).listen((_) {
+      complete(sw.elapsedMilliseconds);
+    });
     var retried = false;
-    closedSub = _closed.stream
-        .where((pair) => pair.$1 == subId)
-        .listen((_) {
-          // Plain REQ rejected (e.g. NIP-50-only relay) → retry ONCE with a
-          // search filter, which such relays EOSE. Restart the stopwatch so
-          // the RTT reflects the search-filter round-trip only.
-          if (retried) return;
-          retried = true;
-          sw.reset();
-          _send([
-            'REQ',
-            subId,
-            <String, dynamic>{
-              'search': 'a',
-              'limit': 1,
-            },
-          ]);
-        });
-    final since =
-        (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 31557600; // +1y
+    closedSub = _closed.stream.where((pair) => pair.$1 == subId).listen((_) {
+      // Plain REQ rejected (e.g. NIP-50-only relay) → retry ONCE with a
+      // search filter, which such relays answer. Restart the stopwatch so
+      // the RTT reflects the search-filter round-trip only.
+      if (retried) return;
+      retried = true;
+      sw.reset();
+      _send([
+        'REQ',
+        subId,
+        <String, dynamic>{'search': 'a', 'limit': 1},
+      ]);
+    });
     _send([
       'REQ',
       subId,
       <String, dynamic>{
         'kinds': [1],
-        'since': since,
         'limit': 1,
       },
     ]);
@@ -277,6 +292,7 @@ class RelayClient implements RelayConnection {
       return await completer.future.timeout(timeout, onTimeout: () => null);
     } finally {
       await eoseSub.cancel();
+      await probeSub.cancel();
       await closedSub.cancel();
       _send(['CLOSE', subId]);
     }
@@ -294,5 +310,6 @@ class RelayClient implements RelayConnection {
     await _closed.close();
     await _oks.close();
     await _auths.close();
+    await _probeFrames.close();
   }
 }

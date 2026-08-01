@@ -103,6 +103,11 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **帖子图片此前点不开**：`_ImageGrid`/`_SingleImage` 是纯 `CachedNetworkImage` 缩略图，点按无反应。新增 `lib/widgets/media_viewer_page.dart`：点图进入全屏黑底查看页，用 Flutter 自带 `InteractiveViewer`（min 0.5×/max 4×、`boundaryMargin: infinity` 可拖出边缘看细节）做 pinch-zoom——不引 `photo_view`（其最新版停在 2 年前 0.15.0，存在与 Flutter 3.44 的版本漂移风险），用内置组件零新依赖、更稳。多图帖子用 `PageView` 左右滑画廊，顶部 `1/N` 计数 + 关闭按钮，点图切换控件显隐，黑底 fade 转场（不走 Hero——`CachedNetworkImage` 尺寸异步未知，Hero 会闪）。
 - **视频全屏**：`lib/widgets/fullscreen_video_page.dart` 独立控制器（与内联 `NetworkVideo` 隔离，零回归风险），从内联当前播放点续播，移动端锁横屏（`SystemChrome.setPreferredOrientations`，dispose 还原全方向，桌面无副作用），黑底 + 播放/暂停 + 关闭。内联 `NetworkVideo` 加右上角全屏按钮，进入时暂停内联（避免同一片段双音频）。
 
+### fix（中继 RTT 探测鲁棒化 + 中继列表重播种 + 换 wheat）
+
+- **`multiplexer.huszonegy.world` 的 RTT 经常显示不出来**：根因是多重器（multiplexer）**对空结果 REQ 永不回 EOSE**——costr 原探测用"不可能的 future-since 过滤器"等空 EOSE，多重器只在该 REQ 真能返回事件时才发帧，于是探测超时返 null。实测 wheat.happytavern.co 对空 future-since 干净 EOSE（172ms），而 huszonegy 对任何空结果 REQ 都静默、仅对能返回事件的 limit:1 REQ 在 ~5.3s 后才发首帧。改造 `RelayClient.measureRtt`：改用 `{kinds:[1], limit:1}`（必有事件的过滤器），**在首帧（EVENT 或 EOSE）即完成计时**；探测 subId（`rtt…`）的 EVENT 帧路由到新 `_probeFrames` 流而**不进 feed/store**（避免污染信息流），超时 5s→8s 以覆盖多重器 ~5.3s 的扇出聚合延迟；NIP-50-only 中继的 CLOSED→search 重试逻辑保留。同时把 `defaultRelays` 里的 huszonegy 换成 `wss://wheat.happytavern.co/`（对空 REQ 干净 EOSE、响应快）。
+- **不卸载更新时中继列表不生效**：`serverListsProvider` 首启把 `defaultRelays` 写进 SQLite `relay_list` 后只读 SQLite，app 更新改了常量也读不到 → 设置页仍显示旧中继（而连接池直接用常量已切新中继，二者分裂）。加 **重播种**：中继集是 app 控制常量（设置页只读不可增删），当 SQLite 列表与 `defaultRelays`（按集合、忽略顺序）不一致时用常量覆写——更新后设置页也跟着切。`blossom_list` 同理。
+
 ## 设计与交互
 
 - [docs/DESIGN.md](docs/DESIGN.md) —— 设计原则与交互规范（设计"宪法"）：用户定位、设计优先级（复刻 X app UI > 简约年轻 > 开箱即用 > 性能）、视觉语言（X 浅色基线：纯白底 + 黑主色，弃用 Material3 紫色）、Costr Logo 规范、4-tab + FAB 导航、通知中心数据源与界面、表情选择器（NIP-25/NIP-30）与转发/引用菜单、应用介绍页 / 新手引导、登录/注册/退出、搜索与主页筛选/关注分组、文案规范、性能约束。

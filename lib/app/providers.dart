@@ -37,11 +37,20 @@ const List<String> defaultRelays = <String>[
   'wss://relay.gulugulu.moe/',
   'wss://relay.ditto.pub/',
   'wss://relay.bostr.online/',
-  'wss://multiplexer.huszonegy.world/',
+  'wss://wheat.happytavern.co/',
   'wss://relay.nostr.net/',
   'wss://relay.0xchat.com/',
   'wss://top.testrelay.top/',
 ];
+
+/// Order-insensitive equality of two relay-URL lists (compares as sets so a
+/// re-order in [defaultRelays] doesn't trigger a needless re-seed).
+bool _sameRelaySet(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  final sa = a.map((u) => u.trim()).where((u) => u.isNotEmpty).toSet();
+  final sb = b.map((u) => u.trim()).where((u) => u.isNotEmpty).toSet();
+  return sa.length == sb.length && sa.containsAll(sb);
+}
 
 /// Dedicated NIP-50 search relays. Global search (searchPostsProvider /
 /// searchUsersProvider) is routed ONLY to these, NOT [defaultRelays], because
@@ -78,12 +87,22 @@ class ServerLists {
 final serverListsProvider = FutureProvider<ServerLists>((ref) async {
   final db = await ref.read(localCacheProvider.future);
   var relays = await db.readServerList('relay_list');
-  if (relays == null || relays.isEmpty) {
+  // The relay set is app-controlled (the defaultRelays const), not user-
+  // editable (the settings page is read-only). So when the const changes
+  // (an app UPDATE ships a different relay list), re-seed the persisted copy
+  // from the const — otherwise a non-uninstall update would keep showing the
+  // OLD relays in the settings page (and the connected pool, which is built
+  // from the const directly, would diverge from what the page shows).
+  if (relays == null ||
+      relays.isEmpty ||
+      !_sameRelaySet(relays, defaultRelays)) {
     relays = defaultRelays;
     await db.writeServerList('relay_list', relays);
   }
   var blossom = await db.readServerList('blossom_list');
-  if (blossom == null || blossom.isEmpty) {
+  if (blossom == null ||
+      blossom.isEmpty ||
+      !_sameRelaySet(blossom, blossomServersConst)) {
     blossom = blossomServersConst;
     await db.writeServerList('blossom_list', blossom);
   }
