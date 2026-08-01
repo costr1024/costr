@@ -214,10 +214,10 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
             child: Text(
-              '时延为真实往返（中继: WebSocket REQ→EOSE；图床: HTTP HEAD），'
-              '保留最近 $_kKeep 次、按平均值显示；停留时每 '
-              '${_kRefreshInterval.inSeconds}s 自动刷新。'
-              '绿色=低时延，黄色=高时延，红色=离线。',
+              '下面每台服务器显示它对本机的响应速度（数字越小越快，单位毫秒）。'
+              '保留最近 $_kKeep 次取平均，停留此页时每 '
+              '${_kRefreshInterval.inSeconds} 秒自动重测一次。'
+              '绿色=快，黄色=较慢，红色=连不上。',
               style: theme.textTheme.bodySmall,
             ),
           ),

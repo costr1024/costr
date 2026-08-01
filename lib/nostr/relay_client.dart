@@ -98,6 +98,8 @@ class RelayClient implements RelayConnection {
   final StreamController<String> _eose = StreamController<String>.broadcast();
   final StreamController<String> _notices =
       StreamController<String>.broadcast();
+  final StreamController<(String, String)> _closed =
+      StreamController<(String, String)>.broadcast();
   final StreamController<RelayOk> _oks = StreamController<RelayOk>.broadcast();
   final StreamController<String> _auths = StreamController<String>.broadcast();
 
@@ -107,6 +109,11 @@ class RelayClient implements RelayConnection {
   Stream<String> get eose => _eose.stream;
   @override
   Stream<String> get notices => _notices.stream;
+
+  /// Emits `(subId, reason)` on `["CLOSED", subId, reason]`. Used by
+  /// [measureRtt] to detect NIP-50-only relays that reject a plain REQ with a
+  /// CLOSED notice ("error: search filter is required") instead of EOSE.
+  Stream<(String, String)> get closed => _closed.stream;
   @override
   Stream<RelayOk> get oks => _oks.stream;
   @override
@@ -175,6 +182,9 @@ class RelayClient implements RelayConnection {
         _eose.add(msg[1] as String);
       } else if (type == 'NOTICE' && msg[1] is String) {
         _notices.add(msg[1] as String);
+      } else if (type == 'CLOSED' && msg[1] is String) {
+        final reason = (msg.length >= 3 ? msg[2] : null)?.toString() ?? '';
+        _closed.add((msg[1] as String, reason));
       } else if (type == 'OK' && msg[1] is String) {
         final ok = msg[2] is bool ? msg[2] as bool : msg[2] == true;
         final reason = (msg.length >= 4 ? msg[3] : null)?.toString();
@@ -210,8 +220,13 @@ class RelayClient implements RelayConnection {
   /// time until the relay replies — the first reply frame for an impossible
   /// filter is always `EOSE`, which the relay emits with no DB scan, so this
   /// ≈ network RTT over the live socket (not an ICMP ping). Returns null if
-  /// not connected, or on [timeout] with no reply. The subscription is closed
-  /// in all exit paths.
+  /// not connected, or on [timeout] with no reply.
+  ///
+  /// NIP-50-only search relays (e.g. search.nos.today) reject a plain REQ
+  /// with a `CLOSED` notice ("error: search filter is required") instead of
+  /// EOSE. On CLOSED, retry with a NIP-50 `search` filter (which those relays
+  /// DO EOSE) so their RTT is also measurable. The subscription is closed in
+  /// all exit paths.
   Future<int?> measureRtt({
     Duration timeout = const Duration(seconds: 5),
   }) async {
@@ -219,12 +234,34 @@ class RelayClient implements RelayConnection {
     final subId = 'rtt${_rttCounter++}';
     final sw = Stopwatch()..start();
     final completer = Completer<int?>();
-    late StreamSubscription<String> sub;
-    sub = _eose.stream.where((id) => id == subId).listen((_) {
-      if (!completer.isCompleted) {
-        completer.complete(sw.elapsedMilliseconds);
-      }
+    late StreamSubscription<String> eoseSub;
+    late StreamSubscription<(String, String)> closedSub;
+    void complete(int? v) {
+      if (!completer.isCompleted) completer.complete(v);
+    }
+
+    eoseSub = _eose.stream.where((id) => id == subId).listen((_) {
+      complete(sw.elapsedMilliseconds);
     });
+    var retried = false;
+    closedSub = _closed.stream
+        .where((pair) => pair.$1 == subId)
+        .listen((_) {
+          // Plain REQ rejected (e.g. NIP-50-only relay) → retry ONCE with a
+          // search filter, which such relays EOSE. Restart the stopwatch so
+          // the RTT reflects the search-filter round-trip only.
+          if (retried) return;
+          retried = true;
+          sw.reset();
+          _send([
+            'REQ',
+            subId,
+            <String, dynamic>{
+              'search': 'a',
+              'limit': 1,
+            },
+          ]);
+        });
     final since =
         (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 31557600; // +1y
     _send([
@@ -239,7 +276,8 @@ class RelayClient implements RelayConnection {
     try {
       return await completer.future.timeout(timeout, onTimeout: () => null);
     } finally {
-      await sub.cancel();
+      await eoseSub.cancel();
+      await closedSub.cancel();
       _send(['CLOSE', subId]);
     }
   }
@@ -253,6 +291,7 @@ class RelayClient implements RelayConnection {
     await _events.close();
     await _eose.close();
     await _notices.close();
+    await _closed.close();
     await _oks.close();
     await _auths.close();
   }
