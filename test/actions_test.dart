@@ -110,6 +110,32 @@ void main() {
       expect(id.verifyEventSignature(id: r.id, sig: r.sig), isTrue);
     });
 
+    test('relay hint is threaded into e/p tags when provided', () {
+      const relay = 'wss://relay.example.com';
+      final targetId = 'b' * 64;
+      final rootId = 'a' * 64;
+      final target = _ev(targetId, tags: [
+        ['e', rootId, '', 'root'],
+      ]);
+      // reply
+      final r = actions.reply(target, 'x', relay: relay);
+      expect(r.tags, _tag(['e', rootId, relay, 'root']));
+      expect(r.tags, _tag(['e', targetId, relay, 'reply']));
+      expect(r.tags, _tag(['p', 'pubkey-x', relay]));
+      // repost
+      final rp = actions.repost(target, relay: relay);
+      expect(rp.tags, _tag(['e', targetId, relay]));
+      expect(rp.tags, _tag(['p', 'pubkey-x', relay]));
+      // reaction
+      final rx = actions.reaction(target, '🔥', relay: relay);
+      expect(rx.tags, _tag(['e', targetId, relay, 'pubkey-x']));
+      expect(rx.tags, _tag(['p', 'pubkey-x', relay]));
+      // quote
+      final q = actions.quote(target, 'q', relay: relay);
+      expect(q.tags, _tag(['e', targetId, relay, 'mention']));
+      expect(q.tags, _tag(['p', 'pubkey-x', relay]));
+    });
+
     test('follow: kind 3 with full p-tag list, preserves existing + relay', () {
       final existing = _ev(
         'k3',

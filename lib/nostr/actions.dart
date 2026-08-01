@@ -22,18 +22,21 @@ class NostrActions {
 
   /// Reply to [parent] (NIP-10). Includes a root marker (the thread root,
   /// computed from the parent's tags) and a reply marker (the parent), plus a
-  /// `p` tag for the parent's author. [extraTags] (e.g. imeta for attachments)
-  /// are appended.
+  /// `p` tag for the parent's author. [relay] is a best-effort NIP-65 hint
+  /// (the parent author's write relay) attached to the `e`/`p` tags so other
+  /// clients can fetch the referenced event/profile — empty when unknown
+  /// (Amethyst's fallback shape). [extraTags] (e.g. imeta) are appended.
   Event reply(
     Event parent,
     String content, {
     List<List<String>> extraTags = const [],
+    String relay = '',
   }) {
     final rootId = parent.rootEventId;
     final tags = <List<String>>[
-      ['e', rootId, '', 'root'],
-      ['e', parent.id, '', 'reply'],
-      ['p', parent.pubkey, ''],
+      ['e', rootId, relay, 'root'],
+      ['e', parent.id, relay, 'reply'],
+      ['p', parent.pubkey, relay],
       ...extraTags,
     ];
     return id.signEvent(kind: 1, content: content, tags: [...tags, _clientTag]);
@@ -47,10 +50,11 @@ class NostrActions {
     String content, {
     String? customShortcode,
     String? customUrl,
+    String relay = '',
   }) {
     final tags = <List<String>>[
-      ['e', target.id, '', target.pubkey],
-      ['p', target.pubkey, ''],
+      ['e', target.id, relay, target.pubkey],
+      ['p', target.pubkey, relay],
       ['k', '${target.kind}'],
     ];
     if (customShortcode != null && customUrl != null) {
@@ -60,11 +64,12 @@ class NostrActions {
   }
 
   /// Repost (NIP-18 kind 6). content = the stringified JSON of the reposted
-  /// event; tags reference it.
-  Event repost(Event target) {
+  /// event; tags reference it. [relay] is a best-effort NIP-65 hint (the
+  /// reposted author's write relay) so other clients can fetch the original.
+  Event repost(Event target, {String relay = ''}) {
     final tags = <List<String>>[
-      ['e', target.id, ''],
-      ['p', target.pubkey, ''],
+      ['e', target.id, relay],
+      ['p', target.pubkey, relay],
     ];
     return id.signEvent(
       kind: 6,
@@ -163,7 +168,9 @@ class NostrActions {
   /// write. kind 10002 is replaceable, so re-publishing simply replaces the
   /// prior list.
   Event relayList(List<String> urls) {
-    final tags = <List<String>>[for (final url in urls) ['r', url]];
+    final tags = <List<String>>[
+      for (final url in urls) ['r', url],
+    ];
     return id.signEvent(kind: 10002, content: '', tags: [...tags, _clientTag]);
   }
 
@@ -174,7 +181,10 @@ class NostrActions {
     return id.signEvent(
       kind: 30315,
       content: text,
-      tags: const [_clientTag, ['d', 'general']],
+      tags: const [
+        _clientTag,
+        ['d', 'general'],
+      ],
     );
   }
 
@@ -186,7 +196,10 @@ class NostrActions {
     return id.signEvent(
       kind: 5,
       content: reason,
-      tags: [_clientTag, ['e', target.id]],
+      tags: [
+        _clientTag,
+        ['e', target.id],
+      ],
     );
   }
 
@@ -197,12 +210,13 @@ class NostrActions {
     Event quoted,
     String content, {
     List<List<String>> extraTags = const [],
+    String relay = '',
   }) {
     final ref = 'nostr:${hexToNote(quoted.id)}';
     final full = content.isEmpty ? ref : '$content\n\n$ref';
     final tags = <List<String>>[
-      ['e', quoted.id, '', 'mention'],
-      ['p', quoted.pubkey, ''],
+      ['e', quoted.id, relay, 'mention'],
+      ['p', quoted.pubkey, relay],
       ...extraTags,
     ];
     return id.signEvent(kind: 1, content: full, tags: [...tags, _clientTag]);
@@ -294,7 +308,11 @@ class NostrActions {
         jsonEncode(privateTags),
       );
     }
-    return id.signEvent(kind: 10003, content: content, tags: [...tags, _clientTag]);
+    return id.signEvent(
+      kind: 10003,
+      content: content,
+      tags: [...tags, _clientTag],
+    );
   }
 
   /// Extract the bookmarked EVENT ids from a kind-10003 event: public `e`
@@ -320,11 +338,7 @@ class NostrActions {
     // Private entries (only decryptable for the owner — needs the privkey).
     if (includePrivate && e.content.isNotEmpty) {
       try {
-        final decoded = nip44Decrypt(
-          id.privkeyHex,
-          id.pubkeyHex,
-          e.content,
-        );
+        final decoded = nip44Decrypt(id.privkeyHex, id.pubkeyHex, e.content);
         final arr = jsonDecode(decoded);
         if (arr is List) {
           for (final t in arr) {
@@ -363,11 +377,7 @@ class NostrActions {
     // Private entries (only decryptable for the owner — needs the privkey).
     if (includePrivate && e.content.isNotEmpty) {
       try {
-        final decoded = nip44Decrypt(
-          id.privkeyHex,
-          id.pubkeyHex,
-          e.content,
-        );
+        final decoded = nip44Decrypt(id.privkeyHex, id.pubkeyHex, e.content);
         final arr = jsonDecode(decoded);
         if (arr is List) {
           for (final t in arr) {

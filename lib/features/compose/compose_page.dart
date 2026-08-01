@@ -482,19 +482,6 @@ class _ComposePageState extends ConsumerState<ComposePage>
     return out;
   }
 
-  /// A single best-effort relay hint for [pubkey], read synchronously from
-  /// its cached NIP-65 relay list (memory 5-min TTL → cold-hydrate from
-  /// SQLite). Returns null when no list is known yet — the entity is still
-  /// inserted (just without a relay TLV / `p`-tag hint); Amethyst falls back
-  /// the same way for users it has no relay list for.
-  String? _relayHintFor(String pubkey) {
-    final rl = ref.read(userRelayListProvider(pubkey)).value;
-    if (rl == null) return null;
-    if (rl.write.isNotEmpty) return rl.write.first;
-    if (rl.read.isNotEmpty) return rl.read.first;
-    return null;
-  }
-
   void _insertMention(KnownUser user, int atStart) {
     // Insert the BARE `nostr:nprofile1…` entity (Amethyst form). The editor
     // renders it as a styled @nickname chip via [_MentionSpanBuilder]
@@ -502,7 +489,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
     // deleteAll: true so backspace removes the whole chip), and the signed
     // content carries the NIP-27 reference + relay TLV. Trailing space ends
     // the entity so the next `@` autocomplete can trigger.
-    final hint = _relayHintFor(user.pubkey);
+    final hint = relayHintFor(ref, user.pubkey);
     final nprofile = hexToNprofile(
       user.pubkey,
       relays: hint == null ? const <String>[] : <String>[hint],
@@ -558,7 +545,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
         // @name mention by MarkdownContent). Third field is a best-effort
         // relay hint from the mentionee's NIP-65 list (empty when unknown) —
         // same shape Amethyst emits.
-        for (final pk in _mentions) ['p', pk, _relayHintFor(pk) ?? ''],
+        for (final pk in _mentions) ['p', pk, relayHintFor(ref, pk) ?? ''],
         // NIP-27 event references pasted as `nostr:nevent1…` / `nostr:note1…`:
         // emit `e` mention tags (+ `p` author for nevent) so other clients can
         // fetch + render the referenced post (Amethyst-compatible).
@@ -567,9 +554,19 @@ class _ComposePageState extends ConsumerState<ComposePage>
       // Content already has attachment URLs (appended by _appendToEditor on
       // upload completion) — don't append again.
       final signed = widget.replyTo != null
-          ? actions.reply(widget.replyTo!, text, extraTags: extraTags)
+          ? actions.reply(
+              widget.replyTo!,
+              text,
+              extraTags: extraTags,
+              relay: relayHintFor(ref, widget.replyTo!.pubkey) ?? '',
+            )
           : widget.quoteOf != null
-          ? actions.quote(widget.quoteOf!, text, extraTags: extraTags)
+          ? actions.quote(
+              widget.quoteOf!,
+              text,
+              extraTags: extraTags,
+              relay: relayHintFor(ref, widget.quoteOf!.pubkey) ?? '',
+            )
           : identity.signEvent(kind: 1, content: text, tags: extraTags);
       final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;

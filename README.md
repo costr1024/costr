@@ -84,13 +84,19 @@ Android、iOS、Windows、macOS、Linux 五端。
 
 - **中文过滤器漏韩文**：`detectLanguage`（`lib/utils/language.dart`）只判假名→日文、Han→中文、拉丁→英文；韩文帖若含汉字（Hanja）即被误判「中文」漏进中文过滤器。新增 Hangul（`[가-힯]`）检测→归类 `ko`，韩文帖从 zh/en/ja 过滤器全部排除（仅在「全部」可见）。检测顺序：假名→Hangul→Han→拉丁。
 - **日文过滤器漏纯中文**：片假名范围 `[゠-ヿ]`（U+30A0–U+30FF）含 `・`（U+30FB 片假名中点）与 `ー`（U+30FC 长音），中文帖在音译人名时用 `・`（如「玛丽・居里」）→ 误判日文漏进日文过滤器。收窄假名范围为 `[ぁ-ゟ][ァ-ヺ]`（U+3041–309F + U+30A1–30FA，剔除 U+30A0/U+30FB–30FF 标点），纯中文帖不再误判日文。
-- **事件缺 `["client","Costr"]`**：Amethyst 每条发布事件都带 `["client","Amethyst"]` 标识来源，costr 此前完全没有。给 `NostrActions` 全部 builder（reply/reaction/repost/follow/unfollow/followCategory/interests/setMetadata/relayList/userStatus/deleteEvent/bookmark/quote）+ compose `_send` 的 plain post 一律追加 `["client","Costr"]`（`identity.signEvent` 签名层保持纯净不耦合应用名）。后续 reply/quote/repost 的 `e`/`p` tag 补 relay hint 见 [[task]]。
+- **事件缺 `["client","Costr"]`**：Amethyst 每条发布事件都带 `["client","Amethyst"]` 标识来源，costr 此前完全没有。给 `NostrActions` 全部 builder（reply/reaction/repost/follow/unfollow/followCategory/interests/setMetadata/relayList/userStatus/deleteEvent/bookmark/quote）+ compose `_send` 的 plain post 一律追加 `["client","Costr"]`（`identity.signEvent` 签名层保持纯净不耦合应用名）。
+
+### feat（reply/quote/repost/reaction 的 e/p tag 补 relay hint，对齐 Amethyst）
+
+- **引用类事件的 `e`/`p` tag 第三字段此前是空串**：NIP-10/NIP-18/NIP-25/NIP-27 的 `e`/`p` tag 第三字段是 relay hint，告诉别的客户端去哪拉被引用的事件/作者资料。costr 此前 `['e',id,'','root']` / `['p',pk,'']` 全留空——语法合法但缺失 hint 会让对方拉不到引用对象。Amethyst 用被引作者 NIP-65 的 write relay 填该字段。现给 `NostrActions.reply/quote/repost/reaction` 增 `relay` 参数（默认空串，向后兼容），由调用点传「被引作者 NIP-65 write relay」。
+- **共享取 hint 的工具**：`relayHintFor(WidgetRef, pubkey)`（`lib/app/providers.dart`）同步读 `userRelayListProvider` 的缓存值（5 分钟内存 TTL → SQLite 冷启 hydrate），优先 write relay 次 read relay，未知返回 null。刻意同步：转发/回复/反应是交互动作，不能为取 hint 卡在网络拉中继列表上；无缓存时退化成空串（与 Amethyst 同形）。compose_page 的 `_insertMention`、`_send` 的 `p` tag、reply/quote 调用，及 post_actions 的 repost/reaction 调用统一改用该工具。
+- **回归测试**：`test/actions_test.dart` 新增「relay hint is threaded into e/p tags when provided」覆盖 reply/repost/reaction/quote 四条路径。
 
 ### feat（编辑器 @提及 chip，对齐 Amethyst）
 
 - **发帖编辑器里 `@` 提及显示成可读 @昵称 chip**：此前 `_insertMention` 插入的是 markdown 链接 `[@name](nostr:npub1…)`，渲染依赖 `flutter_markdown`，但编辑中的 `TextField` 不走 markdown，要么显示裸 `nostr:npub1…` 实体、要么显示裸 markdown 文本。改用 `extended_text_field`（17.0.0 即 "Migrate to Flutter 3.44.0"，与本机 SDK 匹配）替换 `TextField`：自定义 `RegExpSpecialTextSpanBuilder` 把控制器文本里的裸 `nostr:nprofile1…/nostr:npub1…` 实体渲染成 `SpecialTextSpan(text:'@昵称', actualText:裸实体, deleteAll:true)`——`actualText` 指向底层裸实体，所以签名后的正文仍是合规 NIP-27 引用，退格键一次删整片 chip，光标映射正确；chip 非可点（编辑场景下点击应移动光标编辑，而非跳转主页，跳转在发布后的渲染帖里发生）。
 - **提及名实时更新**：`_ComposePageState.build` 对 `_mentions` 里每个 pubkey `ref.watch(metadataProvider(pk))`，kind-0 元数据到达即重建 → builder 重跑 → chip 从占位 `@npub1…` 刷新成真实 `@昵称`。
-- **插入带 relay hint 的 nprofile + p tag**：`_insertMention` 改为插裸 `nostr:nprofile1…` 实体（`hexToNprofile` 带该用户 NIP-65 中继 TLV，同步从 5 分钟内存缓存/SQLite 冷启读取）；`_send` 的 NIP-27 `p` tag 第三字段填同源 relay hint（未知则空串，与 Amethyst 同形）。后续 reply/quote/repost 的 `e`/`p` relay hint 仍待补。
+- **插入带 relay hint 的 nprofile + p tag**：`_insertMention` 改为插裸 `nostr:nprofile1…` 实体（`hexToNprofile` 带该用户 NIP-65 中继 TLV，同步从 5 分钟内存缓存/SQLite 冷启读取）；`_send` 的 NIP-27 `p` tag 第三字段填同源 relay hint（未知则空串，与 Amethyst 同形）。
 
 ## 设计与交互
 

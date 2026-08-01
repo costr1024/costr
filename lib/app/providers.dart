@@ -103,7 +103,12 @@ String nextSubId(String purpose) => 'costr:$purpose:${_seq++}';
 /// so it can be unit-tested independently of the relay pool.
 Map<String, dynamic> buildFeedFilter(FeedMode mode, List<String> follows) {
   final filter = <String, dynamic>{
-    'kinds': [0, 1, 6, 7], // metadata + text notes + reposts + reactions (Amethyst pattern)
+    'kinds': [
+      0,
+      1,
+      6,
+      7,
+    ], // metadata + text notes + reposts + reactions (Amethyst pattern)
     'limit': 200,
   };
   if (mode == FeedMode.following && follows.isNotEmpty) {
@@ -132,8 +137,9 @@ class RelayList {
       if (t.length < 2 || t[0] != 'r' || t[1] is! String) continue;
       final url = (t[1] as String).trim();
       if (url.isEmpty) continue;
-      final marker =
-          (t.length >= 3 && t[2] is String) ? (t[2] as String).trim() : '';
+      final marker = (t.length >= 3 && t[2] is String)
+          ? (t[2] as String).trim()
+          : '';
       if (marker == 'read') {
         read.add(url);
       } else if (marker == 'write') {
@@ -145,6 +151,21 @@ class RelayList {
     }
     return RelayList(read: read.toList(), write: write.toList());
   }
+}
+
+/// Best-effort single relay hint for [pubkey], read SYNCHRONOUSLY from its
+/// cached NIP-65 relay list (the 5-min memory TTL, else the SQLite cold-start
+/// hydrate that [userRelayListProvider] does on first read). Prefers a write
+/// relay (where the author publishes) over a read relay. Returns null when no
+/// list is cached yet — callers fall back to an empty relay field (Amethyst's
+/// own fallback shape). Deliberately synchronous: repost/reply/quote/reaction
+/// are interactive actions and must not block on a network relay-list fetch.
+String? relayHintFor(WidgetRef ref, String pubkey) {
+  final rl = ref.read(userRelayListProvider(pubkey)).value;
+  if (rl == null) return null;
+  if (rl.write.isNotEmpty) return rl.write.first;
+  if (rl.read.isNotEmpty) return rl.read.first;
+  return null;
 }
 
 // --- Identity ---------------------------------------------------------------
@@ -272,15 +293,11 @@ final userRelayListProvider = FutureProvider.family<RelayList?, String>((
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
     if (!completer.isCompleted) completer.complete();
   });
-  pool.request(
-    subId,
-    <String, dynamic>{
-      'kinds': [10002],
-      'authors': [pubkey],
-      'limit': 1,
-    },
-    closeOnEose: true,
-  );
+  pool.request(subId, <String, dynamic>{
+    'kinds': [10002],
+    'authors': [pubkey],
+    'limit': 1,
+  }, closeOnEose: true);
   ref.onDispose(() {
     evSub.cancel();
     eoseSub.cancel();
@@ -369,9 +386,7 @@ Future<void> retryDrafts(RelayPool pool, cache.LocalCache db) async {
   final drafts = await db.getDraftsWithRowid();
   for (final (rowid, rawJson) in drafts) {
     try {
-      final ev = Event.fromJson(
-        jsonDecode(rawJson) as Map<String, dynamic>,
-      );
+      final ev = Event.fromJson(jsonDecode(rawJson) as Map<String, dynamic>);
       final ok = await pool.publishAndWait(ev);
       if (ok.ok) {
         await db.deleteDraft(rowid);
@@ -425,7 +440,9 @@ class EventStoreNotifier extends Notifier<List<Event>> {
         if (e.pubkey == me) {
           if (e.kind == 30000) {
             writeFuture.then((_) {
-              if (!_disposed) ref.read(kind30000VersionProvider.notifier).bump();
+              if (!_disposed) {
+                ref.read(kind30000VersionProvider.notifier).bump();
+              }
             });
           } else if (e.kind == 3) {
             // Own contact list changed → refresh the in-memory cache that
@@ -1153,7 +1170,8 @@ class FollowingNotifier extends AsyncNotifier<List<String>> {
         if (row != null) fromDb = _replaceableToEvent(row);
       } catch (_) {}
     }
-    if (inMem != null && (fromDb == null || inMem.createdAt >= fromDb.createdAt)) {
+    if (inMem != null &&
+        (fromDb == null || inMem.createdAt >= fromDb.createdAt)) {
       return inMem;
     }
     return fromDb;
@@ -1219,7 +1237,8 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
         final me = ref.watch(identityProvider).value?.pubkeyHex;
         if (me != null) {
           final groups =
-              ref.watch(userGroupedFollowsProvider(me)).value ?? const <FollowGroup>[];
+              ref.watch(userGroupedFollowsProvider(me)).value ??
+              const <FollowGroup>[];
           FollowGroup? grp;
           for (final g in groups) {
             if (g.name == gname) {
@@ -2510,11 +2529,9 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
   final isSelf = identity != null && identity.pubkeyHex == pubkey;
   // Only the owner can decrypt private entries; for others we pass
   // includePrivate=false (the decrypt would fail anyway, but skip the work).
-  List<BookmarkEntry> entriesOf(Event? e) =>
-      identity != null ? NostrActions(identity).bookmarkEntries(
-        e,
-        includePrivate: isSelf,
-      ) : const <BookmarkEntry>[];
+  List<BookmarkEntry> entriesOf(Event? e) => identity != null
+      ? NostrActions(identity).bookmarkEntries(e, includePrivate: isSelf)
+      : const <BookmarkEntry>[];
 
   // 1. SQLite cache (instant) — kind-10003 is persisted by EventStoreNotifier.
   final cache = ref.read(localCacheProvider).value;
@@ -2585,7 +2602,6 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
   });
   yield* ctrl.stream;
 });
-
 
 // --- NSFW settings (local, not synced to relays) ---------------------------
 
@@ -2803,16 +2819,12 @@ final userStatusProvider = StreamProvider.family<String?, String>((
     ctrl.add(text);
   });
   final subId = nextSubId('status');
-  pool.request(
-    subId,
-    <String, dynamic>{
-      'authors': [pubkey],
-      'kinds': [Event.kindUserStatus],
-      '#d': ['general'],
-      'limit': 1,
-    },
-    closeOnEose: true,
-  );
+  pool.request(subId, <String, dynamic>{
+    'authors': [pubkey],
+    'kinds': [Event.kindUserStatus],
+    '#d': ['general'],
+    'limit': 1,
+  }, closeOnEose: true);
   void finish() {
     if (ctrl.isClosed) return;
     if (!relayHit && cached == null) ctrl.add(null);

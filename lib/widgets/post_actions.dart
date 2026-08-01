@@ -116,7 +116,9 @@ class PostActions extends ConsumerWidget {
     if (identity == null) return;
     final confirmed = await _confirm(context, '转发这条帖子？');
     if (confirmed != true) return;
-    final signed = NostrActions(identity).repost(event);
+    final signed = NostrActions(
+      identity,
+    ).repost(event, relay: relayHintFor(ref, event.pubkey) ?? '');
     final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
     if (context.mounted) {
       _snack(context, ok.ok ? '已转发' : '转发失败：${ok.reason}');
@@ -154,7 +156,9 @@ class PostActions extends ConsumerWidget {
       ),
     );
     if (emoji == null) return;
-    final signed = NostrActions(identity).reaction(event, emoji);
+    final signed = NostrActions(
+      identity,
+    ).reaction(event, emoji, relay: relayHintFor(ref, event.pubkey) ?? '');
     final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
     if (context.mounted) {
       _snack(context, ok.ok ? '已发送 $emoji' : '反应失败：${ok.reason}');
