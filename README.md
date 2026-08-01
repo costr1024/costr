@@ -3,6 +3,16 @@
 **costr** = Chinese Nostr。一个用 Flutter 构建的跨平台 Nostr 社交客户端，单一代码库覆盖
 Android、iOS、Windows、macOS、Linux 五端。
 
+## 下载
+
+| 平台 | 版本 | 文件 |
+| --- | --- | --- |
+| Android | **0.1.0-beta** | `app-release.apk`（≈71 MB，arm/x64 split per ABI） |
+
+> 0.1 beta 为首个公开测试版。Android 包 `applicationId = com.costr.costr`，
+> 用正式 release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中
+> 允许「未知来源」。桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
+
 ## 当前状态
 
 **v1** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、发帖 / 回复 / 转发 / 引用 / reaction、全球 / 关注信息流、用户主页（帖子 / 回帖 / 关注 / 关注者）、搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux 五端。
