@@ -75,6 +75,11 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **编辑框 @提及显示昵称**：`_insertMention` 原插入裸 `nostr:npub1…`，编辑框里只见一串 npub。改为插入 NIP-27 markdown 链接 `[@昵称](nostr:npub1…)`，渲染为可点的「@昵称」；`p` tag 仍由 `_mentions` 在发送时发射，不受影响。
 - **编辑框草稿自动保存/恢复**：发帖/回帖写到一半异常退出或误按返回，内容会丢。新增草稿持久化——编辑框每次改动 300ms 去抖写入本地 config，退出（dispose）与应用进入后台（`AppLifecycleState.paused/inactive`，防 OS 后台杀）即时 flush，尽量保证最新数据；下次打开发帖/回复（按上下文分别 key：顶层 `compose_draft`、回复 `compose_draft:reply:<parentId>`、引用 `compose_draft:quote:<id>`）自动恢复文本 + 已上传附件（重建 NIP-92 imeta，图不重传）+ 从文本重解析 `@提及` 的 `p` tag；发送成功即清空草稿。
 
+### 修复（关注回归 + 个人简介折叠）
+
+- **关注功能失效**：`followUser` 先把新签的 kind-3 写入内存 `contactListCacheProvider`、再 `ref.invalidate(followingStateProvider)`；`FollowingNotifier.build` 重跑时直接 `queryContactList` 读 SQLite——而 `EventStoreNotifier._persist` 的后台 isolate 写库还在飞行中 → 读到旧 kind-3 → 覆盖掉刚写入的内存值 → `followingStateProvider` 返回旧关注列表 → 关注按钮弹回「关注」、直到中继回响才更新，看上去关注完全失效。`_newestContactList` 取内存与 SQLite 中 `createdAt` 较新者（平手取内存即刚签的），彻底消除该竞态。`unfollowUser` 同理。
+- **自己主页个人简介不折叠**：`_AboutText` 旧用 `widget.text.length > 200`（按字符数）判断是否折叠——自己简介字符数 ≤200 但换行多、实际渲染很高时不会折叠，而他人更长简介能折叠，表现为「我的简介不折叠、别人的能」。改为按实际渲染高度判定：首帧以 `GlobalKey` 测 `MarkdownBody` 的 `size.height`，超过 `_collapsedHeight=150`（+8px 容差）才折叠并显「展开/收起」；元数据刷新（文本变化）则重测。
+
 ## 设计与交互
 
 - [docs/DESIGN.md](docs/DESIGN.md) —— 设计原则与交互规范（设计"宪法"）：用户定位、设计优先级（复刻 X app UI > 简约年轻 > 开箱即用 > 性能）、视觉语言（X 浅色基线：纯白底 + 黑主色，弃用 Material3 紫色）、Costr Logo 规范、4-tab + FAB 导航、通知中心数据源与界面、表情选择器（NIP-25/NIP-30）与转发/引用菜单、应用介绍页 / 新手引导、登录/注册/退出、搜索与主页筛选/关注分组、文案规范、性能约束。

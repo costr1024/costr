@@ -1090,19 +1090,18 @@ class FollowingNotifier extends AsyncNotifier<List<String>> {
     final pubkey = identity.pubkeyHex;
     final subId = nextSubId('kind3');
 
-    // 1. Cold-start hydrate from SQLite (instant, Amethyst pattern). The
-    //    kind-3 is persisted by EventStoreNotifier's main listener, so repeat
-    //    visits / relaunches show the follows set before the relay responds.
-    final cache = ref.read(localCacheProvider).value;
-    Event? cached;
-    if (cache != null) {
-      try {
-        final row = await cache.queryContactList(pubkey);
-        if (row != null) cached = _replaceableToEvent(row);
-      } catch (_) {}
-    }
+    // 1. Hydrate the in-memory contact-list cache. Prefer whichever source is
+    //    newest — the in-memory cache (just updated by followUser/
+    //    unfollowUser, or by the ingestion listener) or SQLite (cold start,
+    //    or a relay refresh that landed while we weren't built). Without this
+    //    guard, a rebuild triggered right after followUser reads a STALE
+    //    SQLite row (the background-isolate write from EventStoreNotifier.
+    //    _persist is still in flight) and clobbers the freshly-signed kind-3
+    //    → followingStateProvider returns the OLD follows → the follow
+    //    button flips back to "关注" until the relay echoes, looking like the
+    //    follow failed entirely.
+    final cached = await _newestContactList(pubkey);
     if (cached != null) ref.read(contactListCacheProvider.notifier).set(cached);
-
     // 2. Background relay refresh — live-update state when a newer kind-3
     //    lands (don't regress to an older one). Completer kept for the
     //    no-cache cold path so the AsyncNotifier resolves instead of hanging.
@@ -1136,6 +1135,28 @@ class FollowingNotifier extends AsyncNotifier<List<String>> {
       onTimeout: () =>
           ref.read(contactListCacheProvider)?.pTagPubkeys ?? const <String>[],
     );
+  }
+
+  /// Resolve the newest known kind-3 (contact list) for [pubkey]: in-memory
+  /// cache vs SQLite. Used by [build] so a rebuild right after followUser/
+  /// unfollowUser doesn't read a stale SQLite row and clobber the
+  /// just-updated in-memory cache (the write is still in flight on the
+  /// background isolate). On a tie (same createdAt) prefer the in-memory
+  /// value — it's the freshly-signed one.
+  Future<Event?> _newestContactList(String pubkey) async {
+    final inMem = ref.read(contactListCacheProvider);
+    final cache = ref.read(localCacheProvider).value;
+    Event? fromDb;
+    if (cache != null) {
+      try {
+        final row = await cache.queryContactList(pubkey);
+        if (row != null) fromDb = _replaceableToEvent(row);
+      } catch (_) {}
+    }
+    if (inMem != null && (fromDb == null || inMem.createdAt >= fromDb.createdAt)) {
+      return inMem;
+    }
+    return fromDb;
   }
 }
 

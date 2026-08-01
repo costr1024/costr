@@ -1819,7 +1819,10 @@ class _StatusEditFieldState extends ConsumerState<_StatusEditField> {
 /// - npub1/nprofile1 mentions → resolved username, tappable to profile.
 /// - #hashtag → tappable, sets tag filter + goes to feed.
 /// - http(s) links → opens in default browser.
-/// - Long text (> 300 chars) collapses with 展开/收起.
+/// - Content taller than [_collapsedHeight] collapses with 展开/收起
+///   (measured by actual rendered height, so a short-by-char-count but
+///   line-heavy bio still collapses — the char-count gate used before let
+///   one's own multi-line bio render full while longer others' bios folded).
 class _AboutText extends ConsumerStatefulWidget {
   const _AboutText({required this.text});
   final String text;
@@ -1830,8 +1833,48 @@ class _AboutText extends ConsumerStatefulWidget {
 
 class _AboutTextState extends ConsumerState<_AboutText> {
   bool _expanded = false;
-  static const int _collapseThreshold = 200;
+  /// True once the full body has been laid out and found to exceed
+  /// [_collapsedHeight]. Until measured, the body renders unclipped so it can
+  /// be measured (and so genuinely short bios never clip).
+  bool _overflows = false;
+  bool _measured = false;
+  final _measureKey = GlobalKey();
   static const double _collapsedHeight = 150;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleMeasure();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AboutText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Metadata reloaded with different content → re-measure.
+    if (oldWidget.text != widget.text) {
+      _measured = false;
+      _overflows = false;
+      _expanded = false;
+      _scheduleMeasure();
+    }
+  }
+
+  void _scheduleMeasure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _measured) return;
+      final ctx = _measureKey.currentContext;
+      final box = ctx?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) {
+        // Not laid out yet (markdown still resolving) — try again next frame.
+        if (mounted) _scheduleMeasure();
+        return;
+      }
+      _measured = true;
+      if (box.size.height > _collapsedHeight + 8) {
+        setState(() => _overflows = true);
+      }
+    });
+  }
 
   static final RegExp _entityRegex = RegExp(
     r'(?:nostr:)?((?:nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
@@ -1882,9 +1925,10 @@ class _AboutTextState extends ConsumerState<_AboutText> {
     });
 
     final theme = Theme.of(context);
-    final isLong = widget.text.length > _collapseThreshold;
+    final isLong = _overflows;
 
     Widget body = MarkdownBody(
+      key: _measured ? null : _measureKey,
       data: processed,
       softLineBreak: true,
       extensionSet: ExtensionSet.gitHubFlavored,
