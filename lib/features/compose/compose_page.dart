@@ -12,6 +12,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:extended_text_field/extended_text_field.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -69,8 +70,12 @@ class _ComposePageState extends ConsumerState<ComposePage>
   bool _loadingDraft = false;
 
   String get _draftKey {
-    if (widget.replyTo != null) return 'compose_draft:reply:${widget.replyTo!.id}';
-    if (widget.quoteOf != null) return 'compose_draft:quote:${widget.quoteOf!.id}';
+    if (widget.replyTo != null) {
+      return 'compose_draft:reply:${widget.replyTo!.id}';
+    }
+    if (widget.quoteOf != null) {
+      return 'compose_draft:quote:${widget.quoteOf!.id}';
+    }
     return 'compose_draft';
   }
 
@@ -177,13 +182,15 @@ class _ComposePageState extends ConsumerState<ComposePage>
     _attachments.clear();
     for (final e in list) {
       if (e is Map<String, dynamic>) {
-        _attachments.add(_Attachment(
-          url: e['url'] as String? ?? '',
-          sha256: e['sha256'] as String? ?? '',
-          mime: e['mime'] as String? ?? '',
-          name: e['name'] as String? ?? '',
-          kind: e['kind'] as String? ?? 'file',
-        ));
+        _attachments.add(
+          _Attachment(
+            url: e['url'] as String? ?? '',
+            sha256: e['sha256'] as String? ?? '',
+            mime: e['mime'] as String? ?? '',
+            name: e['name'] as String? ?? '',
+            kind: e['kind'] as String? ?? 'file',
+          ),
+        );
       }
     }
     _controller.text = text;
@@ -475,17 +482,34 @@ class _ComposePageState extends ConsumerState<ComposePage>
     return out;
   }
 
+  /// A single best-effort relay hint for [pubkey], read synchronously from
+  /// its cached NIP-65 relay list (memory 5-min TTL → cold-hydrate from
+  /// SQLite). Returns null when no list is known yet — the entity is still
+  /// inserted (just without a relay TLV / `p`-tag hint); Amethyst falls back
+  /// the same way for users it has no relay list for.
+  String? _relayHintFor(String pubkey) {
+    final rl = ref.read(userRelayListProvider(pubkey)).value;
+    if (rl == null) return null;
+    if (rl.write.isNotEmpty) return rl.write.first;
+    if (rl.read.isNotEmpty) return rl.read.first;
+    return null;
+  }
+
   void _insertMention(KnownUser user, int atStart) {
-    final npub = hexToNpub(user.pubkey);
-    // Insert a NIP-27 markdown mention link so the editor shows "@昵称"
-    // (rendered by MarkdownContent as a clickable mention) instead of the
-    // raw `nostr:npub1…` entity. The `p` tag is still emitted on send from
-    // [_mentions]; the link target carries the npub for clients that parse
-    // content for `nostr:` references.
-    final insert = '[@${user.label}](nostr:$npub) ';
+    // Insert the BARE `nostr:nprofile1…` entity (Amethyst form). The editor
+    // renders it as a styled @nickname chip via [_MentionSpanBuilder]
+    // (SpecialTextSpan: actualText = the raw entity, text = @nickname,
+    // deleteAll: true so backspace removes the whole chip), and the signed
+    // content carries the NIP-27 reference + relay TLV. Trailing space ends
+    // the entity so the next `@` autocomplete can trigger.
+    final hint = _relayHintFor(user.pubkey);
+    final nprofile = hexToNprofile(
+      user.pubkey,
+      relays: hint == null ? const <String>[] : <String>[hint],
+    );
+    final insert = 'nostr:$nprofile ';
     final text = _controller.text;
-    final caret = _controller.selection.baseOffset;
-    final end = caret.clamp(0, text.length);
+    final end = _controller.selection.baseOffset.clamp(atStart, text.length);
     final newText = text.replaceRange(atStart, end, insert);
     _controller.value = TextEditingValue(
       text: newText,
@@ -529,10 +553,12 @@ class _ComposePageState extends ConsumerState<ComposePage>
         if (_nsfw) ['t', 'nsfw'],
         // NIP-31: identify Costr as the publishing client (Amethyst parity).
         ['client', 'Costr'],
-        // NIP-27: each @-mentioned pubkey gets a `p` tag (the content already
-        // carries the `nostr:npub1…` text reference, rendered as a tappable
-        // @name mention by MarkdownContent).
-        for (final pk in _mentions) ['p', pk],
+        // NIP-27: each @-mentioned pubkey gets a `p` tag (the content carries
+        // the bare `nostr:nprofile1…` reference, rendered as a tappable
+        // @name mention by MarkdownContent). Third field is a best-effort
+        // relay hint from the mentionee's NIP-65 list (empty when unknown) —
+        // same shape Amethyst emits.
+        for (final pk in _mentions) ['p', pk, _relayHintFor(pk) ?? ''],
         // NIP-27 event references pasted as `nostr:nevent1…` / `nostr:note1…`:
         // emit `e` mention tags (+ `p` author for nevent) so other clients can
         // fetch + render the referenced post (Amethyst-compatible).
@@ -580,9 +606,21 @@ class _ComposePageState extends ConsumerState<ComposePage>
 
   @override
   Widget build(BuildContext context) {
+    // Watch metadata for every @-mentioned pubkey so the editor chip re-
+    // resolves the nickname (e.g. the bare `nostr:nprofile1…` placeholder →
+    // real @name) the instant kind-0 metadata streams in. The chip builder
+    // reads metadata synchronously at span-construction time, so a rebuild
+    // here propagates to ExtendedTextField's spans.
+    for (final pk in _mentions) {
+      ref.watch(metadataProvider(pk));
+    }
     final count = _controller.text.length;
     final over = count > _softLimit;
     final theme = Theme.of(context);
+    final mentionStyle = theme.textTheme.bodyLarge?.copyWith(
+      color: theme.colorScheme.primary,
+      fontWeight: FontWeight.w600,
+    );
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -618,10 +656,11 @@ class _ComposePageState extends ConsumerState<ComposePage>
                 onSelect: _onMentionSelected,
               ),
             Expanded(
-              child: TextField(
+              child: ExtendedTextField(
                 controller: _controller,
                 autofocus: true,
                 maxLines: null,
+                specialTextSpanBuilder: _MentionSpanBuilder(ref, mentionStyle),
                 decoration: InputDecoration(
                   hintText: _hint,
                   border: InputBorder.none,
@@ -837,4 +876,74 @@ class _MentionPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Matches a bare `nostr:nprofile1…` / `nostr:npub1…` entity in the composer
+/// text (the optional `nostr:` prefix is part of the match so the chip's
+/// `actualText` exactly covers the substring the controller stores). The
+/// `(?<!\]\()` lookbehind defensively skips an entity already inside a
+/// markdown link's `](href)` — new mentions are bare entities, but this
+/// keeps the editor consistent with the full renderer's regex.
+final RegExp _editorMentionRe = RegExp(
+  r'(?<!\]\()(?:nostr:)?((?:nprofile1|npub1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
+);
+
+/// [RegExpSpecialText] that turns a matched entity into a styled, non-interactive
+/// `@nickname` [SpecialTextSpan]. Non-interactive (no tap recognizer) because
+/// this is the EDITOR: tapping near a chip should move the caret to edit it,
+/// not navigate away — profile navigation happens on the rendered post after
+/// publishing. `actualText` = the raw entity keeps the signed content correct
+/// (NIP-27) and `deleteAll: true` makes backspace remove the whole chip.
+class _MentionRegExpText extends RegExpSpecialText {
+  _MentionRegExpText(this.ref, this.mentionStyle);
+  final WidgetRef ref;
+  final TextStyle? mentionStyle;
+
+  @override
+  RegExp get regExp => _editorMentionRe;
+
+  @override
+  InlineSpan finishText(
+    int start,
+    Match match, {
+    TextStyle? textStyle,
+    SpecialTextGestureTapCallback? onTap,
+  }) {
+    final entity = match.group(0)!; // full match incl. optional `nostr:` prefix
+    final bare = match.group(1)!;
+    final pk = entityToPubkeyHex(bare);
+    String name;
+    if (pk != null) {
+      final meta = ref.read(metadataProvider(pk)).value;
+      final resolved = meta?.bestName;
+      name = (resolved != null && resolved.isNotEmpty)
+          ? resolved
+          : shortenEntity(bare);
+    } else {
+      name =
+          entity; // undecodable entity — show the raw substring, don't crash.
+    }
+    return SpecialTextSpan(
+      text: '@$name',
+      actualText: entity,
+      start: start,
+      deleteAll: true,
+      style: mentionStyle ?? textStyle,
+    );
+  }
+}
+
+/// Builds the composer's span tree, replacing every embedded pubkey entity
+/// with an `@nickname` chip. Constructed fresh in [_ComposePageState.build] so
+/// it captures the current [WidgetRef] (chip names re-resolve on the rebuild
+/// triggered by watching [metadataProvider] for mentioned pubkeys).
+class _MentionSpanBuilder extends RegExpSpecialTextSpanBuilder {
+  _MentionSpanBuilder(this.ref, this.mentionStyle);
+  final WidgetRef ref;
+  final TextStyle? mentionStyle;
+
+  @override
+  List<RegExpSpecialText> get regExps => [
+    _MentionRegExpText(ref, mentionStyle),
+  ];
 }
