@@ -246,6 +246,7 @@ class RelayClient implements RelayConnection {
   /// paths.
   Future<int?> measureRtt({
     Duration timeout = const Duration(seconds: 8),
+    List<int> kinds = const [1],
   }) async {
     if (_disposed || !_connected) return null;
     final subId = 'rtt${_rttCounter++}';
@@ -283,10 +284,7 @@ class RelayClient implements RelayConnection {
     _send([
       'REQ',
       subId,
-      <String, dynamic>{
-        'kinds': [1],
-        'limit': 1,
-      },
+      <String, dynamic>{'kinds': kinds, 'limit': 1},
     ]);
     try {
       return await completer.future.timeout(timeout, onTimeout: () => null);

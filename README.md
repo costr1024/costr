@@ -108,6 +108,13 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **`multiplexer.huszonegy.world` 的 RTT 经常显示不出来**：根因是多重器（multiplexer）**对空结果 REQ 永不回 EOSE**——costr 原探测用"不可能的 future-since 过滤器"等空 EOSE，多重器只在该 REQ 真能返回事件时才发帧，于是探测超时返 null。实测 wheat.happytavern.co 对空 future-since 干净 EOSE（172ms），而 huszonegy 对任何空结果 REQ 都静默、仅对能返回事件的 limit:1 REQ 在 ~5.3s 后才发首帧。改造 `RelayClient.measureRtt`：改用 `{kinds:[1], limit:1}`（必有事件的过滤器），**在首帧（EVENT 或 EOSE）即完成计时**；探测 subId（`rtt…`）的 EVENT 帧路由到新 `_probeFrames` 流而**不进 feed/store**（避免污染信息流），超时 5s→8s 以覆盖多重器 ~5.3s 的扇出聚合延迟；NIP-50-only 中继的 CLOSED→search 重试逻辑保留。同时把 `defaultRelays` 里的 huszonegy 换成 `wss://wheat.happytavern.co/`（对空 REQ 干净 EOSE、响应快）。
 - **不卸载更新时中继列表不生效**：`serverListsProvider` 首启把 `defaultRelays` 写进 SQLite `relay_list` 后只读 SQLite，app 更新改了常量也读不到 → 设置页仍显示旧中继（而连接池直接用常量已切新中继，二者分裂）。加 **重播种**：中继集是 app 控制常量（设置页只读不可增删），当 SQLite 列表与 `defaultRelays`（按集合、忽略顺序）不一致时用常量覆写——更新后设置页也跟着切。`blossom_list` 同理。
 
+### feat（索引中继：陌生用户资料补漏，对齐 Amethyst）
+
+- **陌生用户没昵称/头像**：`metadataProvider` 此前只向默认 8 中继广播 kind-0，对"资料只在自己 outbox 中继、不在默认池"的用户冷失→显示一串 npub 乱码。读 Amethyst 源码（`filterUserMetadataForKey.kt` / `UserOutboxFinderSubAssembler.kt`）证实其做法是"连着的中继主源、indexer 兜底"。新增 `indexerRelays`（`indexer.coracle.social`、`user.kindpag.es`，聚合全网 kind-0）+ 懒连持久 `indexerPoolProvider`（镜像 `searchPoolProvider`，与默认池隔离——indexer 只吃 metadata 流量、不进信息流）。
+- **并发而非顺序降级**：`metadataProvider` 的 relay 层改为**默认池 + indexer 池同时发 kind-0 REQ**，谁先回谁算——慢/卡的多重器不挡 indexer 的快回；命中通常 1–2s 出结果。**以 indexer 的 EOSE 为终点**（它是全网聚合器，空 EOSE 基本就是"真没有"），不必等默认池里那台卡死的中继——确认未命中也 ~1–2s，不是 8s。8s 只是单池安全上限。
+- **索引中继探测用 kind-0**：`measureRtt`/`measureRttFor` 加 `kinds` 参数（默认 `[1]`）；indexer 池测速传 `kinds:[0]`（indexer 聚合 kind-0、不存 kind-1），用它们真有的 kind 去探，返回 EVENT 即完成，不靠空 kind-1 的 EOSE。
+- **设置页补索引中继分区 + 通俗说明**：服务器节点页在"搜索中继"下新增"索引中继"分区（状态 + RTT 同其余分区测法）；页底新增"这些服务器都是干嘛的？"通俗说明四类（中继/搜索/索引/Blossom）各自用途，避免用户被 Nostr 多中继角色绕晕。
+
 ## 设计与交互
 
 - [docs/DESIGN.md](docs/DESIGN.md) —— 设计原则与交互规范（设计"宪法"）：用户定位、设计优先级（复刻 X app UI > 简约年轻 > 开箱即用 > 性能）、视觉语言（X 浅色基线：纯白底 + 黑主色，弃用 Material3 紫色）、Costr Logo 规范、4-tab + FAB 导航、通知中心数据源与界面、表情选择器（NIP-25/NIP-30）与转发/引用菜单、应用介绍页 / 新手引导、登录/注册/退出、搜索与主页筛选/关注分组、文案规范、性能约束。

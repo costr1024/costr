@@ -63,6 +63,16 @@ const List<String> searchRelays = <String>[
   'wss://search.nos.today/',
 ];
 
+/// Indexer relays: relays that aggregate ALL users' kind-0 metadata (and
+/// kind-3 / kind-10002). Used as the cold-miss fallback when a user's
+/// metadata isn't on any default relay — they recover the "unknown user shows
+/// no name" gap (Amethyst's "widen to indexers when outbox/connected relays
+/// are exhausted" pattern; see `filterUserMetadataForKey` / PR #3055).
+const List<String> indexerRelays = <String>[
+  'wss://indexer.coracle.social/',
+  'wss://user.kindpag.es/',
+];
+
 // --- Local cache (drift/SQLite) — provider ---
 
 final localCacheProvider = FutureProvider<cache.LocalCache>((ref) async {
@@ -245,6 +255,21 @@ final searchPoolProvider = Provider<RelayPool>((ref) {
   final pool = RelayPool.fromUrls(searchRelays);
   pool.identityGetter = () => ref.read(identityProvider).value;
   // Connect lazily; RelayClient reconnects with backoff on failure.
+  pool.connect();
+  ref.onDispose(pool.dispose);
+  return pool;
+});
+
+/// A separate, isolated, lazily-connected pool for the [indexerRelays].
+/// Queried CONCURRENTLY with the default pool for kind-0 metadata cold
+/// misses (see [metadataProvider]) so unknown users resolve fast — the first
+/// pool to answer wins, a slow/stuck multiplexer in the default pool can't
+/// block the indexer's response. Kept separate from [relayPoolProvider] so
+/// the global feed's kind-1 traffic never reaches the indexers (they only
+/// serve metadata) and the indexers' traffic never mixes into the feed.
+final indexerPoolProvider = Provider<RelayPool>((ref) {
+  final pool = RelayPool.fromUrls(indexerRelays);
+  pool.identityGetter = () => ref.read(identityProvider).value;
   pool.connect();
   ref.onDispose(pool.dispose);
   return pool;
@@ -2732,47 +2757,87 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
   }
   if (cached != null) yield cached;
 
-  // 3. Async refresh from relay (also fills cold misses).
-  final pool = ref.read(relayPoolProvider);
+  // 3. Async refresh: query the DEFAULT pool and the INDEXER pool CONCURRENTLY
+  //    for kind-0. The default pool catches users whose metadata is on a
+  //    connected relay but outside the global-feed window (tier 2); the
+  //    indexer relays aggregate ALL users' kind-0 and recover users not on
+  //    any default relay (Amethyst's "widen to indexers when connected relays
+  //    are exhausted" pattern). Both REQs fire at once so a slow/stuck
+  //    multiplexer in the default pool can't block the indexer's response —
+  //    the first pool to answer wins. The stream ENDS on the indexer's EOSE
+  //    (it's the comprehensive aggregator — if it EOSEs empty, give up fast
+  //    rather than wait for a stuck default relay) or an 8s safety cap per
+  //    pool, whichever first. So a hit lands in ~1–2s and a confirmed miss
+  //    also resolves in ~1–2s, not 8s.
+  final defaultPool = ref.read(relayPoolProvider);
+  final indexerPool = ref.read(indexerPoolProvider);
   final ctrl = StreamController<Metadata?>();
-  late StreamSubscription<Event> sub;
-  late StreamSubscription<String> eoseSub;
-  var relayHit = false;
-  sub = pool.rawEvents.listen((e) {
+
+  var anyHit = false;
+
+  void onMetaEvent(Event e) {
     if (e.kind != 0 || e.pubkey != pubkey) return;
     try {
       final json = jsonDecode(e.content);
       if (json is! Map<String, dynamic>) return;
-      // Don't regress to older metadata.
-      if (e.createdAt < cachedCreatedAt) return;
+      if (e.createdAt < cachedCreatedAt) return; // don't regress to older.
       cachedCreatedAt = e.createdAt;
-      relayHit = true;
+      anyHit = true;
       ctrl.add(Metadata.fromJson(json));
     } catch (_) {
       // Malformed metadata content — ignore, keep waiting for EOSE.
     }
-  });
-  final subId = nextSubId('meta');
-  pool.request(subId, <String, dynamic>{
+  }
+
+  StreamSubscription<Event>? defSub, idxSub;
+  StreamSubscription<String>? defEose, idxEose;
+  Timer? defTimer, idxTimer;
+
+  void closeAll() {
+    if (ctrl.isClosed) return;
+    // Cold miss across both pools → resolve null so callers don't spin.
+    if (!anyHit && cached == null) ctrl.add(null);
+    ctrl.close();
+    defSub?.cancel();
+    idxSub?.cancel();
+    defEose?.cancel();
+    idxEose?.cancel();
+    defTimer?.cancel();
+    idxTimer?.cancel();
+  }
+
+  // Default pool phase.
+  defSub = defaultPool.rawEvents.listen(onMetaEvent);
+  final defId = nextSubId('meta');
+  defaultPool.request(defId, <String, dynamic>{
     'authors': [pubkey],
     'kinds': [0],
     'limit': 1,
   }, closeOnEose: true);
-  void finish() {
-    if (ctrl.isClosed) return;
-    // Cold miss: resolve to null so callers don't spin forever.
-    if (!relayHit && cached == null) ctrl.add(null);
-    ctrl.close();
-  }
-
-  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) => finish());
-  final timer = Timer(const Duration(seconds: 8), finish);
-  ref.onDispose(() {
-    sub.cancel();
-    eoseSub.cancel();
-    timer.cancel();
-    ctrl.close();
+  defEose = defaultPool.eoseStream.where((s) => s == defId).listen((_) {
+    // Default pool done. If we already have metadata, stop; else keep
+    // waiting for the indexer (the comprehensive source) to EOSE.
+    if (anyHit || cached != null) closeAll();
   });
+  defTimer = Timer(const Duration(seconds: 8), () {
+    if (anyHit || cached != null) closeAll();
+  });
+
+  // Indexer phase (concurrent). Its EOSE ends the lookup — it's the
+  // comprehensive aggregator, so an empty EOSE means "give up".
+  idxSub = indexerPool.rawEvents.listen(onMetaEvent);
+  final idxId = nextSubId('metaidx');
+  indexerPool.request(idxId, <String, dynamic>{
+    'authors': [pubkey],
+    'kinds': [0],
+    'limit': 1,
+  }, closeOnEose: true);
+  idxEose = indexerPool.eoseStream
+      .where((s) => s == idxId)
+      .listen((_) => closeAll());
+  idxTimer = Timer(const Duration(seconds: 8), closeAll);
+
+  ref.onDispose(closeAll);
   yield* ctrl.stream;
 });
 

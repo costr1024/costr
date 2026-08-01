@@ -106,10 +106,10 @@ class RelayPool {
   /// Returns null if the URL isn't in the pool or isn't a real client. The
   /// measurement is a REQ→EOSE round-trip with an impossible filter (≈ network
   /// RTT, not ICMP ping); see [RelayClient.measureRtt].
-  Future<int?> measureRttFor(String url) async {
+  Future<int?> measureRttFor(String url, {List<int> kinds = const [1]}) async {
     for (final c in _connections) {
       if (c.url == url && c is RelayClient) {
-        return c.measureRtt();
+        return c.measureRtt(kinds: kinds);
       }
     }
     return null;
@@ -136,7 +136,10 @@ class RelayPool {
   }) async {
     final cleaned = urls
         .map((u) => u.trim())
-        .where((u) => u.isNotEmpty && (u.startsWith('ws://') || u.startsWith('wss://')))
+        .where(
+          (u) =>
+              u.isNotEmpty && (u.startsWith('ws://') || u.startsWith('wss://')),
+        )
         .toSet();
     if (cleaned.isEmpty) return const <Event>[];
     final subId = 'costr:fetch:${_fetchSeq++}';
@@ -440,9 +443,11 @@ class RelayPool {
   ) {
     () async {
       var targets = relays;
-      for (var attempt = 0;
-          attempt < delays.length && targets.isNotEmpty;
-          attempt++) {
+      for (
+        var attempt = 0;
+        attempt < delays.length && targets.isNotEmpty;
+        attempt++
+      ) {
         await Future.delayed(delays[attempt]);
         targets = targets.where((c) => c.isConnected).toList();
         if (targets.isEmpty) break;
@@ -452,8 +457,7 @@ class RelayPool {
           final v = verdicts[c.url];
           if (v == null) {
             if (c.isConnected) still.add(c);
-          } else if (!v.ok &&
-              (v.reason ?? '').toLowerCase().contains('auth')) {
+          } else if (!v.ok && (v.reason ?? '').toLowerCase().contains('auth')) {
             still.add(c);
           }
           // accepted or unrecoverable → drop.

@@ -53,9 +53,11 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   final Map<String, List<int>> _relayCache = {};
   final Map<String, List<int>> _blossomCache = {};
   final Map<String, List<int>> _searchCache = {};
+  final Map<String, List<int>> _indexerCache = {};
   // Live relay connection status from the pool's status stream.
   final Map<String, RelayStatus> _relayStatus = {};
   final Map<String, RelayStatus> _searchStatus = {};
+  final Map<String, RelayStatus> _indexerStatus = {};
   // Blossom reachability from the last HTTP probe: true=online, false=offline,
   // absent=not yet probed.
   final Map<String, bool> _blossomOnline = {};
@@ -68,6 +70,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   Timer? _timer;
   StreamSubscription<List<RelayState>>? _statusSub;
   StreamSubscription<List<RelayState>>? _searchStatusSub;
+  StreamSubscription<List<RelayState>>? _indexerStatusSub;
 
   @override
   void initState() {
@@ -82,6 +85,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     _timer?.cancel();
     _statusSub?.cancel();
     _searchStatusSub?.cancel();
+    _indexerStatusSub?.cancel();
     super.dispose();
   }
 
@@ -110,6 +114,18 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
       }
       setState(() {});
     });
+    // Indexer pool — aggregates all users' kind-0 metadata; lazily connected.
+    final indexerPool = ref.read(indexerPoolProvider);
+    for (final s in indexerPool.states) {
+      _indexerStatus[s.url] = s.status;
+    }
+    _indexerStatusSub = indexerPool.statusStream.listen((snapshot) {
+      if (!mounted) return;
+      for (final s in snapshot) {
+        _indexerStatus[s.url] = s.status;
+      }
+      setState(() {});
+    });
   }
 
   Future<void> _loadCacheThenMeasure() async {
@@ -127,6 +143,9 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     for (final url in searchRelays) {
       _searchCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
     }
+    for (final url in indexerRelays) {
+      _indexerCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
+    }
     if (!mounted) return;
     setState(() {});
     await _measureAll();
@@ -135,6 +154,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   Future<void> _measureAll() async {
     final pool = ref.read(relayPoolProvider);
     final searchPool = ref.read(searchPoolProvider);
+    final indexerPool = ref.read(indexerPoolProvider);
     // Relay targets: only connected relays.
     final relayTargets = _relays
         .where((u) => _relayStatus[u] == RelayStatus.connected)
@@ -148,6 +168,12 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
         .where((k) => _measuring.add(k))
         .map((k) => k.substring('search|'.length))
         .toList();
+    final indexerTargets = indexerRelays
+        .where((u) => _indexerStatus[u] == RelayStatus.connected)
+        .map((u) => 'indexer|$u')
+        .where((k) => _measuring.add(k))
+        .map((k) => k.substring('indexer|'.length))
+        .toList();
     final blossomTargets = _blossom
         .map((u) => 'blossom|$u')
         .where((k) => _measuring.add(k))
@@ -155,6 +181,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
         .toList();
     if (relayTargets.isEmpty &&
         searchTargets.isEmpty &&
+        indexerTargets.isEmpty &&
         blossomTargets.isEmpty) {
       return;
     }
@@ -176,6 +203,17 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
           _searchCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
         }
         _measuring.remove('search|$url');
+      }),
+      ...indexerTargets.map((url) async {
+        // Indexers aggregate kind-0, not kind-1 — probe with kind-0 (a
+        // filter they actually serve) so the probe returns an EVENT and
+        // completes fast, instead of relying on an empty kind-1 EOSE.
+        final ms = await indexerPool.measureRttFor(url, kinds: const [0]);
+        if (ms != null && mounted) {
+          await cache.pushRtt(url, ms, prefix: 'relay_rtt');
+          _indexerCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
+        }
+        _measuring.remove('indexer|$url');
       }),
       ...blossomTargets.map((url) async {
         final ms = await measureBlossomRtt(url);
@@ -239,6 +277,15 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               samples: _searchCache[url] ?? const <int>[],
               measuring: _measuring.contains('search|$url'),
             ),
+          _SectionHeader('索引中继'),
+          for (final url in indexerRelays)
+            _ServerRow(
+              url: url,
+              online: _indexerStatus[url] == RelayStatus.connected,
+              connecting: _indexerStatus[url] == RelayStatus.connecting,
+              samples: _indexerCache[url] ?? const <int>[],
+              measuring: _measuring.contains('indexer|$url'),
+            ),
           _SectionHeader('Blossom 图床服务器'),
           for (final url in _blossom)
             _ServerRow(
@@ -248,8 +295,73 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               samples: _blossomCache[url] ?? const <int>[],
               measuring: _measuring.contains('blossom|$url'),
             ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
+          // Plain-language explainer for each server type. Nostr's
+          // many relay "roles" are confusing — spell out what each does so
+          // users know why there are four sections.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('这些服务器都是干嘛的？', style: theme.textTheme.titleSmall),
+                const SizedBox(height: 8),
+                _ExplainerRow(
+                  title: '中继服务器',
+                  body:
+                      '你每天刷的帖子来自这里。'
+                      'Costr 连着这些中继，实时收发大家发的文字、转发和点赞。',
+                ),
+                _ExplainerRow(
+                  title: '搜索中继',
+                  body:
+                      '专门支持全文搜索的中继。'
+                      '你在搜索页搜关键词时，只问这几台，能精准找到含关键词的帖子。',
+                ),
+                _ExplainerRow(
+                  title: '索引中继',
+                  body:
+                      '收录了"几乎所有人"的个人资料（昵称、头像、简介）。'
+                      '当你看到一个陌生账号、本地没有他的资料时，Costr 就来这里取，'
+                      '好让头像和昵称能显示出来，而不是显示一串乱码。',
+                ),
+                _ExplainerRow(
+                  title: 'Blossom 图床',
+                  body:
+                      '你发帖时上传的图片和视频存在这里。'
+                      '上传时按顺序逐个试，谁先成功用谁。',
+                ),
+              ],
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _ExplainerRow extends StatelessWidget {
+  const _ExplainerRow({required this.title, required this.body});
+  final String title;
+  final String body;
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: RichText(
+        text: TextSpan(
+          style: theme.textTheme.bodySmall,
+          children: [
+            TextSpan(
+              text: '$title：',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            TextSpan(text: body),
+          ],
+        ),
       ),
     );
   }
