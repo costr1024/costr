@@ -4,10 +4,10 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
 import '../../models/event.dart';
+import '../../utils/nav.dart';
 import '../../widgets/avatar.dart';
 import '../feed/event_card.dart';
 
@@ -72,7 +72,7 @@ class _QuotedParent extends ConsumerWidget {
           );
         }
         return GestureDetector(
-          onTap: () => context.push('/n/$parentId'),
+          onTap: () => pushPostDetail(context, parentId),
           child: Consumer(
             builder: (BuildContext context, WidgetRef ref, _) {
               final meta = ref.watch(metadataProvider(parent.pubkey)).value;

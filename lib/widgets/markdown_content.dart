@@ -21,6 +21,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../app/providers.dart';
 import '../app/theme.dart';
 import '../models/event.dart';
+import '../utils/nav.dart';
 import '../utils/nip19.dart';
 import 'avatar.dart';
 import 'network_video.dart';
@@ -588,7 +589,7 @@ class _EventEmbed extends ConsumerWidget {
       return _NonPostRefLabel(ev: ev);
     }
     return GestureDetector(
-      onTap: () => context.push('/n/${ev.id}'),
+      onTap: () => pushPostDetail(context, ev.id),
       child: Container(
         margin: const EdgeInsets.only(top: 8),
         padding: const EdgeInsets.all(12),

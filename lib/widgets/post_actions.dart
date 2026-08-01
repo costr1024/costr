@@ -7,13 +7,14 @@
 ///   choice explicit to avoid misclicks.
 /// - reaction → bottom-sheet emoji picker (NIP-25 kind-7, supports NIP-30
 ///   custom-emoji via NostrActions.reaction(customShortcode/customUrl)).
-/// - 分享 → copy `https://njump.me/<note1>` (Amethyst-style).
+/// - 分享 → system share sheet with `https://njump.me/<note1>` (Amethyst-style).
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../app/providers.dart';
 import '../../models/event.dart';
@@ -179,12 +180,20 @@ class PostActions extends ConsumerWidget {
   }
 
   Future<void> _share(BuildContext context) async {
+    final url = 'https://njump.me/${hexToNote(event.id)}';
     try {
-      final url = 'https://njump.me/${hexToNote(event.id)}';
-      await Clipboard.setData(ClipboardData(text: url));
-      if (context.mounted) _snack(context, '已复制分享链接');
+      await SharePlus.instance.share(
+        ShareParams(text: url, subject: 'Costr 帖子'),
+      );
     } catch (_) {
-      if (context.mounted) _snack(context, '复制失败');
+      // Desktop platforms where share_plus may be unavailable → fall back to
+      // copying the link so the action still does something useful.
+      try {
+        await Clipboard.setData(ClipboardData(text: url));
+        if (context.mounted) _snack(context, '已复制分享链接');
+      } catch (_) {
+        if (context.mounted) _snack(context, '分享失败');
+      }
     }
   }
 

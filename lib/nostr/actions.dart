@@ -5,6 +5,7 @@ library;
 
 import 'dart:convert';
 
+import '../models/bookmark_entry.dart';
 import '../models/event.dart';
 import '../utils/nip19.dart';
 import '../utils/nip44.dart';
@@ -328,6 +329,49 @@ class NostrActions {
           for (final t in arr) {
             if (t is List && t.length >= 2 && t[0] == 'e' && t[1] is String) {
               add(t[1] as String);
+            }
+          }
+        }
+      } catch (_) {
+        // Not the owner (can't decrypt) or malformed — ignore.
+      }
+    }
+    return out;
+  }
+
+  /// Same as [bookmarkIds] but tags each id with its origin (public `e` tag vs
+  /// private NIP-44-encrypted entry) so the 收藏 tab can render public/private
+  /// sections separately. Deduped across both lists (a public id wins if it
+  /// appears in both); order-preserved (public first, then private). Returns
+  /// empty for a null event.
+  List<BookmarkEntry> bookmarkEntries(Event? e, {bool includePrivate = true}) {
+    if (e == null) return const <BookmarkEntry>[];
+    final out = <BookmarkEntry>[];
+    final seen = <String>{};
+    void add(String id, bool public) {
+      if (seen.add(id)) out.add(BookmarkEntry(id: id, public: public));
+    }
+
+    // Public e-tags.
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'e' && t[1] is String) {
+        add(t[1] as String, true);
+      }
+    }
+
+    // Private entries (only decryptable for the owner — needs the privkey).
+    if (includePrivate && e.content.isNotEmpty) {
+      try {
+        final decoded = nip44Decrypt(
+          id.privkeyHex,
+          id.pubkeyHex,
+          e.content,
+        );
+        final arr = jsonDecode(decoded);
+        if (arr is List) {
+          for (final t in arr) {
+            if (t is List && t.length >= 2 && t[0] == 'e' && t[1] is String) {
+              add(t[1] as String, false);
             }
           }
         }

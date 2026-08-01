@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/bookmark_entry.dart';
 import '../models/event.dart';
 import '../models/metadata.dart';
 import '../utils/nip19.dart';
@@ -390,6 +391,7 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   StreamSubscription<Event>? _sub;
   Timer? _flush;
   bool _dirty = false;
+  bool _disposed = false;
   cache.LocalCache? _cache;
 
   @override
@@ -412,23 +414,29 @@ class EventStoreNotifier extends Notifier<List<Event>> {
         // providers (follows/groups/bookmarks/relay-list) read them from
         // SQLite directly. Catches kind-3/30000 from the follow providers'
         // targeted REQs too, since they flow through this merged stream.
-        _persist(e);
-      }
-      // Reactive refresh for the logged-in user's own lists: bump version
-      // counters / refresh in-memory caches so dependent providers rebuild
-      // without manual invalidate. Read identity per-event (may resolve late).
-      final me = ref.read(identityProvider).value?.pubkeyHex;
-      if (e.pubkey == me) {
-        if (e.kind == 30000) {
-          ref.read(kind30000VersionProvider.notifier).bump();
-        } else if (e.kind == 3) {
-          // Own contact list changed → refresh the in-memory cache that
-          // FollowingNotifier / buildFeedFilter read from.
-          ref.read(contactListCacheProvider.notifier).set(e);
+        final writeFuture = _persist(e);
+        // Reactive refresh for the logged-in user's own lists. Read identity
+        // per-event (may resolve late). kind-3 sets an in-memory cache from
+        // the event itself (no SQLite read) → safe to do now. kind-30000's
+        // bump triggers a SQLite re-read of the follow-set rows, so it MUST
+        // wait until the background-isolate write lands — otherwise the
+        // rebuilt snapshot races the write and stays empty for the session.
+        final me = ref.read(identityProvider).value?.pubkeyHex;
+        if (e.pubkey == me) {
+          if (e.kind == 30000) {
+            writeFuture.then((_) {
+              if (!_disposed) ref.read(kind30000VersionProvider.notifier).bump();
+            });
+          } else if (e.kind == 3) {
+            // Own contact list changed → refresh the in-memory cache that
+            // FollowingNotifier / buildFeedFilter read from.
+            ref.read(contactListCacheProvider.notifier).set(e);
+          }
         }
       }
     });
     ref.onDispose(() {
+      _disposed = true;
       _sub?.cancel();
       _flush?.cancel();
     });
@@ -668,6 +676,82 @@ class FeedModeNotifier extends Notifier<FeedMode> {
 
 final feedModeProvider = NotifierProvider<FeedModeNotifier, FeedMode>(
   FeedModeNotifier.new,
+);
+
+// --- Text scale (global font size) -----------------------------------------
+
+/// Three discrete global font sizes (设置 → 字号). Each step scales text by
+/// 20% multiplicatively: 默认 1.0× → 大 1.2× → 较大 1.44×. Persisted to the
+/// config table (`text_scale`) so the choice survives relaunch. Applied app-
+/// wide via `MediaQuery.textScaler` in `MaterialApp.router` (app.dart).
+enum TextScaleLevel { normal, large, larger }
+
+extension TextScaleLevelFactor on TextScaleLevel {
+  double get factor {
+    switch (this) {
+      case TextScaleLevel.normal:
+        return 1.0;
+      case TextScaleLevel.large:
+        return 1.2;
+      case TextScaleLevel.larger:
+        return 1.44;
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case TextScaleLevel.normal:
+        return '默认';
+      case TextScaleLevel.large:
+        return '大';
+      case TextScaleLevel.larger:
+        return '较大';
+    }
+  }
+}
+
+final savedTextScaleProvider = FutureProvider<TextScaleLevel>((ref) async {
+  final cache = await ref.read(localCacheProvider.future);
+  final raw = await cache.readConfig('text_scale');
+  switch (raw) {
+    case 'large':
+      return TextScaleLevel.large;
+    case 'larger':
+      return TextScaleLevel.larger;
+    default:
+      return TextScaleLevel.normal;
+  }
+});
+
+class TextScaleNotifier extends Notifier<TextScaleLevel> {
+  @override
+  TextScaleLevel build() {
+    // Default to 默认 until the persisted value loads; rebuilds (snapping to
+    // the saved level) once [savedTextScaleProvider] resolves.
+    return ref.watch(savedTextScaleProvider).value ?? TextScaleLevel.normal;
+  }
+
+  void set(TextScaleLevel level) {
+    if (level == state) return;
+    state = level;
+    final value = switch (level) {
+      TextScaleLevel.normal => 'normal',
+      TextScaleLevel.large => 'large',
+      TextScaleLevel.larger => 'larger',
+    };
+    ref
+        .read(localCacheProvider.future)
+        .then((cache) => cache.writeConfig('text_scale', value));
+  }
+}
+
+final textScaleProvider = NotifierProvider<TextScaleNotifier, TextScaleLevel>(
+  TextScaleNotifier.new,
+);
+
+/// Derived double factor for convenience (1.0 / 1.2 / 1.44).
+final textScaleFactorProvider = Provider<double>(
+  (ref) => ref.watch(textScaleProvider).factor,
 );
 
 /// Filter applied to the 关注 feed (following mode only): `null` = 全部关注;
@@ -1931,21 +2015,33 @@ final searchPostsProvider = StreamProvider.family<List<Event>, String>((
   final t = Timer(const Duration(seconds: 6), () {
     if (!done.isCompleted) done.complete();
   });
+  // When all search relays EOSE (or the 6s cap fires): stop listening, do a
+  // final flush, then close the controller so `yield* ctrl.stream` completes
+  // and the StreamProvider leaves its loading state. Without piping the
+  // controller's stream out, every relay hit (and this final flush) written
+  // to `ctrl` was silently dropped and the provider never emitted past the
+  // initial local-FTS snapshot — so user search spun forever.
+  done.future.whenComplete(() {
+    t.cancel();
+    flush?.cancel();
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+    if (dirty && !ctrl.isClosed) {
+      dirty = false;
+      ctrl.add(_snapshotSorted(merged));
+    }
+    if (!ctrl.isClosed) ctrl.close();
+  });
   ref.onDispose(() {
     t.cancel();
     flush?.cancel();
     evSub.cancel();
     eoseSub.cancel();
     pool.closeSubscription(subId);
-    ctrl.close();
+    if (!ctrl.isClosed) ctrl.close();
   });
-  await done.future;
-  t.cancel();
-  await eoseSub.cancel();
-  pool.closeSubscription(subId);
-  flush?.cancel();
-  if (dirty && !ctrl.isClosed) ctrl.add(_snapshotSorted(merged));
-  await ctrl.close();
+  yield* ctrl.stream;
 });
 
 /// Global user search (NIP-50 `search` filter, kind 0 metadata) via the
@@ -2007,21 +2103,30 @@ final searchUsersProvider = StreamProvider.family<List<UserResult>, String>((
   final t = Timer(const Duration(seconds: 6), () {
     if (!done.isCompleted) done.complete();
   });
+  // Same fix as searchPostsProvider: pipe `ctrl` out via `yield*` so the
+  // StreamProvider emits relay results (and the final flush) instead of
+  // staying in loading forever — without this, user search spun indefinitely.
+  done.future.whenComplete(() {
+    t.cancel();
+    flush?.cancel();
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+    if (dirty && !ctrl.isClosed) {
+      dirty = false;
+      ctrl.add(merged.values.toList());
+    }
+    if (!ctrl.isClosed) ctrl.close();
+  });
   ref.onDispose(() {
     t.cancel();
     flush?.cancel();
     evSub.cancel();
     eoseSub.cancel();
     pool.closeSubscription(subId);
-    ctrl.close();
+    if (!ctrl.isClosed) ctrl.close();
   });
-  await done.future;
-  t.cancel();
-  await eoseSub.cancel();
-  pool.closeSubscription(subId);
-  flush?.cancel();
-  if (dirty && !ctrl.isClosed) ctrl.add(merged.values.toList());
-  await ctrl.close();
+  yield* ctrl.stream;
 });
 
 /// Reactions (NIP-25 kind-7) for an event. Reads from the EventStore (kind-7
@@ -2295,9 +2400,11 @@ Future<void> _addToCategoryList(
     identity,
   ).followCategory(current, pubkey, category);
   await pool.publishAndWait(signed);
-  // Optimistic local refresh — don't wait for the relay to round-trip the
-  // kind-30000 back; the ingestion listener will bump again when it lands.
-  ref.read(kind30000VersionProvider.notifier).bump();
+  // No explicit bump here: publishAndWait echoes the event to the merged
+  // stream, EventStoreNotifier persists it, and (per the H3 fix) bumps
+  // kind30000VersionProvider AFTER the SQLite write lands — so the rebuilt
+  // snapshot reliably sees the new row. A synchronous bump here would race
+  // the background-isolate write and render a stale-empty list.
 }
 
 /// Bookmark [eventId] (NIP-51 kind-10003). Fetches the current kind-10003 (to
@@ -2366,13 +2473,15 @@ Future<RelayOk> bookmarkEvent(
   return pool.publishAndWait(signed);
 }
 
-/// A user's bookmarked note ids (NIP-51 kind-10003). Amethyst-style loading:
-/// yields the SQLite-cached list instantly (public `e` tags for anyone; plus
-/// the NIP-44-decrypted private entries when [pubkey] is the logged-in user),
-/// then background-refreshes from relays. Used by the profile's 收藏 section
-/// (DESIGN §8) — every user's PUBLIC bookmarks show on their profile; private
-/// bookmarks only render for the owner (others can't decrypt them).
-final bookmarksProvider = StreamProvider.family<List<String>, String>((
+/// A user's bookmarked note ids with origin (public vs private). NIP-51
+/// kind-10003. Amethyst-style loading: yields the SQLite-cached list instantly
+/// (public `e` tags for anyone; plus the NIP-44-decrypted private entries when
+/// [pubkey] is the logged-in user), then background-refreshes from relays. Used
+/// by the profile's 收藏 section (DESIGN §8) — every user's PUBLIC bookmarks
+/// show on their profile; private bookmarks only render for the owner (others
+/// can't decrypt them). Entries are origin-tagged so the tab can render
+/// 公开书签 / 私人书签 as separate sections instead of one merged list.
+final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
   ref,
   pubkey,
 ) async* {
@@ -2380,11 +2489,11 @@ final bookmarksProvider = StreamProvider.family<List<String>, String>((
   final isSelf = identity != null && identity.pubkeyHex == pubkey;
   // Only the owner can decrypt private entries; for others we pass
   // includePrivate=false (the decrypt would fail anyway, but skip the work).
-  List<String> idsOf(Event? e) =>
-      identity != null ? NostrActions(identity).bookmarkIds(
+  List<BookmarkEntry> entriesOf(Event? e) =>
+      identity != null ? NostrActions(identity).bookmarkEntries(
         e,
         includePrivate: isSelf,
-      ) : const <String>[];
+      ) : const <BookmarkEntry>[];
 
   // 1. SQLite cache (instant) — kind-10003 is persisted by EventStoreNotifier.
   final cache = ref.read(localCacheProvider).value;
@@ -2395,12 +2504,12 @@ final bookmarksProvider = StreamProvider.family<List<String>, String>((
       if (row != null) cached = _replaceableToEvent(row);
     } catch (_) {}
   }
-  var latest = idsOf(cached);
-  if (latest.isNotEmpty) yield List<String>.unmodifiable(latest);
+  var latest = entriesOf(cached);
+  if (latest.isNotEmpty) yield List<BookmarkEntry>.unmodifiable(latest);
 
   // 2. Relay refresh — first matching event or first EOSE, newest by createdAt.
   final pool = ref.watch(relayPoolProvider);
-  final ctrl = StreamController<List<String>>();
+  final ctrl = StreamController<List<BookmarkEntry>>();
   Timer? flush;
   var dirty = false;
   void scheduleEmit() {
@@ -2409,7 +2518,7 @@ final bookmarksProvider = StreamProvider.family<List<String>, String>((
       flush = null;
       if (dirty && !ctrl.isClosed) {
         dirty = false;
-        ctrl.add(List<String>.unmodifiable(latest));
+        ctrl.add(List<BookmarkEntry>.unmodifiable(latest));
       }
     });
   }
@@ -2422,7 +2531,7 @@ final bookmarksProvider = StreamProvider.family<List<String>, String>((
     if (e.kind != 10003 || e.pubkey != pubkey) return;
     if (newest == null || e.createdAt > newest!.createdAt) {
       newest = e;
-      latest = idsOf(e);
+      latest = entriesOf(e);
       scheduleEmit();
     }
   });
@@ -2440,7 +2549,9 @@ final bookmarksProvider = StreamProvider.family<List<String>, String>((
   });
   done.future.whenComplete(() {
     flush?.cancel();
-    if (dirty && !ctrl.isClosed) ctrl.add(List<String>.unmodifiable(latest));
+    if (dirty && !ctrl.isClosed) {
+      ctrl.add(List<BookmarkEntry>.unmodifiable(latest));
+    }
     if (!ctrl.isClosed) ctrl.close();
   });
   ref.onDispose(() {
@@ -2449,7 +2560,7 @@ final bookmarksProvider = StreamProvider.family<List<String>, String>((
     evSub.cancel();
     eoseSub.cancel();
     pool.closeSubscription(subId);
-    ctrl.close();
+    if (!ctrl.isClosed) ctrl.close();
   });
   yield* ctrl.stream;
 });

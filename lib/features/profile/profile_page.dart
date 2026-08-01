@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../feed/event_card.dart';
+import '../../models/bookmark_entry.dart';
 import '../../models/event.dart';
 import '../../models/metadata.dart';
 import '../../nostr/identity.dart';
@@ -214,7 +215,7 @@ class _Header extends ConsumerWidget {
                     ),
                   ),
                   if (isSelf) ...[
-                    _FollowButton(pubkey: pubkey, isSelf: true, iconOnly: true),
+                    _FollowButton(pubkey: pubkey, isSelf: true),
                     IconButton(
                       icon: const Icon(Icons.edit, size: 20),
                       tooltip: '编辑资料',
@@ -379,7 +380,7 @@ class _ProfileStats extends ConsumerWidget {
 /// already follows them (per followingStateProvider); tap publishes an updated
 /// kind-3 via [followUser].
 class _FollowButton extends ConsumerStatefulWidget {
-  const _FollowButton({required this.pubkey, this.followsMe = false, this.isSelf = false, this.iconOnly = false});
+  const _FollowButton({required this.pubkey, this.followsMe = false, this.isSelf = false});
   final String pubkey;
 
   /// True when this pubkey follows the logged-in user (→ show "回关" until
@@ -391,11 +392,6 @@ class _FollowButton extends ConsumerStatefulWidget {
   /// Relabels to 关注自己 / 已关注自己; the multi-select sheet + NIP-02 path
   /// are identical to following anyone else (DESIGN §8 follow-yourself).
   final bool isSelf;
-
-  /// Render icon-only (with tooltip) — used on the self profile where two
-  /// buttons (关注自己 + 编辑资料) share the name row, so a long name on a
-  /// narrow screen doesn't overflow horizontally.
-  final bool iconOnly;
 
   @override
   ConsumerState<_FollowButton> createState() => _FollowButtonState();
@@ -415,13 +411,6 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
       label = followed ? '已关注' : (widget.followsMe ? '回关' : '关注');
     }
     final icon = followed ? Icons.check : Icons.person_add_outlined;
-    if (widget.iconOnly) {
-      return IconButton.filledTonal(
-        icon: Icon(icon, size: 20),
-        tooltip: label,
-        onPressed: _busy ? null : (followed ? _unfollow : _follow),
-      );
-    }
     return FilledButton.tonalIcon(
       icon: Icon(icon, size: 18),
       label: Text(label),
@@ -457,13 +446,16 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
   }
 
   Future<void> _follow() async {
-    // Fetch the logged-in user's existing custom group names.
+    // Fetch the logged-in user's existing custom group names. Await the
+    // provider's first emission (the SQLite snapshot) — reading `.value` on a
+    // freshly-created StreamProvider returns null (loading), which `?? []`
+    // would render as "no groups" every time the sheet opened.
     final identity = ref.read(identityProvider).value;
     if (identity == null) return;
     final groups =
-        ref.read(userGroupNamesProvider(identity.pubkeyHex)).value ??
-        const <String>[];
+        await ref.read(userGroupNamesProvider(identity.pubkeyHex).future);
 
+    if (!mounted) return;
     // Multi-select follow sheet (Amethyst-style): pick the custom groups to
     // ALSO add the user to (kind-3 默认分组 is always added by the follow
     // itself). New groups can be created inline. Returns the set of selected
@@ -1151,18 +1143,87 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
 /// instantly then background-refreshes from relays; each id resolves to an
 /// [EventCard] via [eventByIdProvider]'s 3-tier lookup (SQLite → memory →
 /// relay). DESIGN §8 — placed right after 关注者.
-class _BookmarksTab extends ConsumerWidget {
+class _BookmarksTab extends ConsumerStatefulWidget {
   const _BookmarksTab({required this.pubkey});
   final String pubkey;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(bookmarksProvider(pubkey));
+  ConsumerState<_BookmarksTab> createState() => _BookmarksTabState();
+}
+
+class _BookmarksTabState extends ConsumerState<_BookmarksTab> {
+  final _controller = TextEditingController();
+  String _query = '';
+  Timer? _debounce;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onChanged(String v) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _query = v.trim());
+    });
+  }
+
+  /// True if [entry] matches the current query. Empty query → always matches.
+  /// Resolves the bookmarked event + author metadata from the cache so the
+  /// user can search by post text or author name (not just the opaque id).
+  /// Entries whose event hasn't resolved yet are hidden while a query is
+  /// active; they reappear once resolved and the bookmarks stream re-emits.
+  bool _matches(BookmarkEntry entry, String q) {
+    if (q.isEmpty) return true;
+    final ql = q.toLowerCase();
+    if (entry.id.toLowerCase().contains(ql)) return true;
+    final ev = ref.read(eventByIdProvider(entry.id)).value;
+    if (ev == null) return false;
+    if (ev.content.toLowerCase().contains(ql)) return true;
+    if (ev.hashtags.any((t) => t.toLowerCase().contains(ql))) return true;
+    final meta = ref.read(metadataProvider(ev.pubkey)).value;
+    if (meta != null) {
+      if ((meta.name ?? '').toLowerCase().contains(ql)) return true;
+      if ((meta.displayName ?? '').toLowerCase().contains(ql)) return true;
+      if ((meta.nip05 ?? '').toLowerCase().contains(ql)) return true;
+    }
+    return false;
+  }
+
+  Widget _sectionHeader(String title, int count, ThemeData theme) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        child: Text(
+          '$title · $count',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.outline,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final async = ref.watch(bookmarksProvider(widget.pubkey));
     return RefreshIndicator(
-      onRefresh: () => ref.refresh(bookmarksProvider(pubkey).future),
+      onRefresh: () => ref.refresh(bookmarksProvider(widget.pubkey).future),
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
+        slivers: <Widget>[
+          SliverToBoxAdapter(
+            child: _SearchBar(
+              controller: _controller,
+              hint: '搜索收藏…',
+              onChanged: _onChanged,
+            ),
+          ),
           async.when(
             loading: () => const SliverFillRemaining(
               hasScrollBody: false,
@@ -1172,19 +1233,48 @@ class _BookmarksTab extends ConsumerWidget {
               hasScrollBody: false,
               child: Center(child: Text('加载失败：$e')),
             ),
-            data: (List<String> ids) {
-              if (ids.isEmpty) {
-                return const SliverFillRemaining(
+            data: (List<BookmarkEntry> entries) {
+              final public = entries
+                  .where((e) => e.public && _matches(e, _query))
+                  .toList();
+              final private = entries
+                  .where((e) => !e.public && _matches(e, _query))
+                  .toList();
+              if (public.isEmpty && private.isEmpty) {
+                return SliverFillRemaining(
                   hasScrollBody: false,
-                  child: Center(child: Text('暂无收藏')),
+                  child: Center(
+                    child: Text(_query.isEmpty ? '暂无收藏' : '无匹配结果'),
+                  ),
                 );
               }
-              return SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (BuildContext context, int i) =>
-                      _BookmarkRow(eventId: ids[i]),
-                  childCount: ids.length,
-                ),
+              return SliverMainAxisGroup(
+                slivers: <Widget>[
+                  if (public.isNotEmpty) ...[
+                    _sectionHeader('公开书签', public.length, theme),
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (BuildContext context, int i) => _BookmarkRow(
+                          eventId: public[i].id,
+                          publicList: true,
+                        ),
+                        childCount: public.length,
+                      ),
+                    ),
+                  ],
+                  if (private.isNotEmpty) ...[
+                    _sectionHeader('私人书签', private.length, theme),
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (BuildContext context, int i) => _BookmarkRow(
+                          eventId: private[i].id,
+                          publicList: false,
+                        ),
+                        childCount: private.length,
+                      ),
+                    ),
+                  ],
+                ],
               );
             },
           ),
@@ -1197,32 +1287,64 @@ class _BookmarksTab extends ConsumerWidget {
 /// A single bookmarked post — resolves [eventId] → [Event] via
 /// [eventByIdProvider] (SQLite → memory → relay) and renders an [EventCard].
 /// Loading / not-found states degrade gracefully (a bookmark may reference an
-/// event not yet fetched; it streams in when the relay responds).
+/// event not yet fetched; it streams in when the relay responds). A small lock
+/// badge marks private bookmarks so the owner can tell them apart at a glance.
 class _BookmarkRow extends ConsumerWidget {
-  const _BookmarkRow({required this.eventId});
+  const _BookmarkRow({required this.eventId, this.publicList = true});
   final String eventId;
+  final bool publicList;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(eventByIdProvider(eventId));
-    return async.when(
-      loading: () => const ListTile(
-        dense: true,
-        leading: SizedBox(
-          width: 18,
-          height: 18,
-          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+    final badge = publicList
+        ? null
+        : Padding(
+            padding: const EdgeInsets.only(left: 12, top: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(
+                  Icons.lock_outline,
+                  size: 12,
+                  color: Theme.of(context).colorScheme.outline,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '私人',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                ),
+              ],
+            ),
+          );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        async.when(
+          loading: () => const ListTile(
+            dense: true,
+            leading: SizedBox(
+              width: 18,
+              height: 18,
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+            title: Text('加载中…'),
+          ),
+          error: (Object e, _) => ListTile(
+            dense: true,
+            title: const Text('收藏的帖子加载失败'),
+            subtitle: Text('$e'),
+          ),
+          data: (Event? e) => e == null
+              ? const ListTile(dense: true, title: Text('收藏的帖子暂不可用'))
+              : EventCard(event: e),
         ),
-        title: Text('加载中…'),
-      ),
-      error: (Object e, _) => ListTile(
-        dense: true,
-        title: const Text('收藏的帖子加载失败'),
-        subtitle: Text('$e'),
-      ),
-      data: (Event? e) => e == null
-          ? const ListTile(dense: true, title: Text('收藏的帖子暂不可用'))
-          : EventCard(event: e),
+        ?badge,
+      ],
     );
   }
 }
@@ -1506,10 +1628,14 @@ class _CopyableNprofile extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            shortenEntity(nprofile),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+          Flexible(
+            child: Text(
+              shortenEntity(nprofile),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
           const SizedBox(width: 4),

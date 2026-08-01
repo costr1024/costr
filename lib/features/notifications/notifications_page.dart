@@ -13,6 +13,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
+import '../../utils/nav.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 
@@ -379,7 +380,7 @@ class _NotificationTile extends ConsumerWidget {
         // (sourceEventId) — tapping a mention opens the post that mentioned you.
         final target = item.targetEventId ?? item.sourceEventId;
         if (target != null) {
-          context.push('/n/$target');
+          pushPostDetail(context, target);
         } else if (item.type == NotificationType.follow) {
           // Go to my followers tab.
           context.go('/profile');

@@ -12,6 +12,7 @@ import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
 import '../../nostr/actions.dart';
+import '../../utils/nav.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/markdown_content.dart';
@@ -31,29 +32,29 @@ class EventCard extends ConsumerWidget {
     final status = ref.watch(userStatusProvider(event.pubkey)).value;
     final theme = Theme.of(context);
     return InkWell(
-      onTap: () => context.push('/n/${event.id}'),
+      onTap: () => pushPostDetail(context, event.id),
       child: Container(
         decoration: const BoxDecoration(
           border: Border(bottom: BorderSide(color: Color(0xFFEFF3F4))),
         ),
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 2, right: 10),
-                child: GestureDetector(
-                  onTap: () => context.push('/u/${event.pubkey}'),
-                  child: Avatar(pubkey: event.pubkey, radius: 16),
-                ),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
+            children: <Widget>[
+              // Row 1 (X-style): avatar + display name + relative time + menu,
+              // all on one line so the nickname sits level with the avatar.
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: <Widget>[
+                  GestureDetector(
+                    onTap: () => context.push('/u/${event.pubkey}'),
+                    child: Avatar(pubkey: event.pubkey, radius: 16),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Row(
+                      children: <Widget>[
                         Flexible(
                           child: GestureDetector(
                             onTap: () => context.push('/u/${event.pubkey}'),
@@ -75,6 +76,16 @@ class EventCard extends ConsumerWidget {
                         _PostMenu(event: event),
                       ],
                     ),
+                  ),
+                ],
+              ),
+              // Row 2+: status / reply context / content / actions, indented to
+              // align with the nickname (avatar diameter 32 + 10 gap = 42).
+              Padding(
+                padding: const EdgeInsets.only(left: 42),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
                     if (status != null && status.isNotEmpty)
                       _StatusLine(text: status),
                     if (event.isReply) _ReplyContext(event: event),
@@ -299,7 +310,7 @@ class _ReplyContext extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: InkWell(
-        onTap: () => context.push('/n/$parent'),
+        onTap: () => pushPostDetail(context, parent),
         child: Row(
           children: [
             Icon(Icons.reply, size: 14, color: CostrColors.text3),

@@ -61,6 +61,20 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **通知页崩溃修复**：`_NotificationTile` 头像重叠此前用 `EdgeInsets.only(right: -8)`——`Padding` 不允许负值，每条带头像的通知渲染即命中 `shifted_box.dart` 的 `padding.isNonNegative` 断言。改用 `Transform.translate(offset: Offset(i==0?0:-8, 0))` 实现重叠，视觉一致且不违反 padding 约束。
 - **界面与导航**：**中文优先**（面向中国用户，所有 UI 文案中文化；品牌名 costr 保留）。登录页、信息流页（中继状态 chip + 语言下拉 + tag 过滤 chip + 空/错误态）、个人页（头像 + 资料 + npub + 编辑资料入口）、发帖页、帖子详情页、用户主页。Feed/Profile 共用一个底栏导航 shell（`StatefulShellRoute.indexedStack`，保留各 tab 状态）；发帖页 / 用户主页 / 详情页 push 进栈、AppBar 自带返回键。相对时间中文（刚刚/分/时/天）。
 
+### 批量修复（信息流/收藏/搜索/设置/分享）
+
+- **自己主页关注按钮无文字**：`_FollowButton` 在自己主页用 `iconOnly:true`（只显 ✓ 图标 + tooltip），已关注状态没文字。去掉 iconOnly，始终显「关注自己 / 已关注自己」文字按钮。
+- **自定义关注列表全空**：两处竞态。①「加入关注分组」弹窗用 `ref.read(userGroupNamesProvider).value ?? []` 读冷启动的 StreamProvider，`.value` 恒为 null → 弹窗恒空；改 `await ref.read(...future)` 取首个快照。②自己刚发布的 kind-30000 分组不显示——`EventStoreNotifier` 收到自己 kind-30000 后同步 `bump()`，跑在后台 isolate 写库落地之前 → 重建快照仍是旧的；改为 `writeFuture.then(bump)`（写库落地后再 bump），并删掉 `_addToCategoryList` 里紧跟 `publishAndWait` 的乐观 bump（靠 ingestion 落地后的 bump）。
+- **帖子详情可重复 push**：`PostDetailPage` 把当前帖也渲成 `EventCard`，其 `onTap` 又 push 同一 `/n/{id}` → 连点叠出多个详情页、返回要按很多次。新增 `lib/utils/nav.dart` 的 `pushPostDetail`：栈顶已是该帖（go_router `currentConfiguration.matches.last.matchedLocation`，含 imperative push）就跳过。feed 卡片 / 回复上下文 / markdown nevent 引用 / 通知 / 用户帖列表全改用它。
+- **信息流卡片昵称位置**：昵称从内层 Column 提到与头像同高行（X 风格），状态独占下方一行（左缩进对齐昵称）。
+- **收藏 tab 区分公私 + 搜索**：`bookmarksProvider` 此前把公开 `e` tag 与 NIP-44 加密私有收藏合并成单个 `List<String>` 平铺、无分区无搜索。新增 `BookmarkEntry{id,public}` + `NostrActions.bookmarkEntries`，provider 改返回 `List<BookmarkEntry>`；`_BookmarksTab` 改 ConsumerStatefulWidget 加搜索框（300ms 去抖，按正文/作者名/标签过滤），分「公开书签 / 私人书签」两区（私有行加 🔒 徽），他人主页只显公开区。
+- **全局搜索转圈不出结果**：`searchPostsProvider`/`searchUsersProvider` 把结果写进本地 `StreamController ctrl`，但 `async*` 生成器**从未 `yield* ctrl.stream`**（兄弟 provider 都有）→ 用户搜索对非空 query 不发射任何值、StreamProvider 永停 loading、转圈不止。改标准模式：`done.future.whenComplete` 收尾关 ctrl + `ref.onDispose` 兜底 + `yield* ctrl.stream`，relay 命中随 250ms 去抖流式到达。
+- **文本选择菜单英文**：`MaterialApp.router` 未配 `localizationsDelegates`/`supportedLocales`，剪切/复制/粘贴工具栏回退英文。加 `flutter_localizations` 依赖 + Material/Widgets/Cupertino delegates，`supportedLocales=[zh_CN,en_US]` + 非 zh/en 设备默认中文。
+- **全局字号（设置 → 字号）**：新增 `TextScaleLevel{默认 1.0× / 大 1.2× / 较大 1.44×}`（每档放大 20%），持久化到本地 config，`MaterialApp.router` 用 `builder` 注入 `MediaQuery.textScaler` 全局生效；设置页加「字号」入口（底部单选 sheet）。
+- **分享按钮改系统分享**：原 `_share` 把 `https://njump.me/<note1>` 复制到剪贴板；改用 `share_plus` 的 `SharePlus.instance.share` 弹系统分享面板（桌面不支持则退回剪贴板）。
+- **编辑框 @提及显示昵称**：`_insertMention` 原插入裸 `nostr:npub1…`，编辑框里只见一串 npub。改为插入 NIP-27 markdown 链接 `[@昵称](nostr:npub1…)`，渲染为可点的「@昵称」；`p` tag 仍由 `_mentions` 在发送时发射，不受影响。
+- **编辑框草稿自动保存/恢复**：发帖/回帖写到一半异常退出或误按返回，内容会丢。新增草稿持久化——编辑框每次改动 300ms 去抖写入本地 config，退出（dispose）与应用进入后台（`AppLifecycleState.paused/inactive`，防 OS 后台杀）即时 flush，尽量保证最新数据；下次打开发帖/回复（按上下文分别 key：顶层 `compose_draft`、回复 `compose_draft:reply:<parentId>`、引用 `compose_draft:quote:<id>`）自动恢复文本 + 已上传附件（重建 NIP-92 imeta，图不重传）+ 从文本重解析 `@提及` 的 `p` tag；发送成功即清空草稿。
+
 ## 设计与交互
 
 - [docs/DESIGN.md](docs/DESIGN.md) —— 设计原则与交互规范（设计"宪法"）：用户定位、设计优先级（复刻 X app UI > 简约年轻 > 开箱即用 > 性能）、视觉语言（X 浅色基线：纯白底 + 黑主色，弃用 Material3 紫色）、Costr Logo 规范、4-tab + FAB 导航、通知中心数据源与界面、表情选择器（NIP-25/NIP-30）与转发/引用菜单、应用介绍页 / 新手引导、登录/注册/退出、搜索与主页筛选/关注分组、文案规范、性能约束。

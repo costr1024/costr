@@ -3,11 +3,35 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'providers.dart';
 import 'router.dart';
 import 'theme.dart';
+
+/// Material/Cupertino/Widgets localization delegates + supported locales.
+/// Without these, Flutter's built-in text-selection toolbar (剪切/复制/粘贴/
+/// 全选) and other Material widgets fall back to English. Costr is Chinese-
+/// first, so non-zh/en devices default to Chinese.
+const List<LocalizationsDelegate<dynamic>> _localizationsDelegates =
+    <LocalizationsDelegate<dynamic>>[
+  GlobalMaterialLocalizations.delegate,
+  GlobalWidgetsLocalizations.delegate,
+  GlobalCupertinoLocalizations.delegate,
+];
+
+const List<Locale> _supportedLocales = <Locale>[
+  Locale('zh', 'CN'),
+  Locale('en', 'US'),
+];
+
+Locale _localeResolutionCallback(Locale? device, Iterable<Locale> supported) {
+  for (final l in supported) {
+    if (l.languageCode == device?.languageCode) return l;
+  }
+  return const Locale('zh', 'CN');
+}
 
 class AppRoot extends ConsumerStatefulWidget {
   const AppRoot({super.key});
@@ -50,15 +74,25 @@ class _AppRootState extends ConsumerState<AppRoot> with WidgetsBindingObserver {
       loading: () => MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
+        localizationsDelegates: _localizationsDelegates,
+        supportedLocales: _supportedLocales,
+        localeResolutionCallback: _localeResolutionCallback,
         home: const _Splash(),
       ),
       error: (Object error, StackTrace _) => MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
+        localizationsDelegates: _localizationsDelegates,
+        supportedLocales: _supportedLocales,
+        localeResolutionCallback: _localeResolutionCallback,
         home: _ErrorView('$error'),
       ),
       data: (_) {
         final router = ref.watch(routerProvider);
+        // Global font scale (设置 → 字号): apply via MediaQuery.textScaler so
+        // all text (including the OS text-selection toolbar and Material
+        // widgets) scales uniformly. Rebuilds when the user picks a level.
+        final factor = ref.watch(textScaleFactorProvider);
         return MaterialApp.router(
           title: 'Costr',
           theme: AppTheme.light(),
@@ -66,6 +100,20 @@ class _AppRootState extends ConsumerState<AppRoot> with WidgetsBindingObserver {
           themeMode: ThemeMode.system,
           routerConfig: router,
           debugShowCheckedModeBanner: false,
+          localizationsDelegates: _localizationsDelegates,
+          supportedLocales: _supportedLocales,
+          localeResolutionCallback: _localeResolutionCallback,
+          builder: (BuildContext context, Widget? child) {
+            // Clamp to a sane range to avoid pathological overflow; the three
+            // levels (1.0/1.2/1.44) are all within bounds.
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(
+                textScaler: TextScaler.linear(factor.clamp(0.8, 2.0)),
+              ),
+              child: child!,
+            );
+          },
         );
       },
     );

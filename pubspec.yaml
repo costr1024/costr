@@ -78,6 +78,11 @@ dependencies:
   # Mobile: fingerprint/FaceID/device PIN. Desktop (Linux): unsupported → gated off.
   local_auth: ^2.3.0
   qr_flutter: ^4.1.0
+  # OS-native share sheet (post sharing via njump.me URLs).
+  share_plus: ^11.0.0
+  # Material/Cupertino localization delegates (Chinese text-selection toolbar etc.).
+  flutter_localizations:
+    sdk: flutter
 
 dev_dependencies:
   flutter_test:

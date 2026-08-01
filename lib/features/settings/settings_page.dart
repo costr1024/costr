@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../auth/login_page.dart' show showLogoutSheet;
 
@@ -13,11 +14,17 @@ class SettingsPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final level = ref.watch(textScaleProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
         children: [
           const _SectionHeader('通用'),
+          _Row(
+            title: '字号',
+            subtitle: '${level.label}（放大 ${(level.factor * 100).round()}%）',
+            onTap: () => _showTextScaleSheet(context, ref, level),
+          ),
           _Row(
             title: '通知',
             subtitle: '回复、喜欢、关注等',
@@ -55,6 +62,43 @@ class SettingsPage extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+
+  void _showTextScaleSheet(BuildContext context, WidgetRef ref, TextScaleLevel current) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('字号',
+                      style: Theme.of(context).textTheme.titleSmall),
+                ),
+              ),
+              for (final l in TextScaleLevel.values)
+                ListTile(
+                  onTap: () {
+                    ref.read(textScaleProvider.notifier).set(l);
+                    Navigator.pop(context);
+                  },
+                  leading: Icon(
+                    current == l ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  title: Text(l.label),
+                  subtitle: Text('放大 ${(l.factor * 100).round()}%'),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
   }
 }

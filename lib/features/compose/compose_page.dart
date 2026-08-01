@@ -7,6 +7,7 @@
 /// each becomes a NIP-92 imeta tag in the signed event.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -47,7 +48,8 @@ class _Attachment {
   final String kind; // 'image' | 'video' | 'file'
 }
 
-class _ComposePageState extends ConsumerState<ComposePage> {
+class _ComposePageState extends ConsumerState<ComposePage>
+    with WidgetsBindingObserver {
   final TextEditingController _controller = TextEditingController();
   final List<_Attachment> _attachments = [];
 
@@ -57,6 +59,20 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   bool _uploading = false;
   bool _sending = false;
   bool _nsfw = false;
+
+  /// Auto-saved editor draft. Survives crash / back so the user doesn't lose
+  /// an unsent post; cleared on successful send. Keyed per context — top-level
+  /// posts share one slot; a reply is keyed by its parent id, a quote by the
+  /// quoted post id — so a reply draft only restores when replying to the
+  /// same parent (otherwise the parent context is gone and the text is wrong).
+  Timer? _draftDebounce;
+  bool _loadingDraft = false;
+
+  String get _draftKey {
+    if (widget.replyTo != null) return 'compose_draft:reply:${widget.replyTo!.id}';
+    if (widget.quoteOf != null) return 'compose_draft:quote:${widget.quoteOf!.id}';
+    return 'compose_draft';
+  }
 
   static const int _softLimit = 280;
   static const int _maxImages = 9;
@@ -72,18 +88,145 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   void initState() {
     super.initState();
     _nsfw = ref.read(nsfwSettingsProvider).defaultComposeNsfw;
+    WidgetsBinding.instance.addObserver(this);
+    _controller.addListener(_onDraftChanged);
+    _loadDraft();
   }
 
   @override
   void dispose() {
+    // Flush any pending draft save so the last keystrokes survive a back/crash
+    // even if the debounce hadn't fired yet.
+    _draftDebounce?.cancel();
+    _flushDraft();
+    WidgetsBinding.instance.removeObserver(this);
+    _controller.removeListener(_onDraftChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The OS may background-kill the app at any point — flush the draft the
+    // instant we lose focus so the latest text survives, not just the last
+    // debounce window.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _flushDraft();
+    }
   }
 
   String get _hint {
     if (widget.replyTo != null) return '回复…';
     if (widget.quoteOf != null) return '引用评论…';
     return '有什么新鲜事？';
+  }
+
+  /// Restore the last auto-saved draft into the editor. Restores text +
+  /// attachments + re-derives [_mentions] from the text so the NIP-27 `p`
+  /// tags are still emitted on send.
+  Future<void> _loadDraft() async {
+    try {
+      final db = await ref.read(localCacheProvider.future);
+      final raw = await db.readConfig(_draftKey);
+      if (raw == null || raw.isEmpty || !mounted) return;
+      _loadingDraft = true;
+      _deserializeDraft(raw);
+      _loadingDraft = false;
+    } catch (_) {
+      _loadingDraft = false;
+    }
+  }
+
+  void _onDraftChanged() {
+    // Skip the save that the load itself triggers (it would just rewrite the
+    // same value, and worse, race the load on some platforms).
+    if (_loadingDraft) return;
+    _draftDebounce?.cancel();
+    // Short debounce: coalesce rapid keystrokes but keep the persisted copy
+    // close to the latest text (the dispose + lifecycle flushes cover the
+    // exit cases).
+    _draftDebounce = Timer(const Duration(milliseconds: 300), _saveDraft);
+  }
+
+  /// Serialize the current editor text + uploaded attachments as a JSON blob.
+  /// Persisting attachments (not just text) means a restored draft regenerates
+  /// the NIP-92 imeta tags too, so the post is identical to what the user
+  /// abandoned — images re-attach without re-uploading.
+  String _serializeDraft() {
+    return jsonEncode(<String, dynamic>{
+      'text': _controller.text,
+      'attachments': <Map<String, String?>>[
+        for (final a in _attachments)
+          <String, String?>{
+            'url': a.url,
+            'sha256': a.sha256,
+            'mime': a.mime,
+            'name': a.name,
+            'kind': a.kind,
+          },
+      ],
+    });
+  }
+
+  void _deserializeDraft(String raw) {
+    final map = jsonDecode(raw);
+    if (map is! Map<String, dynamic>) return;
+    final text = map['text'] as String? ?? '';
+    final list = map['attachments'] as List? ?? <Object?>[];
+    _attachments.clear();
+    for (final e in list) {
+      if (e is Map<String, dynamic>) {
+        _attachments.add(_Attachment(
+          url: e['url'] as String? ?? '',
+          sha256: e['sha256'] as String? ?? '',
+          mime: e['mime'] as String? ?? '',
+          name: e['name'] as String? ?? '',
+          kind: e['kind'] as String? ?? 'file',
+        ));
+      }
+    }
+    _controller.text = text;
+    _reparseMentions(text);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _saveDraft() async {
+    try {
+      final db = await ref.read(localCacheProvider.future);
+      await db.writeConfig(_draftKey, _serializeDraft());
+    } catch (_) {}
+  }
+
+  /// Fire-and-forget flush — best-effort final save so the last keystrokes
+  /// (within the debounce window) survive a back, app-pause, or crash. Uses
+  /// the synchronously-available cache value; if the cache isn't ready yet
+  /// the periodic saves during editing cover it.
+  void _flushDraft() {
+    final db = ref.read(localCacheProvider).value;
+    if (db == null) return;
+    unawaited(db.writeConfig(_draftKey, _serializeDraft()));
+  }
+
+  /// Re-derive [_mentions] from any `nostr:npub1…` / `nostr:nprofile1…`
+  /// references embedded in the text (e.g. inside restored markdown mention
+  /// links `[@name](nostr:npub1…)`) so the send path still emits their `p`
+  /// tags after a draft restore.
+  void _reparseMentions(String text) {
+    final re = RegExp(
+      r'(?:nostr:)?(?:npub1|nprofile1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}',
+    );
+    for (final m in re.allMatches(text)) {
+      final pk = entityToPubkeyHex(m.group(0)!);
+      if (pk != null && pk.isNotEmpty) _mentions.add(pk);
+    }
+  }
+
+  Future<void> _deleteDraft() async {
+    try {
+      final db = await ref.read(localCacheProvider.future);
+      await db.writeConfig(_draftKey, '');
+    } catch (_) {}
   }
 
   /// Append a URL to the editor text as a bare URL (one per line, maximum
@@ -334,7 +477,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
   void _insertMention(KnownUser user, int atStart) {
     final npub = hexToNpub(user.pubkey);
-    final insert = 'nostr:$npub ';
+    // Insert a NIP-27 markdown mention link so the editor shows "@昵称"
+    // (rendered by MarkdownContent as a clickable mention) instead of the
+    // raw `nostr:npub1…` entity. The `p` tag is still emitted on send from
+    // [_mentions]; the link target carries the npub for clients that parse
+    // content for `nostr:` references.
+    final insert = '[@${user.label}](nostr:$npub) ';
     final text = _controller.text;
     final caret = _controller.selection.baseOffset;
     final end = caret.clamp(0, text.length);
@@ -411,6 +559,9 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       // userPostsProvider is non-autoDispose so it wouldn't re-run on its own.
       if (ok.ok) {
         ref.invalidate(userPostsProvider(identity.pubkeyHex));
+        // Sent successfully → clear the editor draft so it isn't restored
+        // next time the user opens compose.
+        unawaited(_deleteDraft());
       }
       if (ok.ok && context.mounted) context.pop();
     } catch (e) {
