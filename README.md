@@ -98,6 +98,11 @@ Android、iOS、Windows、macOS、Linux 五端。
 - **提及名实时更新**：`_ComposePageState.build` 对 `_mentions` 里每个 pubkey `ref.watch(metadataProvider(pk))`，kind-0 元数据到达即重建 → builder 重跑 → chip 从占位 `@npub1…` 刷新成真实 `@昵称`。
 - **插入带 relay hint 的 nprofile + p tag**：`_insertMention` 改为插裸 `nostr:nprofile1…` 实体（`hexToNprofile` 带该用户 NIP-65 中继 TLV，同步从 5 分钟内存缓存/SQLite 冷启读取）；`_send` 的 NIP-27 `p` tag 第三字段填同源 relay hint（未知则空串，与 Amethyst 同形）。
 
+### feat（媒体查看器：图片 pinch-zoom 全屏 + 多图画廊 + 视频全屏）
+
+- **帖子图片此前点不开**：`_ImageGrid`/`_SingleImage` 是纯 `CachedNetworkImage` 缩略图，点按无反应。新增 `lib/widgets/media_viewer_page.dart`：点图进入全屏黑底查看页，用 Flutter 自带 `InteractiveViewer`（min 0.5×/max 4×、`boundaryMargin: infinity` 可拖出边缘看细节）做 pinch-zoom——不引 `photo_view`（其最新版停在 2 年前 0.15.0，存在与 Flutter 3.44 的版本漂移风险），用内置组件零新依赖、更稳。多图帖子用 `PageView` 左右滑画廊，顶部 `1/N` 计数 + 关闭按钮，点图切换控件显隐，黑底 fade 转场（不走 Hero——`CachedNetworkImage` 尺寸异步未知，Hero 会闪）。
+- **视频全屏**：`lib/widgets/fullscreen_video_page.dart` 独立控制器（与内联 `NetworkVideo` 隔离，零回归风险），从内联当前播放点续播，移动端锁横屏（`SystemChrome.setPreferredOrientations`，dispose 还原全方向，桌面无副作用），黑底 + 播放/暂停 + 关闭。内联 `NetworkVideo` 加右上角全屏按钮，进入时暂停内联（避免同一片段双音频）。
+
 ## 设计与交互
 
 - [docs/DESIGN.md](docs/DESIGN.md) —— 设计原则与交互规范（设计"宪法"）：用户定位、设计优先级（复刻 X app UI > 简约年轻 > 开箱即用 > 性能）、视觉语言（X 浅色基线：纯白底 + 黑主色，弃用 Material3 紫色）、Costr Logo 规范、4-tab + FAB 导航、通知中心数据源与界面、表情选择器（NIP-25/NIP-30）与转发/引用菜单、应用介绍页 / 新手引导、登录/注册/退出、搜索与主页筛选/关注分组、文案规范、性能约束。

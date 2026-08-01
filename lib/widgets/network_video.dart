@@ -5,6 +5,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import 'fullscreen_video_page.dart';
+
 class NetworkVideo extends StatefulWidget {
   const NetworkVideo({super.key, required this.url, this.width, this.height});
 
@@ -49,6 +51,16 @@ class _NetworkVideoState extends State<NetworkVideo> {
     });
   }
 
+  Future<void> _enterFullscreen() async {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    final pos = c.value.position;
+    // Pause the inline player so the same clip isn't audible twice while the
+    // fullscreen page (its own controller) is open.
+    c.pause();
+    await pushFullscreenVideo(context, url: widget.url, startPosition: pos);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_error) {
@@ -82,7 +94,35 @@ class _NetworkVideoState extends State<NetworkVideo> {
                 onPressed: _togglePlay,
               ),
             ),
+            // Fullscreen affordance (top-right). The fullscreen page owns its
+            // own controller and starts from the inline's current position.
+            Positioned(
+              top: 4,
+              right: 4,
+              child: _FullscreenButton(onTap: _enterFullscreen),
+            ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FullscreenButton extends StatelessWidget {
+  const _FullscreenButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black38,
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: const Padding(
+          padding: EdgeInsets.all(6),
+          child: Icon(Icons.fullscreen_rounded, color: Colors.white, size: 20),
         ),
       ),
     );

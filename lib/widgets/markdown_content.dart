@@ -24,6 +24,7 @@ import '../models/event.dart';
 import '../utils/nav.dart';
 import '../utils/nip19.dart';
 import 'avatar.dart';
+import 'media_viewer_page.dart';
 import 'mention_linkifier.dart';
 import 'network_video.dart';
 
@@ -51,10 +52,8 @@ final RegExp _eventEntityRegex = RegExp(
 /// blank line. Replace each empty line with a zero-width space (non-whitespace
 /// → not a blank line → no paragraph split). Pair with `softLineBreak: true`
 /// on MarkdownBody so single `\n` also render as line breaks.
-String _preserveBlankLines(String s) => s
-    .split('\n')
-    .map((l) => l.trim().isEmpty ? '​' : l)
-    .join('\n');
+String _preserveBlankLines(String s) =>
+    s.split('\n').map((l) => l.trim().isEmpty ? '​' : l).join('\n');
 
 /// Bare media URLs in content (image/video/file extensions) — stripped from
 /// text segments so they don't show as plain text; rendered via imeta extra
@@ -134,7 +133,9 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       if (id.isNotEmpty && seenRef.add(id)) referencedIds.add(id);
     }
     for (final t in event.tags) {
-      if (t.length >= 4 && t[0] == 'e' && t[3] == 'mention' &&
+      if (t.length >= 4 &&
+          t[0] == 'e' &&
+          t[3] == 'mention' &&
           seenRef.add(t[1].toString())) {
         referencedIds.add(t[1].toString());
       }
@@ -165,18 +166,16 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     final emojiUrlSet = emojiMap.values.toSet();
     String replaceEmoji(String text) {
       if (emojiMap.isEmpty) return text;
-      return text.replaceAllMapped(
-        RegExp(r':([a-zA-Z0-9_+-]+):'),
-        (Match m) {
-          final url = emojiMap[m[1]];
-          return url == null ? m[0]! : '![${m[1]}]($url)';
-        },
-      );
+      return text.replaceAllMapped(RegExp(r':([a-zA-Z0-9_+-]+):'), (Match m) {
+        final url = emojiMap[m[1]];
+        return url == null ? m[0]! : '![${m[1]}]($url)';
+      });
     }
 
     Widget sizedImageBuilder(MarkdownImageConfig c) {
       // Inline custom-emoji image: render small so it sits inline with text.
-      final isEmoji = (c.alt != null && emojiMap.containsKey(c.alt!)) ||
+      final isEmoji =
+          (c.alt != null && emojiMap.containsKey(c.alt!)) ||
           emojiUrlSet.contains(c.uri.toString());
       if (isEmoji) {
         return ClipRRect(
@@ -187,8 +186,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
             height: 22,
             fit: BoxFit.cover,
             gaplessPlayback: true,
-            errorBuilder: (_, Object e, _) =>
-                Text(':${c.alt ?? ''}:'),
+            errorBuilder: (_, Object e, _) => Text(':${c.alt ?? ''}:'),
           ),
         );
       }
@@ -479,24 +477,37 @@ class _ImageGrid extends StatelessWidget {
       mainAxisSpacing: 4,
       crossAxisSpacing: 4,
       childAspectRatio: 1,
-      children: [for (final u in urls) _GridThumb(url: u)],
+      children: [
+        for (var i = 0; i < urls.length; i++)
+          _GridThumb(url: urls[i], urls: urls, index: i),
+      ],
     );
   }
 }
 
 class _GridThumb extends StatelessWidget {
-  const _GridThumb({required this.url});
+  const _GridThumb({
+    required this.url,
+    required this.urls,
+    required this.index,
+  });
   final String url;
+  final List<String> urls;
+  final int index;
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: CachedNetworkImage(
-        imageUrl: url,
-        fit: BoxFit.cover,
-        placeholder: (BuildContext _, String _) => const _Placeholder(),
-        errorWidget: (BuildContext _, String _, Object _) => const _ErrorBox(),
+    return GestureDetector(
+      onTap: () => pushMediaViewer(context, images: urls, initialIndex: index),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: CachedNetworkImage(
+          imageUrl: url,
+          fit: BoxFit.cover,
+          placeholder: (BuildContext _, String _) => const _Placeholder(),
+          errorWidget: (BuildContext _, String _, Object _) =>
+              const _ErrorBox(),
+        ),
       ),
     );
   }
@@ -508,16 +519,19 @@ class _SingleImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: CachedNetworkImage(
-        imageUrl: url,
-        width: double.infinity,
-        fit: BoxFit.contain,
-        placeholder: (BuildContext _, String _) =>
-            const _Placeholder(aspect: 16 / 9),
-        errorWidget: (BuildContext _, String _, Object _) =>
-            const _ErrorBox(aspect: 16 / 9),
+    return GestureDetector(
+      onTap: () => pushMediaViewer(context, images: [url]),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: CachedNetworkImage(
+          imageUrl: url,
+          width: double.infinity,
+          fit: BoxFit.contain,
+          placeholder: (BuildContext _, String _) =>
+              const _Placeholder(aspect: 16 / 9),
+          errorWidget: (BuildContext _, String _, Object _) =>
+              const _ErrorBox(aspect: 16 / 9),
+        ),
       ),
     );
   }
@@ -664,9 +678,7 @@ class _NonPostRefLabel extends StatelessWidget {
     final (label, icon) = switch (ev.kind) {
       7 => (
         '引用了一个赞',
-        ev.content.isNotEmpty && ev.content.length <= 8
-            ? ev.content
-            : '👍',
+        ev.content.isNotEmpty && ev.content.length <= 8 ? ev.content : '👍',
       ),
       3 => ('引用了联系人列表', '👥'),
       _ => ('引用了类型 ${ev.kind} 的事件', '📎'),
@@ -686,7 +698,9 @@ class _NonPostRefLabel extends StatelessWidget {
           const SizedBox(width: 5),
           Text(
             label,
-            style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.text3),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: CostrColors.text3,
+            ),
           ),
         ],
       ),
