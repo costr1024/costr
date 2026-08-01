@@ -12,6 +12,11 @@ Android、iOS、Windows、macOS、Linux 五端。
 > 0.1 beta 为首个公开测试版。Android 包 `applicationId = com.costr.costr`，
 > 用正式 release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中
 > 允许「未知来源」。桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
+>
+> **修复（beta 重新打包）**：初版 release APK 的 `AndroidManifest.xml` 缺
+> `INTERNET` 权限（仅 debug 变体声明），导致 release 包连不上任何中继、debug 包正常。
+> 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效——选图/选视频/
+> 选文件上传走 SAF 系统选择器，无需额外存储或相机权限。
 
 ## 当前状态
 

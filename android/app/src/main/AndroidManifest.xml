@@ -52,4 +52,10 @@
          private key in account backup. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
+
+    <!-- INTERNET is required to reach Nostr relays. Declared in the main
+         manifest (not just src/debug) so release builds also have it —
+         otherwise a release APK cannot open any socket and silently
+         fails to connect to every relay. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
 </manifest>
