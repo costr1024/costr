@@ -20,6 +20,7 @@ import '../utils/nip19.dart';
 import '../nostr/actions.dart';
 import '../nostr/event_store.dart';
 import '../nostr/identity.dart';
+import '../nostr/outbox_router.dart';
 import '../nostr/relay_client.dart';
 import '../nostr/relay_pool.dart';
 import '../services/local_cache.dart' as cache;
@@ -603,15 +604,21 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   }
 
   /// Add an externally-fetched event to the in-memory store + SQLite. Used by
-  /// [RelayPool.fetchFromUrls] (NIP-65 outbox routing): those events bypass
-  /// the pool's merged stream, so the normal [pool.events] listener never
-  /// sees them — ingest them here so the rest of the app (feed, detail pages,
-  /// replies) finds them, and persist so a later visit is instant. Persists
-  /// regardless of social-graph membership, like [cacheThreadEvent] (the user
-  /// opened the profile, so cache its posts).
+  /// [RelayPool.fetchFromUrls] (NIP-65 outbox routing) and [OutboxRouter]
+  /// (following-feed outbox routing): those events bypass the pool's merged
+  /// stream, so the normal [pool.events] listener never sees them — ingest
+  /// them here so the rest of the app (feed, detail pages, replies) finds
+  /// them, and persist so a later visit is instant. Persists regardless of
+  /// social-graph membership, like [cacheThreadEvent] (the user opened the
+  /// profile / follows the author, so cache its posts).
+  ///
+  /// Throttled via [_scheduleFlush] (200ms) instead of emitting `state`
+  /// synchronously: the following feed can burst hundreds of outbox events on
+  /// load/refresh, and a per-event rebuild would jank the ListView. The main
+  /// pool listener already throttles the same way; ingest now matches it.
   Future<void> ingest(Event e) async {
     if (_store.add(e)) {
-      state = _store.events;
+      _scheduleFlush();
       unawaited(cacheThreadEvent(e));
     }
   }
@@ -1232,6 +1239,13 @@ final followingStateProvider =
 /// A void provider that, when watched, keeps the active feed REQ alive. It
 /// rebuilds (closing the old sub via onDispose, opening a new one) whenever
 /// feed mode, identity, or the follows list changes.
+///
+/// Owns the **global** feed REQ only. In **following** mode it is a no-op —
+/// the following feed is driven by [followingOutboxProvider] (NIP-65 outbox
+/// routing per followee), not a default-relay broadcast. Keeping the broadcast
+/// out of following mode avoids fetching followee events from relays that may
+/// not carry them (a followee who posts only to their own outbox would
+/// otherwise never appear).
 final feedSubscriptionProvider = Provider<void>((ref) {
   final mode = ref.watch(feedModeProvider);
   final identity = ref.watch(identityProvider).value;
@@ -1240,9 +1254,8 @@ final feedSubscriptionProvider = Provider<void>((ref) {
 
   if (identity == null) return;
 
-  // In following mode with no follows yet, there's nothing to fetch — wait for
-  // the kind-3 to resolve. onDispose still cleans up when state changes.
-  if (mode == FeedMode.following && follows.isEmpty) return;
+  // Following mode → outbox provider owns the feed; nothing to broadcast.
+  if (mode == FeedMode.following) return;
 
   final subId = nextSubId('feed');
   // Keep subscription open (no closeOnEose) so live reactions (kind-7) +
@@ -1252,11 +1265,156 @@ final feedSubscriptionProvider = Provider<void>((ref) {
   ref.onDispose(() => pool.closeSubscription(subId));
 });
 
+/// Build the NIP-65 outbox routing map for [follows]: relay URL → the
+/// followees whose kind-10002 `read` markers include that relay. Followees
+/// with no published relay list (or whose relays were all pushed out by the
+/// [maxOutboxConnections] cap) are returned in [defaultBucket] — those are
+/// served by a default-relay broadcast (the old path, unchanged behavior for
+/// them). Resolves each followee's [userRelayListProvider] in parallel; the
+/// 5-min memory TTL + SQLite cold-start hydrate make repeat builds cheap.
+class OutboxMap {
+  const OutboxMap(this.relayToAuthors, this.defaultBucket);
+  final Map<String, List<String>> relayToAuthors;
+  final List<String> defaultBucket;
+}
+
+Future<OutboxMap> buildOutboxMap(
+  Future<RelayList?> Function(String pubkey) resolveRelayList,
+  List<String> follows,
+) async {
+  // Resolve every followee's NIP-65 relay list in parallel.
+  final lists = await Future.wait(follows.map(resolveRelayList));
+  // Bucket each followee by their outbox relays.
+  final relayToAuthors = <String, List<String>>{};
+  final defaultBucket = <String>[];
+  for (var i = 0; i < follows.length; i++) {
+    final pk = follows[i];
+    final read = lists[i]?.read ?? const <String>[];
+    if (read.isEmpty) {
+      defaultBucket.add(pk);
+      continue;
+    }
+    for (final url in read) {
+      relayToAuthors.putIfAbsent(url, () => []).add(pk);
+    }
+  }
+  // Cap persistent outbox connections: keep the top-N relays by followee
+  // count; followees whose relays ALL fell out of the top-N go to the default
+  // bucket (so no followee is silently dropped — they fall back to broadcast).
+  if (relayToAuthors.length > maxOutboxConnections) {
+    final ranked = relayToAuthors.entries.toList()
+      ..sort((a, b) => b.value.length.compareTo(a.value.length));
+    final kept = ranked.take(maxOutboxConnections).map((e) => e.key).toSet();
+    final dropped = <String>{};
+    relayToAuthors.removeWhere((url, authors) {
+      if (kept.contains(url)) return false;
+      // A followee may be on multiple outbox relays; only move them to the
+      // default bucket if ALL their relays were dropped.
+      for (final pk in authors) {
+        // Is this pk on any kept relay? If not, fall back to broadcast.
+        final stillServed = relayToAuthors.entries.any(
+          (e) => kept.contains(e.key) && e.value.contains(pk),
+        );
+        if (!stillServed && !defaultBucket.contains(pk)) {
+          defaultBucket.add(pk);
+        }
+      }
+      dropped.add(url);
+      return true;
+    });
+  }
+  return OutboxMap(relayToAuthors, defaultBucket);
+}
+
+/// Drives the **following** feed via NIP-65 outbox routing. A void provider
+/// (kept alive by [currentFeedEventsProvider]); rebuilds — tearing down the
+/// old [OutboxRouter] + default-bucket sub via onDispose — when feed mode,
+/// identity, or the follows list changes. Events from the outbox tier are
+/// ingested into [EventStoreNotifier] (the same store
+/// [currentFeedEventsProvider] reads), so the existing following-mode filter
+/// (`follows.contains(pubkey)`) surfaces them with no UI change.
+final followingOutboxProvider = Provider<void>((ref) {
+  final mode = ref.watch(feedModeProvider);
+  final identity = ref.watch(identityProvider).value;
+  final follows = ref.watch(followingStateProvider).value ?? const <String>[];
+  if (identity == null || mode != FeedMode.following || follows.isEmpty) {
+    return;
+  }
+
+  final pool = ref.watch(relayPoolProvider);
+  final store = ref.read(eventStoreProvider.notifier);
+
+  // `since` incremental refresh: only request events newer than the newest
+  // followee post we already hold. Cold start (none held) → omit `since`,
+  // cold-load limit 200 (OutboxRouter.start raises to 500 when since is set,
+  // so a long absence doesn't lose a prolific followee's posts beyond 200).
+  final held = ref.read(eventStoreProvider);
+  final followsSet = follows.toSet();
+  var newest = 0;
+  for (final e in held) {
+    if (followsSet.contains(e.pubkey) && e.createdAt > newest) {
+      newest = e.createdAt;
+    }
+  }
+
+  final router = OutboxRouter(
+    makeClient: RelayClient.new,
+    // Capture identity at build; the provider rebuilds on identity change so the
+    // router's lifetime always sees the current key. Avoids touching [ref] from
+    // a relay's late NIP-42 AUTH callback after the provider may be disposed.
+    identityGetter: () => identity,
+  );
+
+  // The default-bucket subId isn't known until the async buildOutboxMap
+  // resolves, but onDispose must be registered synchronously during build.
+  // Capture it in a mutable holder the disposer reads at teardown.
+  String? defaultSubId;
+  ref.onDispose(() {
+    router.close();
+    final sid = defaultSubId;
+    if (sid != null) pool.closeSubscription(sid);
+  });
+
+  // Fire-and-forget the async build+start; the provider stays alive while
+  // watched. The onDispose above closes the router + default sub when
+  // mode/follows change. Guard every [ref] use after an await with mounted —
+  // the provider may be disposed (mode switch) during the network round-trip.
+  () async {
+    final map = await buildOutboxMap(
+      (pk) => ref.read(userRelayListProvider(pk).future),
+      follows,
+    );
+    if (!ref.mounted) return; // disposed during the relay-list lookups
+    await router.start(
+      map.relayToAuthors,
+      since: newest > 0 ? newest : null,
+      onEvent: (e) => store.ingest(e),
+    );
+    if (!ref.mounted) return; // disposed while opening outbox connections
+    // Default bucket: followees with no usable outbox → broadcast to the main
+    // pool (the old behavior). Live, so new posts/reactions stream in.
+    if (map.defaultBucket.isNotEmpty) {
+      final subId = nextSubId('feed-follows');
+      final filter = <String, dynamic>{
+        'kinds': [0, 1, 6, 7],
+        'authors': List<String>.from(map.defaultBucket),
+        'limit': newest > 0 ? 500 : 200,
+      };
+      if (newest > 0) filter['since'] = newest;
+      pool.request(subId, filter, closeOnEose: false);
+      defaultSubId = subId;
+    }
+  }();
+});
+
 // --- Current feed events (derived) -----------------------------------------
 
 final currentFeedEventsProvider = Provider<List<Event>>((ref) {
-  // Watching this keeps the feed subscription alive.
+  // Watching this keeps the feed subscription alive. In following mode the
+  // outbox provider drives the fetch; in global mode the subscription provider
+  // does. Both are watched unconditionally (each is a no-op when inactive).
   ref.watch(feedSubscriptionProvider);
+  ref.watch(followingOutboxProvider);
   final all = ref.watch(eventStoreProvider);
   final mode = ref.watch(feedModeProvider);
   final lang = ref.watch(languageFilterProvider);

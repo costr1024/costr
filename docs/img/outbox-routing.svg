@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 220" width="420" height="220" font-family="system-ui,sans-serif">
+  <rect width="420" height="220" fill="#FFFFFF"/>
+  <text x="210" y="22" font-size="13" font-weight="600" fill="#0F1419" text-anchor="middle">关注 tab：按 followee 的 outbox 定向拉取</text>
+  <!-- you -->
+  <rect x="20" y="80" width="90" height="50" rx="10" fill="#0F1419"/>
+  <text x="65" y="100" font-size="12" fill="#FFFFFF" text-anchor="middle">Costr</text>
+  <text x="65" y="118" font-size="10" fill="#B0B8BF" text-anchor="middle">关注 3 人</text>
+  <!-- outbox relays -->
+  <rect x="170" y="40" width="100" height="40" rx="8" fill="#F7F9F9" stroke="#EFF3F4"/>
+  <text x="220" y="58" font-size="11" fill="#0F1419" text-anchor="middle">nos.lol</text>
+  <text x="220" y="72" font-size="9" fill="#536471" text-anchor="middle">followee A、C</text>
+  <rect x="170" y="92" width="100" height="40" rx="8" fill="#F7F9F9" stroke="#EFF3F4"/>
+  <text x="220" y="110" font-size="11" fill="#0F1419" text-anchor="middle">damus.io</text>
+  <text x="220" y="124" font-size="9" fill="#536471" text-anchor="middle">followee B</text>
+  <rect x="170" y="144" width="100" height="40" rx="8" fill="#F7F9F9" stroke="#EFF3F4"/>
+  <text x="220" y="162" font-size="11" fill="#0F1419" text-anchor="middle">默认中继（回落）</text>
+  <text x="220" y="176" font-size="9" fill="#536471" text-anchor="middle">无 kind-10002 的人</text>
+  <!-- arrows -->
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6z" fill="#536471"/></marker></defs>
+  <g stroke="#536471" stroke-width="1" fill="none" marker-end="url(#a)">
+    <path d="M110 100 C 140 70, 150 60, 170 58"/>
+    <path d="M110 105 C 140 105, 150 110, 170 110"/>
+    <path d="M110 115 C 140 150, 150 160, 170 162"/>
+  </g>
+  <text x="300" y="62" font-size="10" fill="#536471">← A 的帖子</text>
+  <text x="300" y="114" font-size="10" fill="#536471">← B 的帖子</text>
+  <text x="300" y="166" font-size="10" fill="#536471">← 广播兜底</text>
+  <text x="210" y="205" font-size="10" fill="#536471" text-anchor="middle">OutboxRouter 开持久连接，按中继分组、上限 30、live 不 close-on-EOSE</text>
+</svg>

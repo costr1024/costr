@@ -2,6 +2,8 @@
 /// and load-more on scroll.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +11,8 @@ import 'package:go_router/go_router.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
+import '../../nostr/outbox_router.dart';
+import '../../nostr/relay_client.dart';
 import '../../nostr/relay_pool.dart';
 import '../../widgets/costr_logo.dart';
 import 'event_card.dart';
@@ -64,6 +68,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   /// the pending posts and jumps to the top. `null` = live (no freeze).
   int? _barrierCreatedAt;
   String? _barrierId;
+
   /// Ids of the events visible at the moment the freeze was set. While frozen,
   /// only these (plus strictly older posts from `_loadMore`) stay visible;
   /// everything that arrives after the freeze is held back as pending — even
@@ -103,9 +108,16 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   }
 
   Future<void> _refresh() async {
-    // Re-issue the feed subscription (closes the old sub, opens a new one).
+    // Re-issue the feed fetch (closes the old sub/router, opens a new one).
+    // Following mode → outbox router rebuilds with a `since`增量 cursor;
+    // global mode → default-relay broadcast re-issues.
     _release();
-    ref.invalidate(feedSubscriptionProvider);
+    final mode = ref.read(feedModeProvider);
+    if (mode == FeedMode.following) {
+      ref.invalidate(followingOutboxProvider);
+    } else {
+      ref.invalidate(feedSubscriptionProvider);
+    }
     // Show the spinner briefly while relays respond.
     await Future<void>.delayed(const Duration(milliseconds: 1200));
   }
@@ -120,14 +132,91 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final oldest = events
         .map((e) => e.createdAt)
         .reduce((a, b) => a < b ? a : b);
-    final filter = buildFeedFilter(mode, follows);
-    filter['until'] = oldest - 1;
+    final until = oldest - 1;
     setState(() => _loadingMore = true);
+    try {
+      if (mode == FeedMode.following) {
+        await _loadMoreFollowing(follows, until);
+      } else {
+        await _loadMoreGlobal(until);
+      }
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  /// Global load-more: backward page (until = oldest-1) broadcast to the main
+  /// pool. Resolves on the first relay EOSE so a slow relay doesn't stall the
+  /// snapshot (the pool's closeOnEose waits ALL; we resolve locally first).
+  Future<void> _loadMoreGlobal(int until) async {
     final pool = ref.read(relayPoolProvider);
+    final follows = ref.read(followingStateProvider).value ?? const <String>[];
+    final filter = buildFeedFilter(FeedMode.global, follows);
+    filter['until'] = until;
     final subId = nextSubId('more');
+    final done = Completer<void>();
+    final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+      if (!done.isCompleted) done.complete();
+    });
     pool.request(subId, filter, closeOnEose: true);
-    await Future<void>.delayed(const Duration(seconds: 2));
-    if (mounted) setState(() => _loadingMore = false);
+    final t = Timer(const Duration(seconds: 5), () {
+      if (!done.isCompleted) done.complete();
+    });
+    await done.future;
+    t.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+  }
+
+  /// Following load-more: backward page via NIP-65 outbox routing. Builds the
+  /// same relay→authors map the live subscription uses, then opens TRANSIENT
+  /// outbox clients (close on EOSE) with `until` to back-fill older posts
+  /// directly from each followee's outbox relays. Default-bucket followees
+  /// (no usable outbox) fall back to a broadcast `until` page on the main
+  /// pool. Events stream into the store via [ingest] as they arrive.
+  Future<void> _loadMoreFollowing(List<String> follows, int until) async {
+    final store = ref.read(eventStoreProvider.notifier);
+    final map = await buildOutboxMap(
+      (pk) => ref.read(userRelayListProvider(pk).future),
+      follows,
+    );
+    final router = OutboxRouter(
+      makeClient: RelayClient.new,
+      identityGetter: () => ref.read(identityProvider).value,
+    );
+    // Outbox tier: one-shot fetch with `until`. onEvent ingests as they arrive
+    // (debounced by EventStoreNotifier's _scheduleFlush), so the UI fills in
+    // live instead of waiting for the whole batch.
+    await router.fetchOnce(
+      map.relayToAuthors,
+      until: until,
+      onEvent: (e) => store.ingest(e),
+    );
+    await router.close();
+    // Default bucket: broadcast `until` page to the main pool, resolve on
+    // first EOSE (same pattern as _loadMoreGlobal).
+    if (map.defaultBucket.isNotEmpty) {
+      final pool = ref.read(relayPoolProvider);
+      final filter = <String, dynamic>{
+        'kinds': [0, 1, 6, 7],
+        'authors': List<String>.from(map.defaultBucket),
+        'limit': 200,
+        'until': until,
+      };
+      final subId = nextSubId('more-follows');
+      final done = Completer<void>();
+      final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+        if (!done.isCompleted) done.complete();
+      });
+      pool.request(subId, filter, closeOnEose: true);
+      final t = Timer(const Duration(seconds: 5), () {
+        if (!done.isCompleted) done.complete();
+      });
+      await done.future;
+      t.cancel();
+      await eoseSub.cancel();
+      pool.closeSubscription(subId);
+    }
   }
 
   @override
@@ -329,7 +418,8 @@ class _FollowingFilterButton extends ConsumerWidget {
     final me = identity?.pubkeyHex;
     final groups = me == null
         ? const <FollowGroup>[]
-        : (ref.watch(userGroupedFollowsProvider(me)).value ?? const <FollowGroup>[]);
+        : (ref.watch(userGroupedFollowsProvider(me)).value ??
+              const <FollowGroup>[]);
     final tags = me == null
         ? const <String>[]
         : (ref.watch(followedTagsProvider).value ?? const <String>[]);
@@ -366,8 +456,10 @@ class _FollowingFilterButton extends ConsumerWidget {
           value: '',
           child: Row(
             children: [
-              Icon(ff == null ? Icons.check : Icons.check_box_outline_blank,
-                  size: 18),
+              Icon(
+                ff == null ? Icons.check : Icons.check_box_outline_blank,
+                size: 18,
+              ),
               const SizedBox(width: 8),
               const Text('全部关注'),
             ],
@@ -380,12 +472,16 @@ class _FollowingFilterButton extends ConsumerWidget {
               value: 'group:${g.name}',
               child: Row(
                 children: [
-                  Icon(ff == 'group:${g.name}' ? Icons.check : Icons.label_outline,
-                      size: 18),
+                  Icon(
+                    ff == 'group:${g.name}' ? Icons.check : Icons.label_outline,
+                    size: 18,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(child: Text(g.name)),
-                  Text('${g.pubkeys.length}',
-                      style: Theme.of(ctx).textTheme.labelSmall),
+                  Text(
+                    '${g.pubkeys.length}',
+                    style: Theme.of(ctx).textTheme.labelSmall,
+                  ),
                 ],
               ),
             ),
