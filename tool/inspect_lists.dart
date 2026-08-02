@@ -99,9 +99,13 @@ Future<void> main(List<String> args) async {
             String? dv, nm, cl;
             for (final t in (ev['tags'] as List).cast<List>()) {
               if (t.isEmpty) continue;
-              if (t[0] == 'd' && dv == null) dv = '${t[1]}';
-              else if (t[0] == 'name' && nm == null) nm = '${t[1]}';
-              else if (t[0] == 'client' && cl == null) cl = '${t[1]}';
+              if (t[0] == 'd' && dv == null) {
+                dv = '${t[1]}';
+              } else if (t[0] == 'name' && nm == null) {
+                nm = '${t[1]}';
+              } else if (t[0] == 'client' && cl == null) {
+                cl = '${t[1]}';
+              }
             }
             print(
               'kind=${ev['kind']} d=$dv name=$nm client=$cl '
