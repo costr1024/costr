@@ -5,6 +5,8 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +15,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
+import '../../services/local_cache.dart' as cache;
 import '../../utils/nav.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
@@ -41,9 +44,11 @@ class NotificationItem {
   final int extraCount;
   final int time;
   final String? preview;
+
   /// The event the notification points at: for replies/reactions/reposts the
   /// user's own post that was interacted with; null for pure mentions.
   final String? targetEventId;
+
   /// The id of the event that *triggered* the notification (the mentioner's
   /// own post, the reply, etc.). Used as a navigation fallback for mentions,
   /// which have no `targetEventId` — tapping a mention opens this post.
@@ -85,23 +90,17 @@ final notificationsProvider =
       ref.listen(eventStoreProvider, (_, next) {
         final fresh = <String>[];
         for (final e in next) {
-          if (e.pubkey == myPubkey &&
-              e.isTextNote &&
-              myEventIds.add(e.id)) {
+          if (e.pubkey == myPubkey && e.isTextNote && myEventIds.add(e.id)) {
             fresh.add(e.id);
           }
         }
         if (fresh.isNotEmpty) {
           final subId = nextSubId('notif-late');
-          pool.request(
-            subId,
-            <String, dynamic>{
-              'kinds': [1, 7, 6],
-              '#e': fresh,
-              'limit': 500,
-            },
-            closeOnEose: false,
-          );
+          pool.request(subId, <String, dynamic>{
+            'kinds': [1, 7, 6],
+            '#e': fresh,
+            'limit': 500,
+          }, closeOnEose: false);
           ref.onDispose(() => pool.closeSubscription(subId));
         }
       });
@@ -233,6 +232,97 @@ NotificationType _classify(Event e, bool mentionsMe, bool interactsMyPost) {
   return NotificationType.mention;
 }
 
+// --- Read state (persisted) -----------------------------------------------
+
+/// Config-table key holding the JSON array of read notification item-ids.
+const _readKey = 'read_notifications';
+
+/// The set of notification item-ids the user has already seen (read).
+/// Persisted to SQLite so the unread badge survives across sessions /
+/// cold starts. Hydrated asynchronously from the config table on build.
+///
+/// A notification item is "unread" iff its id is NOT in this set. The set is
+/// capped (oldest evicted) to bound growth — notification ids are short
+/// stable strings (`type:target`), and only the recent ~1500 matter for
+/// distinguishing unread; older interactions are long gone from the live list.
+final notificationReadProvider =
+    NotifierProvider<NotificationReadNotifier, Set<String>>(
+      NotificationReadNotifier.new,
+    );
+
+class NotificationReadNotifier extends Notifier<Set<String>> {
+  Timer? _save;
+
+  @override
+  Set<String> build() {
+    final db = ref.read(localCacheProvider).value;
+    if (db == null) {
+      // Cache not ready yet (cold start) — hydrate once it resolves.
+      ref.listen(localCacheProvider, (_, next) {
+        if (next.hasValue && next.value != null) _hydrate(next.value!);
+      });
+    } else {
+      _hydrate(db);
+    }
+    ref.onDispose(() => _save?.cancel());
+    return <String>{};
+  }
+
+  Future<void> _hydrate(cache.LocalCache db) async {
+    try {
+      final raw = await db.readConfig(_readKey);
+      if (raw != null && raw.isNotEmpty) {
+        final list = (jsonDecode(raw) as List).cast<String>();
+        state = LinkedHashSet<String>.from(list);
+      }
+    } catch (_) {
+      // Corrupt JSON — start fresh (next markRead rewrites a clean array).
+    }
+  }
+
+  /// Mark [ids] read (idempotent). Persists debounced (500ms) to SQLite.
+  void markRead(Iterable<String> ids) {
+    if (ids.isEmpty) return;
+    final next = LinkedHashSet<String>.from(state)..addAll(ids);
+    // Cap: evict oldest-inserted ids beyond 1500 (linked iteration order).
+    while (next.length > 1500) {
+      next.remove(next.first);
+    }
+    // Only dirty + schedule a write if the set actually grew.
+    if (next.length == state.length && state.containsAll(next)) return;
+    state = next;
+    _save?.cancel();
+    _save = Timer(const Duration(milliseconds: 500), () {
+      _save = null;
+      final db = ref.read(localCacheProvider).value;
+      if (db == null) return;
+      db.writeConfig(_readKey, jsonEncode(next.toList()));
+    });
+  }
+
+  bool isUnread(String id) => !state.contains(id);
+}
+
+/// Number of currently-unread notifications for [myPubkey]. Watching this
+/// (e.g. from the bottom-nav badge in [AppShell]) keeps [notificationsProvider]
+/// alive across tabs so the badge updates while the user is elsewhere in the
+/// app — the notification subscription is a foreground-live feed per
+/// DESIGN §5.1 / §10 (background pauses via the relay pool disconnect).
+final unreadNotificationCountProvider = Provider.family<int, String>((
+  ref,
+  myPubkey,
+) {
+  final items =
+      ref.watch(notificationsProvider(myPubkey)).value ??
+      const <NotificationItem>[];
+  final read = ref.watch(notificationReadProvider);
+  var count = 0;
+  for (final i in items) {
+    if (!read.contains(i.id)) count++;
+  }
+  return count;
+});
+
 // --- UI ---
 
 class NotificationsPage extends ConsumerStatefulWidget {
@@ -299,6 +389,18 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
                           )
                           .toList()
                     : items;
+                // Mark all currently-visible items as read (DESIGN §5.2:
+                // "进入页面后整页标记已读"). Idempotent + debounced-write, so
+                // calling on every rebuild is fine; the bottom-nav badge
+                // clears as soon as the user opens the notifications tab.
+                if (filtered.isNotEmpty) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!mounted) return;
+                    ref
+                        .read(notificationReadProvider.notifier)
+                        .markRead(filtered.map((i) => i.id));
+                  });
+                }
                 if (filtered.isEmpty) {
                   return const Center(
                     child: Padding(
@@ -369,6 +471,12 @@ class _NotificationTile extends ConsumerWidget {
     final theme = Theme.of(context);
     final icon = _iconForType(item.type);
     final iconColor = _colorForType(item.type);
+    // Unread is derived from the persisted read-set (not the vestigial
+    // item.unread flag, which is always true at creation). Lets the dot
+    // clear once the user opens the notifications tab.
+    final unread = ref
+        .watch(notificationReadProvider.notifier)
+        .isUnread(item.id);
     final head = item.extraCount > 0
         ? '${item.pubkeys.length} 人和另外 ${item.extraCount} 人'
         : item.pubkeys.map((pk) => _displayName(ref, pk)).take(3).join('、');
@@ -402,7 +510,7 @@ class _NotificationTile extends ConsumerWidget {
                 children: [
                   Icon(icon, size: 22, color: iconColor),
                   const SizedBox(height: 6),
-                  if (item.unread)
+                  if (unread)
                     Container(
                       width: 8,
                       height: 8,
@@ -455,7 +563,10 @@ class _NotificationTile extends ConsumerWidget {
                       linkifyMentions(
                         item.preview!,
                         ref,
-                        baseStyle: TextStyle(fontSize: 14, color: CostrColors.text2),
+                        baseStyle: TextStyle(
+                          fontSize: 14,
+                          color: CostrColors.text2,
+                        ),
                         mentionStyle: TextStyle(
                           fontSize: 14,
                           color: CostrColors.brand,

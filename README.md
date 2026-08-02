@@ -127,24 +127,25 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 
 ### 支持的 NIP
 
-[NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md) events/REQ/EVENT/CLOSE/EOSE
-（EVENT 帧数组与对象两种形式都解析）｜[NIP-02](https://github.com/nostr-protocol/nips/blob/master/02.md) 联系人列表
-｜[NIP-05](https://github.com/nostr-protocol/nips/blob/master/05.md) 域名验证
-｜[NIP-09](https://github.com/nostr-protocol/nips/blob/master/09.md) 删除
-｜[NIP-10](https://github.com/nostr-protocol/nips/blob/master/10.md) 回复 e-tag
-｜[NIP-17](https://github.com/nostr-protocol/nips/blob/master/17.md) 收件箱私信路由
-｜[NIP-19](https://github.com/nostr-protocol/nips/blob/master/19.md) bech32（nsec/npub/note/nevent/nprofile，纯 Dart 自实现）
-｜[NIP-25](https://github.com/nostr-protocol/nips/blob/master/25.md)/[NIP-30](https://github.com/nostr-protocol/nips/blob/master/30.md) reaction + 自定义表情
-｜[NIP-27](https://github.com/nostr-protocol/nips/blob/master/27.md) 事件引用嵌入
-｜[NIP-38](https://github.com/nostr-protocol/nips/blob/master/38.md) 用户状态
-｜[NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) AUTH
-｜[NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md) v2 加密
-｜[NIP-50](https://github.com/nostr-protocol/nips/blob/master/50.md) 搜索
-｜[NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) 关注集/兴趣集
-｜[NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) 打闪 Zap
-｜[NIP-65](https://github.com/nostr-protocol/nips/blob/master/65.md) outbox 路由
-｜[NIP-92](https://github.com/nostr-protocol/nips/blob/master/92.md) imeta 媒体元数据
-｜[BIP-340](https://bips.xyz/340) secp256k1 Schnorr｜[BUD-02/BUD-11](https://github.com/hzrd149/blossom) Blossom 上传。
+- [NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md) — events / REQ / EVENT / CLOSE / EOSE（EVENT 帧数组与对象两种形式都解析）
+- [NIP-02](https://github.com/nostr-protocol/nips/blob/master/02.md) — 联系人列表（kind 3，关注列表来源）
+- [NIP-05](https://github.com/nostr-protocol/nips/blob/master/05.md) — 域名验证
+- [NIP-09](https://github.com/nostr-protocol/nips/blob/master/09.md) — 删除（kind 5）
+- [NIP-10](https://github.com/nostr-protocol/nips/blob/master/10.md) — 回复 e-tag 语义
+- [NIP-17](https://github.com/nostr-protocol/nips/blob/master/17.md) — 收件箱私信路由（仅留口子，DM 不做）
+- [NIP-19](https://github.com/nostr-protocol/nips/blob/master/19.md) — bech32 编码（nsec / npub / note / nevent / nprofile，纯 Dart 自实现）
+- [NIP-25](https://github.com/nostr-protocol/nips/blob/master/25.md) + [NIP-30](https://github.com/nostr-protocol/nips/blob/master/30.md) — reaction + 自定义表情
+- [NIP-27](https://github.com/nostr-protocol/nips/blob/master/27.md) — 事件引用嵌入（nevent / note）
+- [NIP-38](https://github.com/nostr-protocol/nips/blob/master/38.md) — 用户状态（kind 30315）
+- [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) — AUTH 认证
+- [NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md) — v2 加密（私人书签用）
+- [NIP-50](https://github.com/nostr-protocol/nips/blob/master/50.md) — 全文搜索
+- [NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) — 关注集 / 兴趣集（kind 30000 / 30015）
+- [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) — 打闪 Zap
+- [NIP-65](https://github.com/nostr-protocol/nips/blob/master/65.md) — outbox 路由（kind 10002）
+- [NIP-92](https://github.com/nostr-protocol/nips/blob/master/92.md) — imeta 媒体元数据
+- [BIP-340](https://bips.xyz/340) — secp256k1 Schnorr（公钥派生 / 签名）
+- [BUD-02 / BUD-11](https://github.com/hzrd149/blossom) — Blossom 媒体上传
 
 ---
 
@@ -236,6 +237,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 - **用户状态（NIP-38）**：kind-30315 短文本，信息流卡昵称下一行显示，自己主页内联编辑。
 - **用户主页**：NestedScrollView（banner/头像可滚走 + TabBar 吸顶）+ sliver 根治 overflow。4+1 tab：帖子/回帖/关注/关注者/收藏。`userPostsProvider` StreamProvider：先 yield 内存+SQLite 快照，后台 NIP-65 outbox 定向拉取（`since` 增量，250ms 去抖流式 yield）。下拉刷新、发帖后立即可见。
 - **帖子交互（X 风格）**：💬回复 / 🔁转发（菜单二选一：NIP-18 kind-6 / 引用）/ ❤️reaction（NIP-25+NIP-30，二次点击撤回签 kind-5）/ 🔖收藏（NIP-51 kind-10003，公开 + NIP-44 私密）/ ↗分享（njump.me）。帖子菜单 `⋮`：复制帖子 id（`nostr:nevent1`）/ 复制全文 / ⚡打闪 / 删除（自己的帖，NIP-09 kind-5）。
+- **NIP-09 删除应用层隐藏**：收到 kind-5 删除事件时按作者校验（只能删自己的）应用：`a` 标签坐标（`K:pubkey:d`）删本地 replaceable 行 + 自己的 kind-30000 触发版本刷新、kind-10002 清 relay-list 缓存；`e` 标签按 id 从内存库 + SQLite 移除（信息流即时消失）。best-effort——并非所有中继支持删除，已传播的帖可能仍被其他客户端保留。
 - **打闪 Zap（NIP-57）**：自定义聪 + 预设 chip + 留言 → 解析 lud16/lud06 → LNURL-pay → 签 kind-9734 → BOLT11 发票二维码 + 复制 + `lightning:` deeplink。`lib/services/zap.dart` 纯函数可单测。
 - **NIP-27 事件引用**：发帖框粘 `nostr:nevent1`/`note1` 自动补 `e` mention tag；渲染端嵌引用卡。
 - **发帖（Compose）**：FAB，字数计数，`Identity.signEvent` 签名 + 发布。EVENT 用对象形式（2026 NIP-01）。NIP-42 AUTH 自动签 kind-22242。发布可靠性：`publishAndWait` per-relay 1s/2s/3s 重试，任一 OK 即成功、其余后台重试；全失败存草稿跨会话补发（`retryDrafts` + `onPublishExhausted`）。
@@ -244,7 +246,8 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 - **关注信息流 outbox 路由（★）**：`OutboxRouter` 按 followee kind-10002 分组开持久连接（30 上限、authors 200 分片、live、重连重发、NIP-42 AUTH），`since` 增量刷新 limit 提到 500（根治漏帖），加载更多走 `fetchOnce(until:)` + 默认桶广播。全球路径不动。
 - **自定义关注列表（NIP-51 kind-30000）**：兼容 Amethyst 的 `d`=UUID + `name`=人类名约定；`kind30000DisplayName` 优先 `name` 回退 `d`；编辑保留 UUID `d`+元数据。
 - **服务器节点页**：中继（连接状态 + 真实 WS RTT，NIP-50 CLOSED 回退 search 重试）+ Blossom（HTTP HEAD RTT）。时延缓存 SQLite，颜色绿快黄慢红离线。NIP-50 搜索中继单列。
-- **新手引导**：首次登录 3 步气泡（发帖按钮、通知 tab、关注一个人），可跳过，后续不再弹。
+- **通知未读角标**：底栏通知图标红点角标 + 持久化已读（`notificationReadProvider` 存 SQLite，跨会话保持）；进通知页整页标记已读、角标清零。
+- **新手引导**：首次登录 7 步气泡（发帖、搜索、通知、关注、语言过滤、关注过滤、设置），可跳过，后续不再弹。覆盖首页语言/关注过滤、搜索、设置入口（含服务器节点列表与时延页，只读）等核心操作。
 - **安全存储**：OS keystore 优先；Linux libsecret 失败（keyring 锁）自动回退 0600 文件 `~/.config/costr/secret.json`，独占单用户主机可用。
 
 </details>
@@ -265,7 +268,6 @@ flutter build linux      # 桌面构建
 - **全球流是 live 快照**：广播到默认中继、不 close-on-EOSE，但默认中继各自只保留近期事件；切回全球模式会重拉一次。关注流走 outbox，可达 followee 全部历史（`until`/`since` 分页）。
 - 关注列表可能 stale（如果你的 kind 3 最后更新在默认中继集之外的中继上——outbox 路由已大幅缓解）。
 - 单 isolate 做 JSON 解析 + 去重；极高事件速率下 UI 可能卡顿（v1 有界可接受，后续可 isolate 化）。
-- 通知无未读角标持久化：已读/未读仅会话内存（待开发）。
 - 安全存储：Linux libsecret 失败时回退 0600 文件（安全级别≈空密码 keyring，适合独占单用户主机）。
 
 ## 设计资源

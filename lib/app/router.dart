@@ -242,6 +242,12 @@ class _AppShellState extends ConsumerState<AppShell> {
     final mq = MediaQuery.of(context);
     final size = mq.size;
     final pad = mq.padding;
+    // Unread notification count — watching it keeps the notification
+    // subscription alive across tabs (foreground-live per DESIGN §5.1).
+    final myPubkey = ref.watch(identityProvider).value?.pubkeyHex;
+    final unread = myPubkey == null
+        ? 0
+        : ref.watch(unreadNotificationCountProvider(myPubkey));
     // Resolve + clamp the FAB position so it stays fully on-screen across
     // rotations / keyboard insets.
     final base = _fabOffset ?? _defaultFabOffset(size, pad);
@@ -264,23 +270,35 @@ class _AppShellState extends ConsumerState<AppShell> {
                 initialLocation: index == shell.currentIndex,
               );
             },
-            destinations: const <NavigationDestination>[
-              NavigationDestination(
+            destinations: <NavigationDestination>[
+              const NavigationDestination(
                 icon: Icon(Icons.home_outlined),
                 selectedIcon: Icon(Icons.home),
                 label: '首页',
               ),
-              NavigationDestination(
+              const NavigationDestination(
                 icon: Icon(Icons.search),
                 selectedIcon: Icon(Icons.search),
                 label: '搜索',
               ),
               NavigationDestination(
-                icon: Icon(Icons.notifications_outlined),
-                selectedIcon: Icon(Icons.notifications),
+                // Red count badge when there are unread notifications; a plain
+                // icon when 0 (no clutter — DESIGN §2 "简约 / 不打扰").
+                icon: unread > 0
+                    ? Badge(
+                        label: Text(unread > 99 ? '99+' : '$unread'),
+                        child: const Icon(Icons.notifications_outlined),
+                      )
+                    : const Icon(Icons.notifications_outlined),
+                selectedIcon: unread > 0
+                    ? Badge(
+                        label: Text(unread > 99 ? '99+' : '$unread'),
+                        child: const Icon(Icons.notifications),
+                      )
+                    : const Icon(Icons.notifications),
                 label: '通知',
               ),
-              NavigationDestination(
+              const NavigationDestination(
                 icon: Icon(Icons.person_outline),
                 selectedIcon: Icon(Icons.person),
                 label: '我的',
