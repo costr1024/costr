@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.1.0-beta** | `app-release.apk`（≈71 MB，arm/x64 split per ABI） |
+| Android | **0.1.5-beta** | `app-release.apk`（≈71 MB，arm/x64 split per ABI） |
 
 > 0.1 beta 为首个公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -220,7 +220,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ## 当前状态
 
-**v1 / 0.1-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
+**v0.1.5-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
 
