@@ -127,24 +127,25 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 
 ### 支持的 NIP
 
-[NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md) events/REQ/EVENT/CLOSE/EOSE
-（EVENT 帧数组与对象两种形式都解析）｜[NIP-02](https://github.com/nostr-protocol/nips/blob/master/02.md) 联系人列表
-｜[NIP-05](https://github.com/nostr-protocol/nips/blob/master/05.md) 域名验证
-｜[NIP-09](https://github.com/nostr-protocol/nips/blob/master/09.md) 删除
-｜[NIP-10](https://github.com/nostr-protocol/nips/blob/master/10.md) 回复 e-tag
-｜[NIP-17](https://github.com/nostr-protocol/nips/blob/master/17.md) 收件箱私信路由
-｜[NIP-19](https://github.com/nostr-protocol/nips/blob/master/19.md) bech32（nsec/npub/note/nevent/nprofile，纯 Dart 自实现）
-｜[NIP-25](https://github.com/nostr-protocol/nips/blob/master/25.md)/[NIP-30](https://github.com/nostr-protocol/nips/blob/master/30.md) reaction + 自定义表情
-｜[NIP-27](https://github.com/nostr-protocol/nips/blob/master/27.md) 事件引用嵌入
-｜[NIP-38](https://github.com/nostr-protocol/nips/blob/master/38.md) 用户状态
-｜[NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) AUTH
-｜[NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md) v2 加密
-｜[NIP-50](https://github.com/nostr-protocol/nips/blob/master/50.md) 搜索
-｜[NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) 关注集/兴趣集
-｜[NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) 打闪 Zap
-｜[NIP-65](https://github.com/nostr-protocol/nips/blob/master/65.md) outbox 路由
-｜[NIP-92](https://github.com/nostr-protocol/nips/blob/master/92.md) imeta 媒体元数据
-｜[BIP-340](https://bips.xyz/340) secp256k1 Schnorr｜[BUD-02/BUD-11](https://github.com/hzrd149/blossom) Blossom 上传。
+- [NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md) — events / REQ / EVENT / CLOSE / EOSE（EVENT 帧数组与对象两种形式都解析）
+- [NIP-02](https://github.com/nostr-protocol/nips/blob/master/02.md) — 联系人列表（kind 3，关注列表来源）
+- [NIP-05](https://github.com/nostr-protocol/nips/blob/master/05.md) — 域名验证
+- [NIP-09](https://github.com/nostr-protocol/nips/blob/master/09.md) — 删除（kind 5）
+- [NIP-10](https://github.com/nostr-protocol/nips/blob/master/10.md) — 回复 e-tag 语义
+- [NIP-17](https://github.com/nostr-protocol/nips/blob/master/17.md) — 收件箱私信路由（仅留口子，DM 不做）
+- [NIP-19](https://github.com/nostr-protocol/nips/blob/master/19.md) — bech32 编码（nsec / npub / note / nevent / nprofile，纯 Dart 自实现）
+- [NIP-25](https://github.com/nostr-protocol/nips/blob/master/25.md) + [NIP-30](https://github.com/nostr-protocol/nips/blob/master/30.md) — reaction + 自定义表情
+- [NIP-27](https://github.com/nostr-protocol/nips/blob/master/27.md) — 事件引用嵌入（nevent / note）
+- [NIP-38](https://github.com/nostr-protocol/nips/blob/master/38.md) — 用户状态（kind 30315）
+- [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) — AUTH 认证
+- [NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md) — v2 加密（私人书签用）
+- [NIP-50](https://github.com/nostr-protocol/nips/blob/master/50.md) — 全文搜索
+- [NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) — 关注集 / 兴趣集（kind 30000 / 30015）
+- [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) — 打闪 Zap
+- [NIP-65](https://github.com/nostr-protocol/nips/blob/master/65.md) — outbox 路由（kind 10002）
+- [NIP-92](https://github.com/nostr-protocol/nips/blob/master/92.md) — imeta 媒体元数据
+- [BIP-340](https://bips.xyz/340) — secp256k1 Schnorr（公钥派生 / 签名）
+- [BUD-02 / BUD-11](https://github.com/hzrd149/blossom) — Blossom 媒体上传
 
 ---
 
