@@ -569,6 +569,15 @@ class _HashtagChip extends ConsumerWidget {
                 }
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.block, size: 20),
+              title: const Text('屏蔽此标签'),
+              subtitle: const Text('含此标签的帖子不再出现在信息流里'),
+              onTap: () {
+                Navigator.pop(ctx);
+                muteEntry(ref, ['t', tag], add: true);
+              },
+            ),
           ],
         ),
       ),

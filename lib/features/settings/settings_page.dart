@@ -2,6 +2,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -40,6 +41,11 @@ class SettingsPage extends ConsumerWidget {
             title: '服务器节点',
             subtitle: 'Costr 连接的服务器，一般不用改',
             onTap: () => context.push('/settings/relays'),
+          ),
+          _Row(
+            title: '屏蔽列表',
+            subtitle: '已屏蔽的用户、词、标签',
+            onTap: () => context.push('/settings/mute'),
           ),
           const _SectionHeader('关于'),
           _Row(
@@ -188,8 +194,74 @@ class AboutPage extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: CostrColors.text3),
             textAlign: TextAlign.center,
           ),
+          const SizedBox(height: 24),
+          const _AcknowledgmentsSection(),
         ],
       ),
+    );
+  }
+}
+
+/// 致谢 — 感谢 Nostr 协议社区、重点参考的 Amethyst/Jumble 客户端，以及
+/// Costr 使用的开源项目。Markdown 渲染（链接可点）。
+class _AcknowledgmentsSection extends StatelessWidget {
+  const _AcknowledgmentsSection();
+
+  static const String _md = '''
+Costr 的诞生离不开 Nostr 生态与众多开源项目。
+
+## Nostr 协议与社区
+
+感谢 [Nostr 协议](https://github.com/nostr-protocol/nips) 及其开源社区——一套自由、抗审查、无需账号的社交协议，让 Costr 这种独立客户端成为可能。
+
+## 重点参考的客户端
+
+Costr 在协议实现与渲染上重点参考了两个出色的开源 Nostr 客户端：
+
+- **[Amethyst](https://github.com/vitorpamplona/amethyst)**（作者 Vitor Pamplona）——Android 端功能最全的 Nostr 客户端。Costr 的 NIP-51 列表（关注集 / 兴趣集 / 书签 / 屏蔽列表，含 NIP-44 私密列表）、NIP-09 删除、NIP-65 outbox 路由、NIP-57 Zap 等数据模型均与其对齐，确保用户在两个客户端间无缝迁移。
+- **[Jumble](https://github.com/CodyTseng/jumble)**（作者 CodyTseng）——跨平台 Nostr 客户端，其 UI/交互设计与渲染思路为 Costr 提供了借鉴。
+
+## Costr 使用的开源项目
+
+- **Flutter**——跨平台 UI 框架，一套 Dart 代码覆盖 Android / iOS / Windows / macOS / Linux。
+- **协议与密码学**：[bip340](https://pub.dev/packages/bip340)、[pointycastle](https://pub.dev/packages/pointycastle)、[crypto](https://pub.dev/packages/crypto)、[hex](https://pub.dev/packages/hex)。
+- **网络**：[web_socket_channel](https://pub.dev/packages/web_socket_channel)、[http](https://pub.dev/packages/http)。
+- **状态与路由**：[flutter_riverpod](https://pub.dev/packages/flutter_riverpod)、[go_router](https://pub.dev/packages/go_router)。
+- **本地存储与安全**：[drift](https://pub.dev/packages/drift)、[sqlite3_flutter_libs](https://pub.dev/packages/sqlite3_flutter_libs)、[flutter_secure_storage](https://pub.dev/packages/flutter_secure_storage)、[local_auth](https://pub.dev/packages/local_auth)、[path_provider](https://pub.dev/packages/path_provider)。
+- **UI 与媒体**：[cached_network_image](https://pub.dev/packages/cached_network_image)、[flutter_markdown](https://pub.dev/packages/flutter_markdown)、[video_player](https://pub.dev/packages/video_player)、[image_cropper](https://pub.dev/packages/image_cropper)、[qr_flutter](https://pub.dev/packages/qr_flutter)、[gal](https://pub.dev/packages/gal)、[file_picker](https://pub.dev/packages/file_picker)、[share_plus](https://pub.dev/packages/share_plus)、[url_launcher](https://pub.dev/packages/url_launcher)。
+
+*Costr 是开源软件，欢迎在 [GitHub](https://github.com/costr1024/costr) 反馈与贡献。*
+''';
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            '致谢',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: CostrColors.text2,
+            ),
+          ),
+        ),
+        MarkdownBody(
+          data: _md,
+          styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+            p: TextStyle(fontSize: 14, color: CostrColors.text),
+            h2: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: CostrColors.text,
+            ),
+            a: TextStyle(color: Theme.of(context).colorScheme.primary),
+          ),
+        ),
+      ],
     );
   }
 }

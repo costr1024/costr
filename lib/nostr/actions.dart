@@ -8,6 +8,7 @@ import 'dart:math' show Random;
 
 import '../models/bookmark_entry.dart';
 import '../models/event.dart';
+import '../models/mute_set.dart';
 import '../utils/nip19.dart';
 import '../utils/nip44.dart';
 import 'identity.dart';
@@ -16,6 +17,27 @@ import 'identity.dart';
 /// every published event carries `["client","Amethyst"]`). Appended to all
 /// events built here so other clients can attribute the source.
 const List<String> _clientTag = ['client', 'Costr'];
+
+/// The `d` tag value of [e], or null if absent. Identity key for a
+/// parameterized-replaceable event.
+String? _dTagOf(Event e) {
+  for (final t in e.tags) {
+    if (t.length >= 2 && t[0] == 'd' && t[1] is String) return t[1] as String;
+  }
+  return null;
+}
+
+/// The NIP-33 address coordinate `K:pubkey:d` for [e] if it is
+/// parameterized-replaceable (kind 30000–39999 with a `d` tag), else null.
+/// Used to emit the `a` tag in reposts/reactions/deletions of addressable
+/// events — Amethyst includes `a` for addressable targets (NIP-18/25/09).
+String? _addressCoordOf(Event e) {
+  final k = e.kind;
+  if (k < 30000 || k >= 40000) return null;
+  final d = _dTagOf(e);
+  if (d == null) return null;
+  return '$k:${e.pubkey}:$d';
+}
 
 class NostrActions {
   NostrActions(this.id);
@@ -58,6 +80,9 @@ class NostrActions {
       ['p', target.pubkey, relay],
       ['k', '${target.kind}'],
     ];
+    // NIP-25: include `a` for addressable reaction targets (Amethyst does).
+    final coord = _addressCoordOf(target);
+    if (coord != null) tags.add(['a', coord]);
     if (customShortcode != null && customUrl != null) {
       tags.add(['emoji', customShortcode, customUrl]);
     }
@@ -71,7 +96,11 @@ class NostrActions {
     final tags = <List<String>>[
       ['e', target.id, relay],
       ['p', target.pubkey, relay],
+      ['k', '${target.kind}'],
     ];
+    // NIP-18: include `a` for addressable repost targets (Amethyst does).
+    final coord = _addressCoordOf(target);
+    if (coord != null) tags.add(['a', coord]);
     return id.signEvent(
       kind: 6,
       content: jsonEncode(target.toWireObject()),
@@ -193,6 +222,12 @@ class NostrActions {
     final tags = <List<String>>[
       ['e', current.id],
       ['a', coord],
+      // Amethyst's DeletionEvent.build emits the author `p` + original `kind`
+      // for addressable deletes; include them so Costr's outgoing delete
+      // matches Amethyst exactly (interop is via `e`+`a`, but `p`+`kind` are
+      // harmless extras Amethyst clients key off).
+      ['p', current.pubkey],
+      ['k', '${current.kind}'],
       _clientTag,
     ];
     return id.signEvent(kind: 5, content: '', tags: tags);
@@ -584,5 +619,121 @@ class NostrActions {
       }
     }
     return out;
+  }
+
+  /// Build/modify the user's NIP-51 kind-10000 mute list. **Amethyst stores
+  /// public mutes as plain tags** (`p` user, `word` word, `t` hashtag, `e`
+  /// event) **and private mutes as the same tag shape NIP-44-encrypted in
+  /// `.content`** (a `[["p",…],["word",…]]` JSON array, owner-only). Costr
+  /// matches this exactly so mute lists interoperate both ways. [entry] is
+  /// the tag to add/remove (e.g. `['p', pubkey]`, `['word', 'spam']`,
+  /// `['t', 'nsfw']`). [publicList]: public tag vs NIP-44-private. [add]:
+  /// add vs remove.
+  Event muteList(
+    Event? current, {
+    required MuteEntry entry,
+    required bool add,
+    required bool publicList,
+  }) {
+    final publicTags = <List<String>>[];
+    final privateTags = <List<String>>[];
+    if (current != null) {
+      for (final t in current.tags) {
+        if (t.isEmpty) continue;
+        final name = t[0].toString();
+        if (name == 'p' || name == 'word' || name == 't' || name == 'e') {
+          publicTags.add(t.map((e) => e.toString()).toList());
+        }
+      }
+      if (current.content.isNotEmpty) {
+        try {
+          final decoded = nip44Decrypt(
+            id.privkeyHex,
+            id.pubkeyHex,
+            current.content,
+          );
+          final arr = jsonDecode(decoded);
+          if (arr is List) {
+            for (final t in arr) {
+              if (t is List) {
+                privateTags.add(t.map((e) => e.toString()).toList());
+              }
+            }
+          }
+        } catch (_) {
+          // Malformed/undecryptable — start fresh private list.
+        }
+      }
+    }
+    final target = publicList ? publicTags : privateTags;
+    bool eq(List<String> a, List<String> b) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (a[i] != b[i]) return false;
+      }
+      return true;
+    }
+    if (add) {
+      if (!target.any((t) => eq(t, entry))) target.add(entry);
+    } else {
+      target.removeWhere((t) => eq(t, entry));
+    }
+    final content = privateTags.isEmpty
+        ? ''
+        : nip44Encrypt(id.privkeyHex, id.pubkeyHex, jsonEncode(privateTags));
+    return id.signEvent(
+      kind: 10000,
+      content: content,
+      tags: [...publicTags, _clientTag],
+    );
+  }
+
+  /// Parse a kind-10000 mute list into a [MuteSet]: public `p`/`word`/`t`/`e`
+  /// tags + NIP-44-decrypted private entries (owner-only — needs the privkey;
+  /// non-owners get only the public entries). Empty for a null event.
+  MuteSet muteSetOf(Event? e, {bool includePrivate = true}) {
+    final pubkeys = <String>{};
+    final words = <String>{};
+    final hashtags = <String>{};
+    final eventIds = <String>{};
+    void addTag(List<String> t) {
+      if (t.length < 2) return;
+      switch (t[0]) {
+        case 'p':
+          pubkeys.add(t[1]);
+        case 'word':
+          words.add(t[1]);
+        case 't':
+          hashtags.add(t[1].toLowerCase());
+        case 'e':
+          eventIds.add(t[1]);
+      }
+    }
+
+    if (e != null) {
+      for (final t in e.tags) {
+        if (t.isEmpty) continue;
+        addTag(t.map((x) => x.toString()).toList());
+      }
+      if (includePrivate && e.content.isNotEmpty) {
+        try {
+          final decoded = nip44Decrypt(id.privkeyHex, id.pubkeyHex, e.content);
+          final arr = jsonDecode(decoded);
+          if (arr is List) {
+            for (final t in arr) {
+              if (t is List) addTag(t.map((x) => x.toString()).toList());
+            }
+          }
+        } catch (_) {
+          // Not the owner or malformed — public entries only.
+        }
+      }
+    }
+    return MuteSet(
+      pubkeys: pubkeys,
+      words: words,
+      hashtags: hashtags,
+      eventIds: eventIds,
+    );
   }
 }
