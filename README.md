@@ -244,6 +244,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 - **关注信息流 outbox 路由（★）**：`OutboxRouter` 按 followee kind-10002 分组开持久连接（30 上限、authors 200 分片、live、重连重发、NIP-42 AUTH），`since` 增量刷新 limit 提到 500（根治漏帖），加载更多走 `fetchOnce(until:)` + 默认桶广播。全球路径不动。
 - **自定义关注列表（NIP-51 kind-30000）**：兼容 Amethyst 的 `d`=UUID + `name`=人类名约定；`kind30000DisplayName` 优先 `name` 回退 `d`；编辑保留 UUID `d`+元数据。
 - **服务器节点页**：中继（连接状态 + 真实 WS RTT，NIP-50 CLOSED 回退 search 重试）+ Blossom（HTTP HEAD RTT）。时延缓存 SQLite，颜色绿快黄慢红离线。NIP-50 搜索中继单列。
+- **通知未读角标**：底栏通知图标红点角标 + 持久化已读（`notificationReadProvider` 存 SQLite，跨会话保持）；进通知页整页标记已读、角标清零。
 - **新手引导**：首次登录 3 步气泡（发帖按钮、通知 tab、关注一个人），可跳过，后续不再弹。
 - **安全存储**：OS keystore 优先；Linux libsecret 失败（keyring 锁）自动回退 0600 文件 `~/.config/costr/secret.json`，独占单用户主机可用。
 
@@ -265,7 +266,6 @@ flutter build linux      # 桌面构建
 - **全球流是 live 快照**：广播到默认中继、不 close-on-EOSE，但默认中继各自只保留近期事件；切回全球模式会重拉一次。关注流走 outbox，可达 followee 全部历史（`until`/`since` 分页）。
 - 关注列表可能 stale（如果你的 kind 3 最后更新在默认中继集之外的中继上——outbox 路由已大幅缓解）。
 - 单 isolate 做 JSON 解析 + 去重；极高事件速率下 UI 可能卡顿（v1 有界可接受，后续可 isolate 化）。
-- 通知无未读角标持久化：已读/未读仅会话内存（待开发）。
 - 安全存储：Linux libsecret 失败时回退 0600 文件（安全级别≈空密码 keyring，适合独占单用户主机）。
 
 ## 设计资源
