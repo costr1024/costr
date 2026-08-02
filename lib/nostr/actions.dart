@@ -4,6 +4,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:math' show Random;
 
 import '../models/bookmark_entry.dart';
 import '../models/event.dart';
@@ -122,14 +123,91 @@ class NostrActions {
         tags.add(['p', pubkey, relay]);
       }
     } else {
-      // New list: d = category (Costr convention) + a `name` tag so other
-      // clients (Amethyst) see a human name and Costr's name-first display
-      // reads it back consistently.
-      tags.add(['d', category]);
+      // New list: d = a random UUID4 (Amethyst convention — a stable opaque
+      // identifier, NOT the human name) + a `name` tag carrying the human
+      // name so every client (Amethyst, Costr's name-first display) shows
+      // it. A stable d is what makes [renameFollowSet] safe: renaming only
+      // rewrites the `name` tag, never `d`, so the list never forks into a
+      // second replaceable event (the bug that produced the orphaned
+      // UUID-named lists you saw in Amethyst).
+      tags.add(['d', _uuidV4()]);
       tags.add(['name', category]);
       tags.add(['p', pubkey, relay]);
     }
     return id.signEvent(kind: 30000, content: '', tags: [...tags, _clientTag]);
+  }
+
+  /// Rename a NIP-51 kind-30000 follow set to [newName]. Republishes the set
+  /// with the `d` identifier preserved VERBATIM and only the `name` tag
+  /// updated — rewriting `d` would fork the list into a second replaceable
+  /// event (the old `d` version would linger on relays/other clients, exactly
+  /// the UUID-named-ghost-list problem). All other metadata (alt/description/
+  /// image) and the `p` roster are carried over unchanged.
+  Event renameFollowSet(Event current, String newName) {
+    final tags = <List<String>>[];
+    // d: preserve verbatim. If missing (shouldn't happen for a real set),
+    // mint a fresh UUID so the event is still well-formed.
+    String? dVal;
+    for (final t in current.tags) {
+      if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
+        dVal = t[1] as String;
+        break;
+      }
+    }
+    tags.add(['d', dVal ?? _uuidV4()]);
+    // Carry over metadata tags except d/name/p/client (name is re-added below).
+    for (final t in current.tags) {
+      if (t.isEmpty) continue;
+      if (t[0] == 'd' || t[0] == 'name' || t[0] == 'p' || t[0] == 'client') {
+        continue;
+      }
+      tags.add(t.map((e) => e.toString()).toList());
+    }
+    tags.add(['name', newName]);
+    // p roster — carry over verbatim (relay hints + petnames preserved).
+    for (final t in current.tags) {
+      if (t.length < 2 || t[0] != 'p' || t[1] is! String) continue;
+      tags.add(t.map((e) => e.toString()).toList());
+    }
+    return id.signEvent(kind: 30000, content: '', tags: [...tags, _clientTag]);
+  }
+
+  /// NIP-09 deletion of a NIP-51 kind-30000 follow set. Publishes a kind-5
+  /// with an `a` tag for the parameterized-replaceable coordinate
+  /// `30000:pubkey:d` — this deletes EVERY version of the set (not just one
+  /// event id), which is the correct form for replaceable events. Also adds
+  /// an `e` tag pointing at the current event id for clients that key off
+  /// that. Amethyst's own delete only sends `e` and is therefore ineffective
+  /// for kind-30000; this is the fix. On receipt, Costr's
+  /// [EventStoreNotifier._applyDeletion] clears the local SQLite row
+  /// (author-validated).
+  Event deleteFollowSet(Event current) {
+    String? dVal;
+    for (final t in current.tags) {
+      if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
+        dVal = t[1] as String;
+        break;
+      }
+    }
+    final coord = '30000:${id.pubkeyHex}:${dVal ?? ''}';
+    final tags = <List<String>>[
+      ['e', current.id],
+      ['a', coord],
+      _clientTag,
+    ];
+    return id.signEvent(kind: 5, content: '', tags: tags);
+  }
+
+  /// Random UUID v4 string (8-4-4-4-12, version/variant bits set), used as
+  /// the `d` identifier for new kind-30000 follow sets (Amethyst convention).
+  String _uuidV4() {
+    final r = Random.secure();
+    final bytes = List<int>.generate(16, (_) => r.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0F) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3F) | 0x80; // variant 10xx
+    final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
   }
 
   /// Unfollow [pubkey] (NIP-02 kind 3). Publishes the FULL updated p-tag list
@@ -179,6 +257,96 @@ class NostrActions {
       if (v.isNotEmpty && seen.add(v)) tags.add(['t', v]);
     }
     return id.signEvent(kind: 30015, content: '', tags: [...tags, _clientTag]);
+  }
+
+  /// Build/modify a NIP-51 kind-10015 Interests list — the user's FOLLOWED
+  /// HASHTAGS. **Amethyst stores these as a PRIVATE list**: the `t` tags live
+  /// in the NIP-44-encrypted `.content` as a JSON array `[["t","tag"],…]`
+  /// (decryptable only by the owner), while the public tags carry just an
+  /// `alt`/`client` label. Costr matches this EXACTLY so followed hashtags
+  /// interoperate with Amethyst on both read and write — critical for
+  /// Amethyst→Costr migration. [current] is the user's existing kind-10015
+  /// (or null for a first follow). [add]/[remove] are lowercased hashtag
+  /// values. The previous [interests] (kind-30015, plain t tags) is left in
+  /// place only to read legacy/plain interest sets published by other
+  /// clients; new writes go through this method.
+  Event followedHashtags(Event? current, {String? add, String? remove}) {
+    String norm(String s) => s.toLowerCase().replaceAll('#', '').trim();
+    final tags = <List<String>>[];
+    // Public label tags only (alt). t tags are NOT public — they go in the
+    // encrypted content. Preserve an existing alt, else default "Hashtag List"
+    // (Amethyst's label).
+    String? altVal;
+    if (current != null) {
+      for (final t in current.tags) {
+        if (t.isEmpty) continue;
+        if (t[0] == 'alt' && altVal == null && t.length > 1 && t[1] is String) {
+          altVal = t[1] as String;
+        }
+      }
+    }
+    tags.add(['alt', altVal ?? 'Hashtag List']);
+    // Load existing followed hashtags from the encrypted content.
+    final pairs = <List<String>>[];
+    final seen = <String>{};
+    if (current != null && current.content.isNotEmpty) {
+      try {
+        final decoded = nip44Decrypt(id.privkeyHex, id.pubkeyHex, current.content);
+        final arr = jsonDecode(decoded);
+        if (arr is List) {
+          for (final t in arr) {
+            if (t is List && t.length >= 2 && t[0] == 't' && t[1] is String) {
+              final v = (t[1] as String);
+              if (seen.add(v)) pairs.add(['t', v]);
+            }
+          }
+        }
+      } catch (_) {
+        // Malformed/undecryptable — start fresh.
+      }
+    }
+    if (remove != null) {
+      final r = norm(remove);
+      pairs.removeWhere((p) => p[1] == r);
+      seen.remove(r);
+    }
+    if (add != null) {
+      final a = norm(add);
+      if (a.isNotEmpty && seen.add(a)) pairs.add(['t', a]);
+    }
+    final content = pairs.isEmpty
+        ? ''
+        : nip44Encrypt(id.privkeyHex, id.pubkeyHex, jsonEncode(pairs));
+    return id.signEvent(
+      kind: 10015,
+      content: content,
+      tags: [...tags, _clientTag],
+    );
+  }
+
+  /// Extract followed hashtags from a kind-10015 Interests event: decrypt
+  /// the NIP-44 `.content` (owner-only — needs the privkey, so non-owners
+  /// get an empty list, which is correct for a private list) and parse the
+  /// `[["t",…]]` JSON array. Lowercased, deduped, order-preserved. Empty for
+  /// a null/undecryptable event.
+  List<String> followedHashtagTags(Event? e) {
+    if (e == null || e.content.isEmpty) return const <String>[];
+    try {
+      final decoded = nip44Decrypt(id.privkeyHex, id.pubkeyHex, e.content);
+      final arr = jsonDecode(decoded);
+      if (arr is List) {
+        final out = <String>[];
+        final seen = <String>{};
+        for (final t in arr) {
+          if (t is List && t.length >= 2 && t[0] == 't' && t[1] is String) {
+            final v = (t[1] as String).toLowerCase();
+            if (v.isNotEmpty && seen.add(v)) out.add(v);
+          }
+        }
+        return out;
+      }
+    } catch (_) {}
+    return const <String>[];
   }
 
   /// Publish updated profile metadata (NIP-01 kind 0). [contentJson] is the

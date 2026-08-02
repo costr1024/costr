@@ -127,11 +127,28 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     }
     setState(() => _saving = true);
     try {
+      // Start from the EXISTING kind-0 content so Amethyst-specific fields
+      // we don't have UI for (damus_donation_v2, legacy lud06, etc.) are
+      // preserved on edit — rebuilding from only the 8 known fields would
+      // drop them, a regression for Amethyst→Costr migration.
       final data = <String, dynamic>{};
+      try {
+        final cache = await ref.read(localCacheProvider.future);
+        final existing = await cache.queryReplaceable(identity.pubkeyHex, 0);
+        if (existing != null && existing.content.isNotEmpty) {
+          final parsed = jsonDecode(existing.content);
+          if (parsed is Map<String, dynamic>) data.addAll(parsed);
+        }
+      } catch (_) {
+        // No existing profile yet (or undecodable) — start fresh.
+      }
+      // Overlay the editable fields: non-empty sets, empty clears.
       for (final (key, _, _) in _fields) {
         final v = _controllers[key]?.text.trim() ?? '';
         if (v.isNotEmpty) {
           data[key] = v;
+        } else {
+          data.remove(key);
         }
       }
       final contentJson = jsonEncode(data);
@@ -140,7 +157,7 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
       // the profile page reflects the change immediately (Amethyst pattern).
       ref.read(relayPoolProvider).publish(signed);
       ref.invalidate(metadataProvider(identity.pubkeyHex));
-      if (context.mounted) context.pop();
+      if (mounted) context.pop();
     } catch (e) {
       _snack('错误：$e');
     } finally {

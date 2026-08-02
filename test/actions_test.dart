@@ -177,10 +177,15 @@ void main() {
             sig: 's',
           );
 
-      test('new list: d + name + p + client', () {
+      test('new list: UUID d + name + p + client (Amethyst convention)', () {
         final r = actions.followCategory(null, 'new-pk', '真人用户');
         expect(r.kind, 30000);
-        expect(r.tags, _tag(['d', '真人用户']));
+        // d is a stable opaque UUID (NOT the human name) so renames never
+        // fork the list; name carries the human name.
+        final d = r.tags.firstWhere((t) => t[0] == 'd');
+        expect(d[1], isNot('真人用户'));
+        expect(d[1], matches(RegExp(
+            r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')));
         expect(r.tags, _tag(['name', '真人用户']));
         expect(r.tags, _tag(['p', 'new-pk', '']));
         expect(r.tags, _tag(['client', 'Costr']));
