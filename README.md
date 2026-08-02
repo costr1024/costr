@@ -140,7 +140,7 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 - [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) — AUTH 认证
 - [NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md) — v2 加密（私人书签用）
 - [NIP-50](https://github.com/nostr-protocol/nips/blob/master/50.md) — 全文搜索
-- [NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) — 关注集 / 兴趣集（kind 30000 / 30015）
+- [NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) — 关注集 / 兴趣集（kind 30000 / 30015 / 10015，含 NIP-44 私密兴趣列表）
 - [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) — 打闪 Zap
 - [NIP-65](https://github.com/nostr-protocol/nips/blob/master/65.md) — outbox 路由（kind 10002）
 - [NIP-92](https://github.com/nostr-protocol/nips/blob/master/92.md) — imeta 媒体元数据
@@ -233,7 +233,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 - **事件存储**：内存单源，按 id 去重，时间倒序，上限 5000 淘汰最旧。`ingest` 经 `_scheduleFlush` 200ms 去抖批量刷新（避免突发百条 jank）。
 - **头像资料**：`metadataProvider` 是 StreamProvider——先 yield SQLite/内存缓存（即时），再异步拉 kind-0 刷新（按 `created_at` 不回退）。社交图谱资料预取（冷启动延迟 5s 对 follows+followers+self bulk REQ kind-0 落库）。
 - **正文渲染**：GitHub 风格 markdown。多图九宫格、裸图片/视频 URL 当图渲染、NIP-92 imeta + `["image",url]`/`["video",url]` tag 跨协议去重、NIP-30 自定义表情 `:shortcode:` 内联、长帖折叠、空行保留（Amethyst 式）。NIP-19 npub/nprofile 提及 linkify。
-- **标签与语言过滤**：NIP-12 `t` tag + 正文内联 `#hashtag`（支持中文），chip 点选过滤/长按关注（NIP-51 kind-30015）。语言下拉 🌐/🇨🇳/🇬🇧/🇯🇵，假名优先判日文。
+- **标签与语言过滤**：NIP-12 `t` tag + 正文内联 `#hashtag`（支持中文），chip 点选过滤/长按关注。**关注 hashtag 存 NIP-51 kind-10015 + NIP-44 加密 content**（`[["t",…]]` JSON，对齐 Amethyst 的私密兴趣列表，迁移互通），同时只读聚合 kind-30015 命名兴趣集的明文 `t`。语言下拉 🌐/🇨🇳/🇬🇧/🇯🇵，假名优先判日文。
 - **用户状态（NIP-38）**：kind-30315 短文本，信息流卡昵称下一行显示，自己主页内联编辑。
 - **用户主页**：NestedScrollView（banner/头像可滚走 + TabBar 吸顶）+ sliver 根治 overflow。4+1 tab：帖子/回帖/关注/关注者/收藏。`userPostsProvider` StreamProvider：先 yield 内存+SQLite 快照，后台 NIP-65 outbox 定向拉取（`since` 增量，250ms 去抖流式 yield）。下拉刷新、发帖后立即可见。
 - **帖子交互（X 风格）**：💬回复 / 🔁转发（菜单二选一：NIP-18 kind-6 / 引用）/ ❤️reaction（NIP-25+NIP-30，二次点击撤回签 kind-5）/ 🔖收藏（NIP-51 kind-10003，公开 + NIP-44 私密）/ ↗分享（njump.me）。帖子菜单 `⋮`：复制帖子 id（`nostr:nevent1`）/ 复制全文 / ⚡打闪 / 删除（自己的帖，NIP-09 kind-5）。
@@ -244,9 +244,9 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 - **媒体上传（Blossom BUD-02/BUD-11）**：图片≤10MB 最多 9 张 / 视频≤100MB 单条 / 文件≤100MB 最多 4 个。签 kind-24242 auth → `PUT /upload` → url + NIP-92 imeta。默认服务器逐台尝试失败自动换。
 - **媒体/文件下载**：`lib/services/media_download.dart` 统一入口。移动端图片/视频走 `gal` 存相册；桌面/普通文件走 `file_picker` save-as。接入点：图片全屏查看器、全屏视频页、文件 chip。
 - **关注信息流 outbox 路由（★）**：`OutboxRouter` 按 followee kind-10002 分组开持久连接（30 上限、authors 200 分片、live、重连重发、NIP-42 AUTH），`since` 增量刷新 limit 提到 500（根治漏帖），加载更多走 `fetchOnce(until:)` + 默认桶广播。全球路径不动。
-- **自定义关注列表（NIP-51 kind-30000）**：兼容 Amethyst 的 `d`=UUID + `name`=人类名约定；`kind30000DisplayName` 优先 `name` 回退 `d`；编辑保留 UUID `d`+元数据。
+- **自定义关注列表（NIP-51 kind-30000）**：兼容 Amethyst 的 `d`=UUID + `name`=人类名约定；`kind30000DisplayName` 优先 `name` 回退 `d`；编辑保留 UUID `d`+元数据。**重命名**（⋯ 菜单 → 底部弹窗，`d` 不变只改 `name`，列表不分叉）+ **删除**（发 NIP-09 kind-5 `a`-坐标 `30000:pubkey:d`，删全版本——Amethyst 自带删除只发 `e` 对 replaceable 无效，这是修正）。新列表创建用 UUID `d`（Amethyst 约定，避免重命名后 `d` 冲突）。列表人数显示真实 `p` 标签数（非「已关注 ∩ 组内」交集，对齐 Amethyst）。
 - **服务器节点页**：中继（连接状态 + 真实 WS RTT，NIP-50 CLOSED 回退 search 重试）+ Blossom（HTTP HEAD RTT）。时延缓存 SQLite，颜色绿快黄慢红离线。NIP-50 搜索中继单列。
-- **通知未读角标**：底栏通知图标红点角标 + 持久化已读（`notificationReadProvider` 存 SQLite，跨会话保持）；**逐条点开标记已读**（不再整页标记），未读项浅色背景底 + 小圆点稳定区分，点开后转已读。
+- **通知未读角标**：底栏通知图标红点角标 + 持久化已读（`notificationReadProvider` 存 SQLite，跨会话保持）；**逐条点开标记已读**（不再整页标记），未读项浅色背景底 + 小圆点稳定区分，点开后转已读；通知页 AppBar「全部标记已读」（首次登录历史未读过多时一键清空当前 tab）。
 - **新手引导**：首次登录 7 步气泡（发帖、搜索、通知、关注、语言过滤、关注过滤、设置），可跳过，后续不再弹。覆盖首页语言/关注过滤、搜索、设置入口（含服务器节点列表与时延页，只读）等核心操作。
 - **安全存储**：OS keystore 优先；Linux libsecret 失败（keyring 锁）自动回退 0600 文件 `~/.config/costr/secret.json`，独占单用户主机可用。
 

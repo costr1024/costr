@@ -985,47 +985,83 @@ final followedTagsCacheProvider =
     );
 
 /// The user's followed hashtags. Source of truth is the user's NIP-51
-/// kind-30015 default Interests list (d-tag "", `t` tags = followed hashtags),
-/// published to relays. A local SQLite copy ([LocalCache.queryInterests])
-/// hydrates instantly on cold start before the relay responds. add/remove
-/// sign an updated kind-30015 via [NostrActions.interests], publish, and
-/// optimistically update the in-memory + SQLite cache.
+/// kind-30015 Interests events (`t` tags = followed hashtags), published to
+/// relays. Amethyst publishes hashtags across multiple kind-30015 sets — a
+/// default list (d "") plus named sets (d != "") — so Costr UNIONS the `t`
+/// tags of ALL the user's kind-30015 events (interop parity with Amethyst).
+/// Writes (add/remove) target the default set (d "") so Costr's own follows
+/// land in one place. A local SQLite copy hydrates instantly on cold start
+/// before the relay responds.
 class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
   StreamSubscription<Event>? _sub;
   StreamSubscription<String>? _eoseSub;
+
+  /// Newest kind-10015 Interests event — the user's followed-hashtags list.
+  /// Amethyst stores the `t` tags in its NIP-44-encrypted `.content`
+  /// (private list, owner-only). This is the WRITE target for add/remove.
+  Event? _k10015;
+
+  /// Last-known NAMED kind-30015 interest sets (plain `t` tags, public),
+  /// keyed by d. Read-only union — surfaces public interest sets published
+  /// by other clients. Kept across the session so an optimistic add/remove
+  /// on the kind-10015 preserves their tags until the next refresh.
+  final Map<String, Event> _namedSets = {};
+
+  NostrActions? _actions; // set in build() once identity resolves
 
   @override
   Future<List<String>> build() async {
     final identity = await ref.watch(identityProvider.future);
     if (identity == null) return const <String>[];
-
+    _actions = NostrActions(identity);
     final pubkey = identity.pubkeyHex;
     final cache = await ref.read(localCacheProvider.future);
+    _namedSets.clear();
+    _k10015 = null;
 
-    // 1. Hydrate from SQLite (instant cold-start, before relay responds).
-    Event? cached;
+    // 1. Hydrate from SQLite (instant cold-start): kind-10015 (newest) +
+    //    all kind-30015 (newest per d).
     try {
-      final row = await cache.queryInterests(pubkey);
-      if (row != null) cached = _replaceableToEvent(row);
+      final rows10015 = await cache.queryReplaceableByAuthor(pubkey, 10015);
+      for (final row in rows10015) {
+        final e = _replaceableToEvent(row);
+        if (_k10015 == null || e.createdAt > _k10015!.createdAt) _k10015 = e;
+      }
+      final rows30015 = await cache.queryReplaceableByAuthor(pubkey, 30015);
+      for (final row in rows30015) {
+        final e = _replaceableToEvent(row);
+        final d = _dOf(e);
+        final prev = _namedSets[d];
+        if (prev == null || e.createdAt > prev.createdAt) _namedSets[d] = e;
+      }
     } catch (_) {}
-    if (cached != null) {
-      ref.read(followedTagsCacheProvider.notifier).set(cached);
+    if (_k10015 != null) {
+      ref.read(followedTagsCacheProvider.notifier).set(_k10015);
     }
+    final cachedUnion = _unionAll(_k10015);
 
-    // 2. Fetch the newest kind-30015 (default list, d "") from relays.
+    // 2. Fetch from relays: kinds [10015, 30015] (Amethyst's followed
+    //    hashtags live in the kind-10015; kind-30015 covers other clients'
+    //    public interest sets).
     final pool = ref.read(relayPoolProvider);
-    Event? newest;
-    final completer = Completer<void>();
+    Event? net10015 = _k10015;
+    final net30015 = <String, Event>{}; // d -> newest
     _sub = pool.rawEvents.listen((e) {
-      if (e.kind != 30015 || e.pubkey != pubkey) return;
-      if (!_isDefaultInterests(e)) return; // ignore named interest sets
-      if (newest == null || e.createdAt > newest!.createdAt) newest = e;
+      if (e.pubkey != pubkey) return;
+      if (e.kind == 10015) {
+        if (net10015 == null || e.createdAt > net10015!.createdAt) net10015 = e;
+      } else if (e.kind == 30015) {
+        final d = _dOf(e);
+        final prev = net30015[d];
+        if (prev == null || e.createdAt > prev.createdAt) net30015[d] = e;
+      }
     });
     final subId = nextSubId('interests');
     final connectedCount = pool.states
         .where((s) => s.status == RelayStatus.connected)
         .length;
     var eoses = 0;
+    final completer = Completer<void>();
     _eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
       eoses++;
       if (eoses >= connectedCount && !completer.isCompleted) {
@@ -1034,8 +1070,8 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
     });
     pool.request(subId, <String, dynamic>{
       'authors': [pubkey],
-      'kinds': [30015],
-      'limit': 5,
+      'kinds': [10015, 30015],
+      'limit': 50,
     }, closeOnEose: true);
     await completer.future.timeout(
       const Duration(seconds: 10),
@@ -1047,24 +1083,33 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
     _eoseSub = null;
     pool.closeSubscription(subId);
 
-    // 3. If the relay returned a newer list, persist + update the cache.
-    if (newest != null &&
-        (cached == null || newest!.createdAt > cached.createdAt)) {
-      await _persist(cache, newest!);
-      ref.read(followedTagsCacheProvider.notifier).set(newest);
-      return _tagsOf(newest);
+    // 3. Merge relay results: persist + refresh caches (newest per kind/d).
+    if (net10015 != null &&
+        (_k10015 == null || net10015!.createdAt > _k10015!.createdAt)) {
+      await _persist(cache, net10015!);
+      _k10015 = net10015;
+      ref.read(followedTagsCacheProvider.notifier).set(_k10015);
     }
-    return _tagsOf(cached);
-  }
-
-  /// Default list = d tag is "" or absent (named interest sets are ignored).
-  static bool _isDefaultInterests(Event e) {
-    for (final t in e.tags) {
-      if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
-        return (t[1] as String).isEmpty;
+    if (net30015.isNotEmpty) {
+      for (final e in net30015.values) {
+        await _persist(cache, e);
+        final d = _dOf(e);
+        final prev = _namedSets[d];
+        if (prev == null || e.createdAt > prev.createdAt) _namedSets[d] = e;
       }
     }
-    return true;
+    final union = _unionAll(_k10015);
+    // Prefer the fresh union; fall back to the cached union only if the relay
+    // pass returned nothing new at all (e.g. all relays offline).
+    return union.isEmpty ? cachedUnion : union;
+  }
+
+  /// The `d` tag value ("" if absent) — identity key for a kind-30015 set.
+  static String _dOf(Event e) {
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'd' && t[1] is String) return t[1] as String;
+    }
+    return '';
   }
 
   static List<String> _tagsOf(Event? e) {
@@ -1075,6 +1120,24 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
       if (t.length >= 2 && t[0] == 't' && t[1] is String) {
         final v = (t[1] as String).toLowerCase();
         if (v.isNotEmpty && seen.add(v)) out.add(v);
+      }
+    }
+    return out;
+  }
+
+  /// Union: decrypted followed hashtags from the kind-10015 (owner-only —
+  /// Amethyst stores them NIP-44-encrypted in `.content`) + plain `t` tags
+  /// from all kind-30015 named interest sets (other clients' public sets).
+  /// Deduped, lowercased.
+  List<String> _unionAll(Event? k10015) {
+    final out = <String>[];
+    final seen = <String>{};
+    for (final t in _actions?.followedHashtagTags(k10015) ?? const <String>[]) {
+      if (seen.add(t)) out.add(t);
+    }
+    for (final e in _namedSets.values) {
+      for (final t in _tagsOf(e)) {
+        if (seen.add(t)) out.add(t);
       }
     }
     return out;
@@ -1099,13 +1162,13 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
   Future<bool> _mutate({String? add, String? remove}) async {
     final identity = ref.read(identityProvider).value;
     if (identity == null) return false;
-    final current = ref.read(followedTagsCacheProvider);
-    final signed = NostrActions(
-      identity,
-    ).interests(current, add: add, remove: remove);
-    final next = _tagsOf(signed);
-    // Optimistic update so the UI reflects the change immediately.
-    state = AsyncData(next);
+    final actions = _actions ?? NostrActions(identity);
+    final current = ref.read(followedTagsCacheProvider); // kind-10015
+    // Write to kind-10015 (NIP-44-encrypted content) — Amethyst-compatible.
+    final signed = actions.followedHashtags(current, add: add, remove: remove);
+    // Optimistic update so the UI reflects the change immediately. Recompute
+    // the union with the new kind-10015 + unchanged named 30015 sets.
+    state = AsyncData(_unionAll(signed));
     ref.read(followedTagsCacheProvider.notifier).set(signed);
 
     final pool = ref.read(relayPoolProvider);
@@ -1113,10 +1176,11 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
     if (ok.ok) {
       final cache = await ref.read(localCacheProvider.future);
       await _persist(cache, signed);
+      _k10015 = signed;
       return true;
     }
     // Revert on failure.
-    state = AsyncData(_tagsOf(current));
+    state = AsyncData(_unionAll(current));
     ref.read(followedTagsCacheProvider.notifier).set(current);
     return false;
   }
@@ -1940,9 +2004,29 @@ final kind30000VersionProvider =
 
 /// A follow group: name + the pubkeys in it.
 class FollowGroup {
-  const FollowGroup(this.name, this.pubkeys);
+  const FollowGroup(this.name, this.pubkeys, {this.source});
   final String name;
+  /// Members of this group that are ALSO in the user's kind-3 follows (what
+  /// the people rows render — only people you actually follow show up).
   final List<String> pubkeys;
+  /// The backing NIP-51 kind-30000 event (null for 默认分组). Carries the
+  /// stable `d` identifier + event id needed for rename/delete.
+  final Event? source;
+
+  /// The list's true member count — every `p` tag in [source] — NOT just the
+  /// followed members. Amethyst shows this number; previously Costr showed
+  /// [pubkeys.length] (followed ∩ group), which read as "too few" when a list
+  /// held people the user no longer followed. Defaults to [pubkeys.length]
+  /// for 默认分组 (no backing event).
+  int get memberCount {
+    final s = source;
+    if (s == null) return pubkeys.length;
+    var n = 0;
+    for (final t in s.tags) {
+      if (t.length >= 2 && t[0] == 'p' && t[1] is String) n++;
+    }
+    return n;
+  }
 }
 
 /// Human-readable name of a NIP-51 kind-30000 follow set. Prefers the
@@ -1979,6 +2063,7 @@ List<FollowGroup> _buildFollowGroups(
   // 1. group → Set<pubkey> from kind-30000 events.
   final groupNames = <String>[];
   final groupPubkeys = <String, Set<String>>{};
+  final groupSource = <String, Event>{}; // name → backing kind-30000 event
   for (final e in k30000Events) {
     final name = kind30000DisplayName(e);
     if (name == null) continue; // default list (d="") — not a named group
@@ -1990,6 +2075,10 @@ List<FollowGroup> _buildFollowGroups(
     }
     if (!groupNames.contains(name)) groupNames.add(name);
     groupPubkeys.putIfAbsent(name, () => <String>{}).addAll(pks);
+    // Keep the newest kind-30000 event as the source of truth for the d-tag
+    // + event id (used by rename/delete).
+    final prev = groupSource[name];
+    if (prev == null || e.createdAt > prev.createdAt) groupSource[name] = e;
   }
 
   // 2. Group the follows.
@@ -2007,12 +2096,14 @@ List<FollowGroup> _buildFollowGroups(
     if (!inAnyGroup) defaultGroup.add(pk);
   }
   result.add(FollowGroup('默认分组', defaultGroup));
-  // Custom groups: follows that are in this group.
+  // Custom groups: always surfaced (even with zero followed members) so the
+  // user can see + manage (rename/delete) every list they published — matches
+  // Amethyst. Rows still only render followed members.
   for (final name in groupNames) {
     final inGroup = follows
         .where((pk) => groupPubkeys[name]!.contains(pk))
         .toList();
-    if (inGroup.isNotEmpty) result.add(FollowGroup(name, inGroup));
+    result.add(FollowGroup(name, inGroup, source: groupSource[name]));
   }
   return result;
 }

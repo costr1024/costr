@@ -345,10 +345,43 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
       );
     }
     final async = ref.watch(notificationsProvider(myPubkey));
+    final unreadCount =
+        ref.watch(unreadNotificationCountProvider(myPubkey));
+    // Lifted out of `.when` so the AppBar action can mark-all-read without
+    // rebuilding the body. `filtered` follows the current _tab.
+    final allItems = async.value ?? const <NotificationItem>[];
+    final filtered = _tab == 'mentions'
+        ? allItems
+              .where(
+                (i) =>
+                    i.type == NotificationType.mention ||
+                    i.type == NotificationType.reply,
+              )
+              .toList()
+        : allItems;
     return Scaffold(
       appBar: AppBar(
         title: const Text('通知'),
         actions: [
+          // Mark all currently-shown notifications as read. First login can
+          // surface a large backlog of historical unread (DESIGN §5.2) —
+          // tapping one-by-one isn't practical, so this clears the visible
+          // tab in one shot. Hidden when there's nothing unread.
+          if (unreadCount > 0)
+            IconButton(
+              icon: const Icon(Icons.done_all),
+              tooltip: '全部标记已读',
+              onPressed: () {
+                final ids = filtered
+                    .where((i) => !ref
+                        .read(notificationReadProvider)
+                        .contains(i.id))
+                    .map((i) => i.id)
+                    .toList();
+                if (ids.isEmpty) return;
+                ref.read(notificationReadProvider.notifier).markRead(ids);
+              },
+            ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () => context.push('/settings/notifications'),
@@ -379,20 +412,12 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
             child: async.when(
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (_, _) => const Center(child: Text('通知加载失败')),
-              data: (items) {
-                final filtered = _tab == 'mentions'
-                    ? items
-                          .where(
-                            (i) =>
-                                i.type == NotificationType.mention ||
-                                i.type == NotificationType.reply,
-                          )
-                          .toList()
-                    : items;
+              data: (_) {
                 // Read/unread is per-item, marked read on tap (DESIGN §5.2
                 // updated): no whole-page auto-markRead — unread styling stays
                 // stable until the user actually opens an item. The bottom-nav
-                // badge counts items not yet marked read.
+                // badge counts items not yet marked read. The done_all action
+                // above is the explicit bulk-clear path.
                 if (filtered.isEmpty) {
                   return const Center(
                     child: Padding(

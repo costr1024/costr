@@ -965,13 +965,27 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
           if (segmented) {
             sections.add(
               Container(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
                 color: theme.colorScheme.surfaceContainerHighest,
-                child: Text(
-                  '${g.name} (${filtered.length})',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        // memberCount = the list's true `p`-tag count (not
+                        // just followed ∩ group), matching Amethyst.
+                        '${g.name} (${g.memberCount})',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (g.source != null)
+                      _FollowSetMenu(
+                        group: g,
+                        onRename: () => _showRenameSheet(g),
+                        onDelete: () => _confirmDeleteGroup(g),
+                      ),
+                  ],
                 ),
               ),
             );
@@ -1008,6 +1022,130 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
       },
     );
     return slivers;
+  }
+
+  /// Rename a custom follow set (NIP-51 kind-30000) via a bottom-sheet
+  /// editor. Republishes with `d` preserved + `name` updated; the list never
+  /// forks. See [NostrActions.renameFollowSet].
+  Future<void> _showRenameSheet(FollowGroup g) async {
+    final source = g.source;
+    if (source == null) return;
+    final controller = TextEditingController(text: g.name);
+    final newName = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          16, 16, 16, 16 + MediaQuery.of(ctx).viewInsets.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Text('重命名列表',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+              ],
+            ),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '列表名称'),
+              onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () =>
+                    Navigator.pop(ctx, controller.text.trim()),
+                child: const Text('确定'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (newName == null || newName.isEmpty || newName == g.name) return;
+    await _publishRename(source, newName);
+  }
+
+  Future<void> _publishRename(Event source, String newName) async {
+    final id = ref.read(identityProvider).value;
+    if (id == null) return;
+    final signed = NostrActions(id).renameFollowSet(source, newName);
+    await ref.read(relayPoolProvider).publishAndWait(signed);
+    // Local cache so the rename shows instantly + offline. The relay echo
+    // also re-ingests and bumps kind30000VersionProvider, but doing it now
+    // gives immediate feedback.
+    final db = await ref.read(localCacheProvider.future);
+    await db.writeEvent(
+      id: signed.id,
+      pubkey: signed.pubkey,
+      kind: signed.kind,
+      createdAt: signed.createdAt,
+      content: signed.content,
+      sig: signed.sig,
+      raw: jsonEncode(signed.toWireObject()),
+      tagsJson: jsonEncode(signed.tags),
+      tags: signed.tags,
+    );
+    ref.read(kind30000VersionProvider.notifier).bump();
+  }
+
+  /// Delete a custom follow set: confirm, then publish a NIP-09 kind-5 with
+  /// an `a` coordinate (30000:pubkey:d) — the correct form for replaceable
+  /// events. Amethyst's e-only delete is ineffective; this is the fix.
+  Future<void> _confirmDeleteGroup(FollowGroup g) async {
+    final source = g.source;
+    if (source == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除列表'),
+        content: Text('删除「${g.name}」？会发布 NIP-09 删除事件，'
+            '所有客户端同步后会移除该列表。列表里的关注人不会被取消关注。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _publishDelete(source);
+  }
+
+  Future<void> _publishDelete(Event source) async {
+    final id = ref.read(identityProvider).value;
+    if (id == null) return;
+    final signed = NostrActions(id).deleteFollowSet(source);
+    await ref.read(relayPoolProvider).publishAndWait(signed);
+    // The kind-5 echoes back and EventStoreNotifier._applyDeletion clears the
+    // local SQLite row (author-validated a-coord). Also optimistically clear
+    // + bump so the list disappears before the echo lands.
+    final db = await ref.read(localCacheProvider.future);
+    String? dVal;
+    for (final t in source.tags) {
+      if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
+        dVal = t[1] as String;
+        break;
+      }
+    }
+    if (dVal != null) {
+      await db.deleteReplaceableByCoord(id.pubkeyHex, 30000, dVal);
+    }
+    ref.read(kind30000VersionProvider.notifier).bump();
   }
 
   /// 关注的标签 — synced via NIP-51 kind-30015 (DESIGN §8 / ui_demo.html
@@ -1430,6 +1568,52 @@ class _FollowSubTabs extends StatelessWidget {
 /// Horizontal group-filter chip row for the 关注 tab (DESIGN §8 / ui_demo.html
 /// `.grp-chips`). "全部" (selected = null) → segmented by group; a specific
 /// group → flat list of only that group.
+class _FollowSetMenu extends StatelessWidget {
+  const _FollowSetMenu({
+    required this.group,
+    required this.onRename,
+    required this.onDelete,
+  });
+  final FollowGroup group;
+  final VoidCallback onRename;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, size: 20),
+      tooltip: '列表操作',
+      onSelected: (v) {
+        if (v == 'rename') {
+          onRename();
+        } else if (v == 'delete') {
+          onDelete();
+        }
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'rename',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.edit, size: 20),
+            title: Text('重命名'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.delete_outline, size: 20),
+            title: Text('删除'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _GroupChipRow extends StatelessWidget {
   const _GroupChipRow({
     required this.groups,
