@@ -17,6 +17,27 @@ import 'identity.dart';
 /// events built here so other clients can attribute the source.
 const List<String> _clientTag = ['client', 'Costr'];
 
+/// The `d` tag value of [e], or null if absent. Identity key for a
+/// parameterized-replaceable event.
+String? _dTagOf(Event e) {
+  for (final t in e.tags) {
+    if (t.length >= 2 && t[0] == 'd' && t[1] is String) return t[1] as String;
+  }
+  return null;
+}
+
+/// The NIP-33 address coordinate `K:pubkey:d` for [e] if it is
+/// parameterized-replaceable (kind 30000–39999 with a `d` tag), else null.
+/// Used to emit the `a` tag in reposts/reactions/deletions of addressable
+/// events — Amethyst includes `a` for addressable targets (NIP-18/25/09).
+String? _addressCoordOf(Event e) {
+  final k = e.kind;
+  if (k < 30000 || k >= 40000) return null;
+  final d = _dTagOf(e);
+  if (d == null) return null;
+  return '$k:${e.pubkey}:$d';
+}
+
 class NostrActions {
   NostrActions(this.id);
   final Identity id;
@@ -58,6 +79,9 @@ class NostrActions {
       ['p', target.pubkey, relay],
       ['k', '${target.kind}'],
     ];
+    // NIP-25: include `a` for addressable reaction targets (Amethyst does).
+    final coord = _addressCoordOf(target);
+    if (coord != null) tags.add(['a', coord]);
     if (customShortcode != null && customUrl != null) {
       tags.add(['emoji', customShortcode, customUrl]);
     }
@@ -71,7 +95,11 @@ class NostrActions {
     final tags = <List<String>>[
       ['e', target.id, relay],
       ['p', target.pubkey, relay],
+      ['k', '${target.kind}'],
     ];
+    // NIP-18: include `a` for addressable repost targets (Amethyst does).
+    final coord = _addressCoordOf(target);
+    if (coord != null) tags.add(['a', coord]);
     return id.signEvent(
       kind: 6,
       content: jsonEncode(target.toWireObject()),
@@ -193,6 +221,12 @@ class NostrActions {
     final tags = <List<String>>[
       ['e', current.id],
       ['a', coord],
+      // Amethyst's DeletionEvent.build emits the author `p` + original `kind`
+      // for addressable deletes; include them so Costr's outgoing delete
+      // matches Amethyst exactly (interop is via `e`+`a`, but `p`+`kind` are
+      // harmless extras Amethyst clients key off).
+      ['p', current.pubkey],
+      ['k', '${current.kind}'],
       _clientTag,
     ];
     return id.signEvent(kind: 5, content: '', tags: tags);

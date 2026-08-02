@@ -96,6 +96,9 @@ void main() {
       expect(e.tags, _tag(['a', '30000:${id.pubkeyHex}:f40fa7f0-8441-4eae-8b55-f605699da40b']));
       // e tag points at the current event id (best-effort for e-keyed clients).
       expect(e.tags, _tag(['e', 'ev-id-123']));
+      // Amethyst parity: author `p` + original `kind`.
+      expect(e.tags, _tag(['p', 'pk']));
+      expect(e.tags, _tag(['k', '30000']));
       expect(e.tags, _tag(['client', 'Costr']));
       expect(id.verifyEventSignature(id: e.id, sig: e.sig), isTrue);
     });

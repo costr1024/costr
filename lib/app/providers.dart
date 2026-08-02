@@ -1030,7 +1030,7 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
       final rows30015 = await cache.queryReplaceableByAuthor(pubkey, 30015);
       for (final row in rows30015) {
         final e = _replaceableToEvent(row);
-        final d = _dOf(e);
+        final d = dOf(e);
         final prev = _namedSets[d];
         if (prev == null || e.createdAt > prev.createdAt) _namedSets[d] = e;
       }
@@ -1051,7 +1051,7 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
       if (e.kind == 10015) {
         if (net10015 == null || e.createdAt > net10015!.createdAt) net10015 = e;
       } else if (e.kind == 30015) {
-        final d = _dOf(e);
+        final d = dOf(e);
         final prev = net30015[d];
         if (prev == null || e.createdAt > prev.createdAt) net30015[d] = e;
       }
@@ -1093,7 +1093,7 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
     if (net30015.isNotEmpty) {
       for (final e in net30015.values) {
         await _persist(cache, e);
-        final d = _dOf(e);
+        final d = dOf(e);
         final prev = _namedSets[d];
         if (prev == null || e.createdAt > prev.createdAt) _namedSets[d] = e;
       }
@@ -1105,7 +1105,7 @@ class FollowedTagsNotifier extends AsyncNotifier<List<String>> {
   }
 
   /// The `d` tag value ("" if absent) — identity key for a kind-30015 set.
-  static String _dOf(Event e) {
+  static String dOf(Event e) {
     for (final t in e.tags) {
       if (t.length >= 2 && t[0] == 'd' && t[1] is String) return t[1] as String;
     }
@@ -2891,13 +2891,16 @@ Future<RelayOk> bookmarkEvent(
 }
 
 /// A user's bookmarked note ids with origin (public vs private). NIP-51
-/// kind-10003. Amethyst-style loading: yields the SQLite-cached list instantly
-/// (public `e` tags for anyone; plus the NIP-44-decrypted private entries when
-/// [pubkey] is the logged-in user), then background-refreshes from relays. Used
-/// by the profile's 收藏 section (DESIGN §8) — every user's PUBLIC bookmarks
-/// show on their profile; private bookmarks only render for the owner (others
-/// can't decrypt them). Entries are origin-tagged so the tab can render
-/// 公开书签 / 私人书签 as separate sections instead of one merged list.
+/// kind-10003 (single global list) AND kind-30003 (labeled bookmark lists,
+/// multi-instance — Amethyst uses these for named bookmark groups). Both
+/// carry public `e` tags + NIP-44-encrypted private entries; we aggregate
+/// across them. Amethyst-style loading: yields the SQLite-cached list
+/// instantly (public `e` tags for anyone; plus the NIP-44-decrypted private
+/// entries when [pubkey] is the logged-in user), then background-refreshes
+/// from relays. Used by the profile's 收藏 section (DESIGN §8) — every
+/// user's PUBLIC bookmarks show on their profile; private bookmarks only
+/// render for the owner (others can't decrypt them). Entries are
+/// origin-tagged so the tab can render 公开书签 / 私人书签 separately.
 final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
   ref,
   pubkey,
@@ -2910,19 +2913,52 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
       ? NostrActions(identity).bookmarkEntries(e, includePrivate: isSelf)
       : const <BookmarkEntry>[];
 
-  // 1. SQLite cache (instant) — kind-10003 is persisted by EventStoreNotifier.
+  // Aggregate bookmark entries across the global kind-10003 + every
+  // kind-30003 labeled list (deduped by note id; public wins on collision).
+  List<BookmarkEntry> aggregate(Event? k10003, Map<String, Event> k30003) {
+    final out = <BookmarkEntry>[];
+    final seen = <String>{};
+    void addAll(List<BookmarkEntry> es) {
+      for (final e in es) {
+        if (seen.add(e.id)) out.add(e);
+      }
+    }
+    addAll(entriesOf(k10003));
+    for (final e in k30003.values) {
+      addAll(entriesOf(e));
+    }
+    return out;
+  }
+
+  String dOf(Event e) {
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'd' && t[1] is String) return t[1] as String;
+    }
+    return '';
+  }
+
+  // 1. SQLite cache (instant) — kind-10003 + all kind-30003, persisted by
+  //    EventStoreNotifier's replaceable-kinds path.
   final cache = ref.read(localCacheProvider).value;
-  Event? cached;
+  Event? cachedK10003;
+  final cachedK30003 = <String, Event>{}; // d → newest
   if (cache != null) {
     try {
       final row = await cache.queryReplaceable(pubkey, 10003);
-      if (row != null) cached = _replaceableToEvent(row);
+      if (row != null) cachedK10003 = _replaceableToEvent(row);
+      final rows30003 = await cache.queryReplaceableByAuthor(pubkey, 30003);
+      for (final r in rows30003) {
+        final e = _replaceableToEvent(r);
+        final d = dOf(e);
+        final prev = cachedK30003[d];
+        if (prev == null || e.createdAt > prev.createdAt) cachedK30003[d] = e;
+      }
     } catch (_) {}
   }
-  var latest = entriesOf(cached);
+  var latest = aggregate(cachedK10003, cachedK30003);
   if (latest.isNotEmpty) yield List<BookmarkEntry>.unmodifiable(latest);
 
-  // 2. Relay refresh — first matching event or first EOSE, newest by createdAt.
+  // 2. Relay refresh — kinds [10003, 30003], newest per (kind|d).
   final pool = ref.watch(relayPoolProvider);
   final ctrl = StreamController<List<BookmarkEntry>>();
   Timer? flush;
@@ -2941,13 +2977,24 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
   final done = Completer<void>();
-  Event? newest;
+  Event? netK10003 = cachedK10003;
+  final netK30003 = Map<String, Event>.from(cachedK30003);
   evSub = pool.rawEvents.listen((e) {
-    if (e.kind != 10003 || e.pubkey != pubkey) return;
-    if (newest == null || e.createdAt > newest!.createdAt) {
-      newest = e;
-      latest = entriesOf(e);
-      scheduleEmit();
+    if (e.pubkey != pubkey) return;
+    if (e.kind == 10003) {
+      if (netK10003 == null || e.createdAt > netK10003!.createdAt) {
+        netK10003 = e;
+        latest = aggregate(netK10003, netK30003);
+        scheduleEmit();
+      }
+    } else if (e.kind == 30003) {
+      final d = dOf(e);
+      final prev = netK30003[d];
+      if (prev == null || e.createdAt > prev.createdAt) {
+        netK30003[d] = e;
+        latest = aggregate(netK10003, netK30003);
+        scheduleEmit();
+      }
     }
   });
   final subId = nextSubId('bookmarks');
@@ -2956,8 +3003,8 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
   });
   pool.request(subId, <String, dynamic>{
     'authors': [pubkey],
-    'kinds': [10003],
-    'limit': 1,
+    'kinds': [10003, 30003],
+    'limit': 50,
   }, closeOnEose: true);
   final t = Timer(const Duration(seconds: 8), () {
     if (!done.isCompleted) done.complete();
