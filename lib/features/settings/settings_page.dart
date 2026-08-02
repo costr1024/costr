@@ -4,6 +4,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../app/providers.dart';
 import '../../app/theme.dart';
@@ -60,6 +61,8 @@ class SettingsPage extends ConsumerWidget {
             style: Theme.of(context).textTheme.labelSmall,
             textAlign: TextAlign.center,
           ),
+          const SizedBox(height: 8),
+          const _VersionFooter(),
         ],
       ),
     );
@@ -401,6 +404,34 @@ class _Row extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Footer version line (settings page bottom). Reads the running app's
+/// version via package_info_plus so it always matches the actual build.
+class _VersionFooter extends StatelessWidget {
+  const _VersionFooter();
+
+  static final Future<String> _label = _load();
+
+  static Future<String> _load() async {
+    final info = await PackageInfo.fromPlatform();
+    return 'Costr v${info.version}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String>(
+      future: _label,
+      builder: (BuildContext context, AsyncSnapshot<String> snap) {
+        final text = snap.data ?? 'Costr';
+        return Text(
+          text,
+          style: Theme.of(context).textTheme.labelSmall,
+          textAlign: TextAlign.center,
+        );
+      },
     );
   }
 }

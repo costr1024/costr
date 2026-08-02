@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.1.0+1
+version: 0.1.0-beta+1
 
 environment:
   sdk: ^3.12.2
@@ -84,6 +84,12 @@ dependencies:
   qr_flutter: ^4.1.0
   # OS-native share sheet (post sharing via njump.me URLs).
   share_plus: ^11.0.0
+  # Save images/videos to the system gallery on mobile (Android MediaStore /
+  # iOS Photos) — used by the media viewer & fullscreen video save buttons.
+  # Desktop + generic files fall back to file_picker's save-as dialog.
+  gal: ^2.3.3
+  # Read the running app's version/build number for the settings-page footer.
+  package_info_plus: ^8.0.0
   # Material/Cupertino localization delegates (Chinese text-selection toolbar etc.).
   flutter_localizations:
     sdk: flutter

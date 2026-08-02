@@ -23,6 +23,7 @@ import '../app/theme.dart';
 import '../models/event.dart';
 import '../utils/nav.dart';
 import '../utils/nip19.dart';
+import '../services/media_download.dart';
 import 'avatar.dart';
 import 'media_viewer_page.dart';
 import 'mention_linkifier.dart';
@@ -261,7 +262,8 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
           spacing: 8,
           runSpacing: 6,
           children: [
-            for (final f in extraFiles) _FileChip(name: _fileName(f.url)),
+            for (final f in extraFiles)
+              _FileChip(url: f.url, name: _fileName(f.url)),
           ],
         ),
       );
@@ -357,37 +359,69 @@ String _fileName(String url) {
 }
 
 class _FileChip extends StatelessWidget {
-  const _FileChip({required this.name});
+  const _FileChip({required this.url, required this.name});
+  final String url;
   final String name;
+
+  Future<void> _save(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('下载中…'), duration: Duration(seconds: 4)),
+    );
+    final msg = await MediaDownload.save(
+      url: url,
+      kind: MediaKind.file,
+      filename: name,
+    );
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text(msg ?? '已取消'),
+        ),
+      );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 240),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.insert_drive_file_outlined,
-              size: 18,
-              color: theme.colorScheme.primary,
+      child: Material(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _save(context),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.insert_drive_file_outlined,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    name,
+                    style: theme.textTheme.labelSmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Icon(
+                  Icons.download_rounded,
+                  size: 16,
+                  color: theme.colorScheme.primary,
+                ),
+              ],
             ),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                name,
-                style: theme.textTheme.labelSmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

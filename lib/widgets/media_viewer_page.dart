@@ -13,6 +13,8 @@ library;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../services/media_download.dart';
+
 /// Push the viewer over the current route with a black fade transition.
 /// [images] is the full set of images in the post (so the gallery can swipe
 /// between them); [initialIndex] is the one that was tapped.
@@ -56,11 +58,35 @@ class _MediaViewerPageState extends State<_MediaViewerPage> {
   );
   late int _index = widget.initialIndex;
   bool _controlsVisible = true;
+  bool _saving = false;
 
   void _close() => Navigator.of(context).maybePop();
 
   void _toggleControls() {
     setState(() => _controlsVisible = !_controlsVisible);
+  }
+
+  Future<void> _saveCurrent() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('保存中…'), duration: Duration(seconds: 4)),
+    );
+    final msg = await MediaDownload.save(
+      url: widget.images[_index],
+      kind: MediaKind.image,
+    );
+    if (!mounted) return;
+    setState(() => _saving = false);
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text(msg ?? '已取消'),
+        ),
+      );
   }
 
   @override
@@ -118,6 +144,12 @@ class _MediaViewerPageState extends State<_MediaViewerPage> {
                             ),
                           ),
                         ),
+                      _CircleButton(
+                        icon: _saving
+                            ? Icons.downloading_outlined
+                            : Icons.download_rounded,
+                        onTap: _saving ? null : _saveCurrent,
+                      ),
                     ],
                   ),
                 ),
@@ -163,10 +195,11 @@ class _ZoomableImage extends StatelessWidget {
 class _CircleButton extends StatelessWidget {
   const _CircleButton({required this.icon, required this.onTap});
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final disabled = onTap == null;
     return Material(
       color: Colors.black38,
       shape: const CircleBorder(),
@@ -175,7 +208,11 @@ class _CircleButton extends StatelessWidget {
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(8),
-          child: Icon(icon, color: Colors.white, size: 24),
+          child: Icon(
+            icon,
+            color: disabled ? Colors.white38 : Colors.white,
+            size: 24,
+          ),
         ),
       ),
     );

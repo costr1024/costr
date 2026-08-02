@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
+import '../services/media_download.dart';
+
 /// Push a fullscreen video route for [url], starting at [startPosition].
 Future<void> pushFullscreenVideo(
   BuildContext context, {
@@ -38,15 +40,14 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
   bool _initialized = false;
   bool _error = false;
   bool _showControls = true;
+  bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    // Landscape on mobile only; harmless no-op on desktop.
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
+    // Orientation is applied after init based on the video's aspect ratio
+    // (portrait video → lock portrait; landscape video → lock landscape).
+    // Defer the lock so a portrait clip isn't forced sideways.
     _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
     _controller!
         .initialize()
@@ -55,6 +56,7 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
             _controller?.dispose();
             return;
           }
+          _applyOrientation();
           _controller!.seekTo(widget.startPosition);
           _controller!.play();
           setState(() => _initialized = true);
@@ -62,6 +64,44 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
         .catchError((Object _) {
           if (mounted) setState(() => _error = true);
         });
+  }
+
+  /// Lock orientation to the video's own aspect: width >= height → landscape,
+  /// else portrait. Lets portrait (vertical) clips play upright instead of
+  /// being squeezed into a forced-landscape canvas.
+  void _applyOrientation() {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    final size = c.value.size;
+    final landscape = size.width >= size.height;
+    SystemChrome.setPreferredOrientations(
+      landscape
+          ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+          : [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown],
+    );
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('保存中…'), duration: Duration(seconds: 4)),
+    );
+    final msg = await MediaDownload.save(
+      url: widget.url,
+      kind: MediaKind.video,
+    );
+    if (!mounted) return;
+    setState(() => _saving = false);
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 3),
+          content: Text(msg ?? '已取消'),
+        ),
+      );
   }
 
   @override
@@ -144,11 +184,19 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
               child: SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.all(8),
-                  child: Align(
-                    alignment: Alignment.topLeft,
-                    child: _CloseButton(
-                      onTap: () => Navigator.of(context).pop(),
-                    ),
+                  child: Row(
+                    children: [
+                      _CloseButton(
+                        onTap: () => Navigator.of(context).pop(),
+                      ),
+                      const Spacer(),
+                      _CloseButton(
+                        icon: _saving
+                            ? Icons.downloading_outlined
+                            : Icons.download_rounded,
+                        onTap: _saving ? null : _save,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -161,20 +209,26 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
 }
 
 class _CloseButton extends StatelessWidget {
-  const _CloseButton({required this.onTap});
-  final VoidCallback onTap;
+  const _CloseButton({this.icon = Icons.close_rounded, required this.onTap});
+  final IconData icon;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final disabled = onTap == null;
     return Material(
       color: Colors.black38,
       shape: const CircleBorder(),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        child: const Padding(
-          padding: EdgeInsets.all(8),
-          child: Icon(Icons.close_rounded, color: Colors.white, size: 24),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(
+            icon,
+            color: disabled ? Colors.white38 : Colors.white,
+            size: 24,
+          ),
         ),
       ),
     );
