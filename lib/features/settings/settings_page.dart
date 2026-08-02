@@ -146,7 +146,9 @@ class AboutPage extends StatelessWidget {
           _IntroCard(
             icon: Icons.lock_outline,
             title: '匿名，一把钥匙就是身份',
-            body: '不用手机号、不用邮箱、不实名。一串钥匙就是你的整个账号，不绑定任何现实身份。',
+            body: '不用手机号、不用邮箱、不实名。一串钥匙就是你的整个账号，不绑定任何现实身份。'
+                '想更进一步隐身？搭配 VPN 代理服务一起用——中继只能看到代理的地址，'
+                '看不到你的真实网络位置，匿名保障更高。',
           ),
           _IntroCard(
             icon: Icons.dns_outlined,
