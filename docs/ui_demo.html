@@ -1288,12 +1288,16 @@ document.getElementById('logout-sheet').addEventListener('click',e=>{
 /* onboarding */
 const OB_STEPS=[
   {title:'发帖',text:'点右下角按钮发一条帖子。你发的会广播到全网，没有平台能审核你的号。',pos:{right:'12px',bottom:'96px'}},
+  {title:'搜索',text:'点底栏「搜索」按内容或名字搜用户、帖子。和首页的语言/关注过滤互不影响。',pos:{left:'50px',bottom:'96px'}},
   {title:'通知',text:'点底栏的「通知」看你被 @、被回复、被喜欢。App 在后台不会偷偷盯着，省电。',pos:{left:'50px',bottom:'96px'}},
   {title:'关注',text:'点别人的头像或名字进主页，关注后他们的帖子会出现在「首页·关注」里。',pos:{left:'50px',bottom:'96px'}},
+  {title:'语言过滤',text:'首页顶栏 🌐 按语言过滤帖子：全部 / 🇨🇳中文 / 🇬🇧英文 / 🇯🇵日文。只在首页生效。',pos:{right:'12px',top:'56px'}},
+  {title:'关注过滤',text:'切到「关注」后，顶栏筛选图标可按自定义分组或标签过滤，只看你想看的人。',pos:{left:'120px',top:'56px'}},
+  {title:'设置',text:'「我的」→ 设置：账号可再看/备份私钥、查看服务器节点与时延、通知开关，还有「关于 Costr」。私钥只在本机。',pos:{right:'12px',bottom:'96px'}},
 ];
 let obStep=0;
 function nextOB(){obStep++;if(obStep>=OB_STEPS.length){closeOB();return;}showOB();}
-function showOB(){const s=OB_STEPS[obStep];document.getElementById('ob-title').textContent=s.title;document.getElementById('ob-text').textContent=s.text;const t=document.getElementById('ob-tip');t.style.left=s.pos.left||'';t.style.right=s.pos.right||'';t.style.bottom=s.pos.bottom||'';}
+function showOB(){const s=OB_STEPS[obStep];document.getElementById('ob-title').textContent=s.title;document.getElementById('ob-text').textContent=s.text;const t=document.getElementById('ob-tip');t.style.left=s.pos.left||'';t.style.right=s.pos.right||'';t.style.top=s.pos.top||'';t.style.bottom=s.pos.bottom||'';}
 function closeOB(){document.getElementById('ob').classList.remove('show');}
 function startOB(){obStep=0;showOB();document.getElementById('ob').classList.add('show');}
 
