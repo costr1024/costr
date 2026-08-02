@@ -266,6 +266,11 @@ class _FeedPageState extends ConsumerState<FeedPage> {
               selected: {mode},
               onSelectionChanged: (Set<FeedMode> s) {
                 if (s.isNotEmpty) {
+                  // Release any read-freeze before switching modes so the new
+                  // mode's list isn't pinned behind the old mode's barrier
+                  // (the barrier post id likely isn't in the new mode's events
+                  // anyway, but clearing avoids a one-frame freeze artifact).
+                  _release();
                   ref.read(feedModeProvider.notifier).set(s.first);
                 }
               },
@@ -298,6 +303,16 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                               } else if (atTop && _barrierId != null) {
                                 _release();
                               }
+                              // Trigger load-more on scroll-update near the
+                              // bottom too (not only on scroll-end) — a fling
+                              // that overshoots the end may not fire a clean
+                              // ScrollEnd within the threshold, leaving the
+                              // user stuck at the bottom with "no older posts".
+                              if (n.metrics.pixels >=
+                                  n.metrics.maxScrollExtent -
+                                      _loadMoreThreshold) {
+                                _loadMore();
+                              }
                             }
                             if (n is ScrollEndNotification &&
                                 n.metrics.pixels >=
@@ -309,13 +324,43 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                           },
                           child: ListView.builder(
                             controller: _controller,
-                            // Increase the build window downward so scrolling
-                            // back up doesn't flash empty cards while the
-                            // builder catches up.
+                            // Per-mode scroll position: switching 全球↔关注
+                            // restores each mode's own saved offset instead of
+                            // carrying the other's (so 关注 stays at the top
+                            // after you scrolled 全球 back 2h). PageStorage keeps
+                            // the offset per key across rebuilds.
+                            key: PageStorageKey<FeedMode>(mode),
+                            // +1 item: a trailing load-more indicator so the
+                            // user gets feedback (and a slightly taller build
+                            // window to nudge the scroll metrics).
                             addAutomaticKeepAlives: false,
-                            itemCount: visible.length,
-                            itemBuilder: (BuildContext context, int i) =>
-                                EventCard(event: visible[i]),
+                            itemCount: visible.length + 1,
+                            itemBuilder: (BuildContext context, int i) {
+                              if (i < visible.length) {
+                                return EventCard(event: visible[i]);
+                              }
+                              // Trailing indicator: spinner while loading
+                              // more, else a quiet hint. The mere presence of
+                              // this row also keeps the list scrollable past
+                              // the last real post so the scroll-update trigger
+                              // above can fire even when the feed barely fills
+                              // the screen.
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 24),
+                                child: Center(
+                                  child: _loadingMore
+                                      ? const SizedBox(
+                                          width: 22,
+                                          height: 22,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: CostrColors.text3,
+                                          ),
+                                        )
+                                      : const SizedBox(height: 22),
+                                ),
+                              );
+                            },
                           ),
                         ),
                         if (pending > 0)

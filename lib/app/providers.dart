@@ -312,13 +312,19 @@ final userRelayListProvider = FutureProvider.family<RelayList?, String>((
     } catch (_) {}
   }
   final pool = ref.watch(relayPoolProvider);
+  // ALSO query the indexer pool concurrently. The default pool only sees a
+  // kind-10002 that happens to live on the user's connected relays; indexers
+  // (coracle / kindpag.es) aggregate user profile-ish events broadly, so a
+  // user whose relay list isn't on any connected relay but IS indexed is
+  // recovered here. Without this, the metadata outbox fallback (which calls
+  // this provider) gives up on such users and their profile/avatar never
+  // loads. First match or first EOSE (whichever pool) wins.
+  final indexerPool = ref.read(indexerPoolProvider);
   final completer = Completer<void>();
   Event? newest;
   final seen = <String>{};
-  late StreamSubscription<Event> evSub;
-  late StreamSubscription<String> eoseSub;
-  final subId = nextSubId('rl');
-  evSub = pool.rawEvents.listen((e) {
+  var eosesRemaining = 2; // default pool + indexer pool
+  void onListEvent(Event e) {
     if (e.pubkey != pubkey || e.kind != 10002) return;
     if (!seen.add(e.id)) return;
     if (newest == null || e.createdAt > newest!.createdAt) {
@@ -329,25 +335,48 @@ final userRelayListProvider = FutureProvider.family<RelayList?, String>((
     // stale version on a fast relay is rare and is covered by the broadcast
     // fallback in [userPostsProvider].
     if (!completer.isCompleted) completer.complete();
-  });
-  // Resolve on the FIRST relay to EOSE (or first kind-10002 event, above) —
-  // NOT all of them. Waiting for ALL relays lets a single dead/slow relay
-  // stall the lookup for the full timeout, and [userPostsProvider] blocks on
-  // this future. If a slower relay actually held the user's kind-10002, the
-  // broadcast fallback in userPostsProvider still reaches their posts via the
-  // main pool. The 5-min TTL cache means repeat visits skip the lookup anyway.
-  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    if (!completer.isCompleted) completer.complete();
-  });
-  pool.request(subId, <String, dynamic>{
+  }
+
+  // Resolve on the FIRST kind-10002 event (above) OR once BOTH pools have
+  // EOSEd — NOT after just one. Waiting for only one pool's EOSE would let a
+  // slow/dead pool stall the lookup; racing both and completing on first hit
+  // / both-done keeps it fast. [userPostsProvider] blocks on this future, so
+  // the 5s timeout is the hard cap.
+  void onEose() {
+    if (--eosesRemaining <= 0 && !completer.isCompleted) {
+      completer.complete();
+    }
+  }
+
+  late StreamSubscription<Event> defSub, idxSub;
+  late StreamSubscription<String> defEose, idxEose;
+  defSub = pool.rawEvents.listen(onListEvent);
+  final defId = nextSubId('rl');
+  defEose = pool.eoseStream.where((s) => s == defId).listen((_) => onEose());
+  pool.request(defId, <String, dynamic>{
     'kinds': [10002],
     'authors': [pubkey],
     'limit': 1,
   }, closeOnEose: true);
+
+  idxSub = indexerPool.rawEvents.listen(onListEvent);
+  final idxId = nextSubId('rlidx');
+  idxEose = indexerPool.eoseStream
+      .where((s) => s == idxId)
+      .listen((_) => onEose());
+  indexerPool.request(idxId, <String, dynamic>{
+    'kinds': [10002],
+    'authors': [pubkey],
+    'limit': 1,
+  }, closeOnEose: true);
+
   ref.onDispose(() {
-    evSub.cancel();
-    eoseSub.cancel();
-    pool.closeSubscription(subId);
+    defSub.cancel();
+    idxSub.cancel();
+    defEose.cancel();
+    idxEose.cancel();
+    pool.closeSubscription(defId);
+    indexerPool.closeSubscription(idxId);
   });
   await completer.future.timeout(const Duration(seconds: 5), onTimeout: () {});
   final list = newest == null ? null : RelayList.parse(newest!);
@@ -1653,19 +1682,87 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
   );
 });
 
-/// Candidate ancestor ids referenced by a kind-1 note's `e` tags — excludes
-/// `mention` markers (those aren't replies). Used to seed the parallel walk.
-List<String> _candidateAncestorIds(Event e) {
-  final ids = <String>{};
-  for (final t in e.tags) {
-    if (t.length < 2 || t[0] != 'e' || t[1] is! String) continue;
-    final marker = (t.length >= 4 && t[3] is String) ? (t[3] as String) : '';
-    if (marker == 'mention') continue;
-    final id = t[1] as String;
-    if (id != e.id) ids.add(id);
-  }
-  return ids.toList();
+/// Parse the note a repost embeds, from the repost's OWN content. NIP-18:
+/// a kind-6 repost's content is the stringified-JSON of the reposted event,
+/// so a compliant repost carries the full embedded note — no relay fetch
+/// needed. Returns null when [repost] isn't a repost, has no embedded JSON,
+/// or the embedded event isn't post-like (a repost should only embed a post).
+@visibleForTesting
+Event? parseEmbeddedRepost(Event repost) {
+  if (!repost.isRepost || repost.content.isEmpty) return null;
+  try {
+    final obj = jsonDecode(repost.content);
+    if (obj is Map<String, dynamic>) {
+      final e = Event.fromJson(obj);
+      return e.isPostLike ? e : null;
+    }
+  } catch (_) {}
+  return null;
 }
+
+/// Relay hints (NIP-01 `e` tag t[2]) pointing at where to find [repostedId]
+/// on [repost]'s tags. Used to target a fetchFromUrls when the repost didn't
+/// embed the JSON and the default-pool broadcast misses.
+@visibleForTesting
+List<String> repostRelayHints(Event repost, String repostedId) {
+  final out = <String>{};
+  for (final t in repost.tags) {
+    if (t.length >= 3 &&
+        t[0] == 'e' &&
+        t[1] is String &&
+        t[1] == repostedId &&
+        t[2] is String) {
+      final r = (t[2] as String).trim();
+      if (r.startsWith('ws://') || r.startsWith('wss://')) out.add(r);
+    }
+  }
+  return out.toList();
+}
+
+/// The note a repost points at — the embedded content shown under "X 转发".
+///
+/// Resolution order:
+/// 1. **Parse the repost's own content** (NIP-18 embedded JSON) — instant, no
+///    network. Most reposts (and Amethyst's, and ours) embed the full note, so
+///    this is the common path; it's what makes a repost visible even when the
+///    reposted note isn't on any of the user's connected relays.
+/// 2. **Cache / in-memory / default-pool broadcast** via [eventByIdProvider] —
+///    for non-compliant reposts (empty content) whose target is cached or on a
+///    connected relay.
+/// 3. **Relay-hint targeted fetchFromUrls** — the repost's `e`-tag t[2] points
+///    at where the note lives (e.g. the nevent's relay hint). Recovers notes
+///    that live only on the author's / replier's relays.
+///
+/// Without (1) and (3), tapping a repost shows "转发内容不可用" whenever the
+/// reposted note isn't on the user's default pool — even though the repost
+/// literally embeds it. Keyed by the repost's own id (carries content+tags).
+final repostedEventProvider = FutureProvider.family<Event?, String>((
+  ref,
+  repostId,
+) async {
+  final repost = await ref.watch(eventByIdProvider(repostId).future);
+  if (repost == null) return null;
+  // 1. Embedded JSON (instant).
+  final embedded = parseEmbeddedRepost(repost);
+  if (embedded != null) return embedded;
+  // 2. Cache + default-pool broadcast.
+  final repostedId = repost.repostedEventId;
+  if (repostedId == null) return null;
+  final cached = await ref.read(eventByIdProvider(repostedId).future);
+  if (cached != null) return cached;
+  // 3. Relay-hint targeted fetch.
+  final hints = repostRelayHints(repost, repostedId);
+  if (hints.isEmpty) return null;
+  final pool = ref.read(relayPoolProvider);
+  final hits = await pool.fetchFromUrls(<String, dynamic>{
+    'ids': [repostedId],
+  }, hints);
+  if (hits.isNotEmpty) {
+    unawaited(ref.read(eventStoreProvider.notifier).cacheThreadEvent(hits.first));
+    return hits.first;
+  }
+  return null;
+});
 
 /// Ancestor chain of a kind-1 note, **root-first**: `[root, …, focused]`.
 ///
@@ -1686,21 +1783,52 @@ final threadAncestorsProvider = FutureProvider.family<List<Event>, String>((
 ) async {
   final focused = await ref.watch(eventByIdProvider(id).future);
   if (focused == null) return const <Event>[];
+  final pool = ref.read(relayPoolProvider);
+  final store = ref.read(eventStoreProvider.notifier);
   final byId = <String, Event>{focused.id: focused};
   final seen = <String>{focused.id};
-  var frontier = _candidateAncestorIds(focused);
+  var frontier = _candidateAncestors(focused);
   for (var depth = 0; depth < 32 && frontier.isNotEmpty; depth++) {
-    final fresh = frontier.where((cid) => !seen.contains(cid)).toList();
+    final fresh = frontier.where((c) => !seen.contains(c.id)).toList();
     if (fresh.isEmpty) break;
-    final results = await Future.wait(<Future<Event?>>[
-      for (final cid in fresh) ref.read(eventByIdProvider(cid).future),
+    // Tier 1: cache + in-memory + default-pool broadcast (eventByIdProvider,
+    // 5s). Resolves instantly when the ancestor is already cached or lives on
+    // a connected relay.
+    final tier1 = await Future.wait(<Future<Event?>>[
+      for (final c in fresh) ref.read(eventByIdProvider(c.id).future),
     ]);
-    frontier = <String>[];
-    for (final r in results) {
+    final newlyResolved = <Event>[];
+    for (var i = 0; i < tier1.length; i++) {
+      final r = tier1[i];
       if (r == null || !seen.add(r.id)) continue;
       byId[r.id] = r;
-      frontier = <String>[...frontier, ..._candidateAncestorIds(r)];
+      newlyResolved.add(r);
     }
+    // Tier 2: for ancestors that missed tier 1, fetch from the relay hint
+    // carried on the referencing event's `e` tag (NIP-01 t[2]). The thread
+    // often lives on the original author's / replier's relays — NOT the
+    // user's connected default pool — so a targeted transient fetch via
+    // fetchFromUrls hits where the broadcast missed. Without this, opening a
+    // reply from the feed spins forever on the ancestor chain.
+    final missing = <_AncestorCandidate>[];
+    for (var i = 0; i < tier1.length; i++) {
+      if (tier1[i] == null && fresh[i].relays.isNotEmpty) {
+        missing.add(fresh[i]);
+      }
+    }
+    if (missing.isNotEmpty) {
+      final tier2 = await Future.wait(<Future<Event?>>[
+        for (final c in missing)
+          _fetchEventByIdFromUrls(pool, c.id, c.relays),
+      ]);
+      for (final r in tier2) {
+        if (r == null || !seen.add(r.id)) continue;
+        byId[r.id] = r;
+        newlyResolved.add(r);
+        unawaited(store.cacheThreadEvent(r));
+      }
+    }
+    frontier = newlyResolved.expand(_candidateAncestors).toList();
   }
   // Build the ordered chain from focused up via immediate-parent pointers.
   final chain = <Event>[focused];
@@ -1716,12 +1844,60 @@ final threadAncestorsProvider = FutureProvider.family<List<Event>, String>((
   // Persist the whole chain to SQLite (regardless of author) so the user can
   // reply to any of these posts later. Fire-and-forget — must not delay the
   // chain display; the events are already in memory here.
-  final store = ref.read(eventStoreProvider.notifier);
   for (final e in byId.values) {
     unawaited(store.cacheThreadEvent(e));
   }
   return chain;
 });
+
+/// A candidate ancestor id + the relay hints (NIP-01 `e` tag t[2]) that point
+/// at where to find it. Used by [threadAncestorsProvider]'s tier-2 targeted
+/// fetch.
+class _AncestorCandidate {
+  const _AncestorCandidate(this.id, this.relays);
+  final String id;
+  final List<String> relays;
+}
+
+/// All non-`mention` `e`-tag referenced ids from [e] (root + reply markers +
+/// legacy positional), each paired with the relay hint on its tag. Excludes
+/// self-references. Used to walk the ancestor chain AND to know which relays
+/// hold each ancestor.
+List<_AncestorCandidate> _candidateAncestors(Event e) {
+  final byId = <String, List<String>>{};
+  for (final t in e.tags) {
+    if (t.length < 2 || t[0] != 'e' || t[1] is! String) continue;
+    final marker = (t.length >= 4 && t[3] is String) ? (t[3] as String) : '';
+    if (marker == 'mention') continue;
+    final id = t[1] as String;
+    if (id == e.id) continue;
+    final relay =
+        (t.length >= 3 && t[2] is String) ? (t[2] as String).trim() : '';
+    final list = byId.putIfAbsent(id, () => <String>[]);
+    if (relay.isNotEmpty &&
+        (relay.startsWith('ws://') || relay.startsWith('wss://'))) {
+      list.add(relay);
+    }
+  }
+  return byId.entries
+      .map((en) => _AncestorCandidate(en.key, en.value))
+      .toList();
+}
+
+/// Targeted fetch of a single event by id from the given relay URLs
+/// (transient connections via [RelayPool.fetchFromUrls]). Returns the first
+/// matching event, or null if none of the relays have it / are unreachable.
+Future<Event?> _fetchEventByIdFromUrls(
+  RelayPool pool,
+  String id,
+  List<String> urls,
+) async {
+  if (urls.isEmpty) return null;
+  final hits = await pool.fetchFromUrls(<String, dynamic>{
+    'ids': [id],
+  }, urls);
+  return hits.isEmpty ? null : hits.first;
+}
 
 /// A user's public kind-1 notes (posts + replies), newest-first. SQLite first
 /// (instant), then relay REQ for fresh data. Used by the profile page.
@@ -2074,29 +2250,36 @@ String? kind30000DisplayName(Event e) {
 /// Pure builder so the SQLite-cached snapshot and the relay-refreshed
 /// snapshot share one code path (Amethyst-style render-from-cache + background
 /// refresh).
+///
+/// Groups are keyed by the kind-30000 **`d` tag** (the stable identifier),
+/// NOT by [kind30000DisplayName]: Amethyst keeps a UUID in `d` and puts the
+/// human name in the `name` tag, so an older revision (no `name` tag) would
+/// otherwise group under the UUID while a newer revision (with `name`) groups
+/// under the human name — splitting one logical list into two entries and
+/// making the group name flicker between 中文 and UUID as revisions stream
+/// in. Keying by `d` collapses all revisions into one group, and the display
+/// name is taken from the NEWEST revision's `name` tag (falling back to `d`).
 List<FollowGroup> _buildFollowGroups(
   List<String> follows,
   List<Event> k30000Events,
 ) {
-  // 1. group → Set<pubkey> from kind-30000 events.
-  final groupNames = <String>[];
+  // 1. group by d → Set<pubkey> + newest backing event.
+  final dValues = <String>[]; // first-seen order
   final groupPubkeys = <String, Set<String>>{};
-  final groupSource = <String, Event>{}; // name → backing kind-30000 event
+  final groupSource = <String, Event>{}; // d → newest kind-30000 event
   for (final e in k30000Events) {
-    final name = kind30000DisplayName(e);
-    if (name == null) continue; // default list (d="") — not a named group
+    final d = _kind30000D(e);
+    if (d.isEmpty) continue; // default list (d="") — not a named group
     final pks = <String>{};
     for (final t in e.tags) {
       if (t.length >= 2 && t[0] == 'p' && t[1] is String) {
         pks.add(t[1] as String);
       }
     }
-    if (!groupNames.contains(name)) groupNames.add(name);
-    groupPubkeys.putIfAbsent(name, () => <String>{}).addAll(pks);
-    // Keep the newest kind-30000 event as the source of truth for the d-tag
-    // + event id (used by rename/delete).
-    final prev = groupSource[name];
-    if (prev == null || e.createdAt > prev.createdAt) groupSource[name] = e;
+    if (!dValues.contains(d)) dValues.add(d);
+    groupPubkeys.putIfAbsent(d, () => <String>{}).addAll(pks);
+    final prev = groupSource[d];
+    if (prev == null || e.createdAt > prev.createdAt) groupSource[d] = e;
   }
 
   // 2. Group the follows.
@@ -2105,8 +2288,8 @@ List<FollowGroup> _buildFollowGroups(
   final defaultGroup = <String>[];
   for (final pk in follows) {
     var inAnyGroup = false;
-    for (final name in groupNames) {
-      if (groupPubkeys[name]!.contains(pk)) {
+    for (final d in dValues) {
+      if (groupPubkeys[d]!.contains(pk)) {
         inAnyGroup = true;
         break;
       }
@@ -2117,13 +2300,25 @@ List<FollowGroup> _buildFollowGroups(
   // Custom groups: always surfaced (even with zero followed members) so the
   // user can see + manage (rename/delete) every list they published — matches
   // Amethyst. Rows still only render followed members.
-  for (final name in groupNames) {
+  for (final d in dValues) {
     final inGroup = follows
-        .where((pk) => groupPubkeys[name]!.contains(pk))
+        .where((pk) => groupPubkeys[d]!.contains(pk))
         .toList();
-    result.add(FollowGroup(name, inGroup, source: groupSource[name]));
+    // Display name: the NEWEST revision's `name` tag, else `d`. Stable per
+    // group now that we key by d (no more 中文↔UUID flicker).
+    final display = kind30000DisplayName(groupSource[d]!) ?? d;
+    result.add(FollowGroup(display, inGroup, source: groupSource[d]));
   }
   return result;
+}
+
+/// The `d` tag value of a kind-30000 event, or '' if absent. The stable
+/// identifier a follow set is grouped under (see [_buildFollowGroups]).
+String _kind30000D(Event e) {
+  for (final t in e.tags) {
+    if (t.length >= 2 && t[0] == 'd' && t[1] is String) return t[1] as String;
+  }
+  return '';
 }
 
 final userGroupedFollowsProvider =
@@ -2457,6 +2652,38 @@ final searchPostsProvider = StreamProvider.family<List<Event>, String>((
   yield* ctrl.stream;
 });
 
+/// Per-post interaction counts the client has OBSERVED so far (replies +
+/// reposts), derived client-side from the in-memory [EventStore]. This is a
+/// lower bound — only events that have streamed in via the global feed, a
+/// targeted #e REQ (e.g. [repliesProvider] when the thread was opened), or a
+/// load-more page are counted; relays aren't queried for a total. Matches
+/// Amethyst's "what I've seen" approach. The count populates reliably once
+/// the user has opened the post's thread; on the feed it stays ~0 until then.
+final postCountsProvider = Provider.family<({int replies, int reposts}), String>((
+  ref,
+  eventId,
+) {
+  final all = ref.watch(eventStoreProvider);
+  var replies = 0;
+  var reposts = 0;
+  for (final e in all) {
+    if (e.kind != 1 && e.kind != 6) continue;
+    // Skip the post itself (a kind-1 with a self-referential e tag, rare).
+    if (e.id == eventId) continue;
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
+        if (e.kind == 1) {
+          replies++;
+        } else {
+          reposts++;
+        }
+        break;
+      }
+    }
+  }
+  return (replies: replies, reposts: reposts);
+});
+
 /// Global user search (NIP-50 `search` filter, kind 0 metadata) via the
 /// dedicated search pool. Streams results in (250ms debounce) instead of a
 /// hard 6s wait.
@@ -2610,6 +2837,76 @@ bool isReplyToEvent(Event e, String eventId) {
   return false;
 }
 
+/// A reply in a flattened thread tree: the [event] plus its [depth] (0 =
+/// direct reply to the focused post, 1 = reply-to-a-reply, …). Produced by
+/// [threadReplies]; the UI indents per [depth] so the reply hierarchy is
+/// visible.
+class ThreadedReply {
+  const ThreadedReply(this.event, this.depth);
+  final Event event;
+  final int depth;
+}
+
+/// Build a flattened, **timeline-ordered + hierarchical** view of [replies]
+/// to the post [rootId].
+///
+/// The flat [repliesProvider] list mixes direct replies and nested
+/// sub-replies sorted only by createdAt — reading order is jumbled. This
+/// builds a parent→children tree (parent = [Event.replyToId]) and flattens it
+/// depth-first, oldest-first within siblings: each reply is followed by its
+/// own sub-thread, so a conversation reads top-down and the reply hierarchy is
+/// visible via [ThreadedReply.depth] (the UI indents per depth).
+///
+/// Replies whose parent isn't in the set (and isn't the root) are reparented
+/// to the root as depth-0 direct replies — defensive against unknown/missing
+/// parents. Cycles are guarded by a seen-set.
+List<ThreadedReply> threadReplies(List<Event> replies, String rootId) {
+  final byId = {for (final e in replies) e.id: e};
+  final children = <String, List<Event>>{};
+  final orphans = <Event>[];
+  for (final e in replies) {
+    final parent = e.replyToId;
+    if (parent == null ||
+        parent == e.id ||
+        (parent != rootId && !byId.containsKey(parent))) {
+      orphans.add(e);
+    } else {
+      children.putIfAbsent(parent, () => <Event>[]).add(e);
+    }
+  }
+  // Roots = direct replies to the focused post + reparented orphans, oldest-first.
+  final roots = <Event>[
+    ...(children[rootId] ?? const <Event>[]),
+    ...orphans,
+  ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  final out = <ThreadedReply>[];
+  final seen = <String>{};
+  void walk(Event e, int depth) {
+    if (!seen.add(e.id)) return; // cycle guard
+    out.add(ThreadedReply(e, depth));
+    final kids = children[e.id];
+    if (kids == null) return;
+    kids.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    for (final k in kids) {
+      walk(k, depth + 1);
+    }
+  }
+
+  for (final r in roots) {
+    walk(r, 0);
+  }
+  // Fallback: replies unreachable from the roots (pure cycles, or subtrees
+  // whose chain never touches the root) would otherwise be silently dropped.
+  // Emit them at depth 0, oldest-first, walking their own subtrees.
+  final unreached =
+      replies.where((e) => !seen.contains(e.id)).toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  for (final e in unreached) {
+    walk(e, 0);
+  }
+  return out;
+}
+
 /// Replies (kind-1) to an event. REQ {kinds:[1], "#e":[eventId]}.
 /// Amethyst-style loading: yields the SQLite-cached replies (persisted when
 /// previously viewed via [EventStoreNotifier.cacheThreadEvent]) instantly,
@@ -2651,7 +2948,7 @@ final repliesProvider = StreamProvider.family<List<Event>, String>((
 
   late StreamSubscription<Event> evSub;
   late StreamSubscription<String> eoseSub;
-  final done = Completer<void>();
+  final done = Completer<void>(); // default-pool phase done (EOSE / 10s).
   evSub = pool.rawEvents.listen((e) {
     // Only kind-1 notes that directly reply to [eventId]. rawEvents is the
     // global un-deduped stream; the feed sub also requests kind-7 reactions,
@@ -2672,10 +2969,52 @@ final repliesProvider = StreamProvider.family<List<Event>, String>((
   final t = Timer(const Duration(seconds: 10), () {
     if (!done.isCompleted) done.complete();
   });
-  done.future.whenComplete(() {
+
+  // Author-outbox phase (concurrent with the default pool). The focused
+  // post's author publishes on their NIP-65 outbox relays, and thread replies
+  // to them typically propagate there too — so querying those relays directly
+  // recovers descendants the user's connected default pool hasn't indexed
+  // (the "open a reply from the feed, replies never load" case). Transient
+  // fetchFromUrls connections; onEvent feeds the same merged map + debounce.
+  // Bounded by fetchFromUrls' internal 10s timeout. Runs concurrently with
+  // the default-pool REQ; the stream closes only when BOTH phases finish.
+  Future<void> outboxPhase() async {
+    try {
+      final focused = await ref.read(eventByIdProvider(eventId).future);
+      if (focused == null) return;
+      final rl = await ref.read(userRelayListProvider(focused.pubkey).future);
+      final outbox = rl?.read ?? const <String>[];
+      if (outbox.isEmpty) return;
+      await pool.fetchFromUrls(
+        <String, dynamic>{'kinds': [1], '#e': [eventId]},
+        outbox,
+        onEvent: (e) {
+          if (!isReplyToEvent(e, eventId) || merged.containsKey(e.id)) return;
+          merged[e.id] = e;
+          unawaited(store.cacheThreadEvent(e));
+          scheduleEmit();
+        },
+      );
+    } catch (_) {
+      // Focused-post or relay-list fetch failed — default-pool path still runs
+      // and will resolve the stream on its own.
+    }
+  }
+
+  final outboxFuture = outboxPhase();
+  Future.wait<void>([done.future, outboxFuture]).whenComplete(() {
     flush?.cancel();
-    if (dirty && !ctrl.isClosed) ctrl.add(_snapshotSorted(merged));
-    if (!ctrl.isClosed) ctrl.close();
+    // Always emit a final snapshot before closing. Without this, a stream
+    // that closes without ever emitting (zero replies: cache empty AND relays
+    // return nothing) leaves Riverpod's StreamProvider stuck in AsyncLoading
+    // forever — so the reply list shows a perpetual spinner where "暂无回复"
+    // should be. Emitting — even an empty list — resolves the provider to
+    // data. When replies did arrive this is a harmless re-emit of the same
+    // list (scheduleEmit already pushed the live list).
+    if (!ctrl.isClosed) {
+      ctrl.add(_snapshotSorted(merged));
+      ctrl.close();
+    }
   });
   ref.onDispose(() {
     t.cancel();
@@ -2711,22 +3050,37 @@ Future<RelayOk> followUser(
   // gracefully (publishes a kind-3 with only the new pubkey).
   final current = ref.read(contactListCacheProvider);
   final signed = NostrActions(identity).follow(current, pubkey);
-  final ok = await pool.publishAndWait(signed);
 
-  if (ok.ok) {
-    // Optimistically update the local cache + follows list.
-    ref.read(contactListCacheProvider.notifier).set(signed);
-    ref.invalidate(followingStateProvider);
+  // OPTIMISTIC: update the local cache + follows list IMMEDIATELY so the UI
+  // (follow button, following tab) reflects the new follow without blocking
+  // on relay OKs. publishAndWait can take up to several seconds (5s/round ×
+  // retries) waiting for the first relay to ack — that's the "关注要等好几秒"
+  // lag. For a follow, optimistic is the right trade (Amethyst does this): if
+  // a relay later rejects, the next kind-3 refresh corrects the local state.
+  ref.read(contactListCacheProvider.notifier).set(signed);
+  ref.invalidate(followingStateProvider);
 
-    // Add to each selected NIP-51 kind-30000 categorized list (custom group).
-    // kind-3 membership above IS the 默认分组 — following always adds to it.
-    for (final category in categories) {
-      if (category.isNotEmpty) {
-        await _addToCategoryList(ref, identity, pubkey, category);
+  // Publish in the background — fire-and-forget. The local echo (handled
+  // inside publishAndWait via _merged) + the optimistic cache update above
+  // mean the user already sees the follow; the relay round-trip happens off
+  // the critical path.
+  unawaited(
+    pool.publishAndWait(signed).then((ok) {
+      if (!ok.ok) {
+        // Best-effort: invalidate so a re-fetch can reconcile on failure.
+        ref.invalidate(followingStateProvider);
       }
+    }),
+  );
+
+  // Custom-group lists (NIP-51 kind-30000) — also background; they're
+  // secondary and mustn't block the follow action.
+  for (final category in categories) {
+    if (category.isNotEmpty) {
+      unawaited(_addToCategoryList(ref, identity, pubkey, category));
     }
   }
-  return ok;
+  return RelayOk(signed.id, true, '已关注');
 }
 
 /// Unfollow [pubkey] (NIP-02). Reads the LOCALLY CACHED kind-3 (same safety as
@@ -2748,12 +3102,17 @@ Future<RelayOk> unfollowUser(WidgetRef ref, String pubkey) async {
   }
   final pool = ref.read(relayPoolProvider);
   final signed = NostrActions(identity).unfollow(current, pubkey);
-  final ok = await pool.publishAndWait(signed);
-  if (ok.ok) {
-    ref.read(contactListCacheProvider.notifier).set(signed);
-    ref.invalidate(followingStateProvider);
-  }
-  return ok;
+  // OPTIMISTIC (same rationale as [followUser]): update the cache + follows
+  // list immediately so the button snaps to "unfollowed"; publish in the
+  // background so the relay round-trip (up to several seconds) doesn't block.
+  ref.read(contactListCacheProvider.notifier).set(signed);
+  ref.invalidate(followingStateProvider);
+  unawaited(
+    pool.publishAndWait(signed).then((ok) {
+      if (!ok.ok) ref.invalidate(followingStateProvider);
+    }),
+  );
+  return RelayOk(signed.id, true, '已取消关注');
 }
 
 /// updated one with [pubkey] added. Best-effort (category list failure doesn't
@@ -2857,54 +3216,77 @@ Future<RelayOk> bookmarkEvent(
     return const RelayOk('', false, '未登录');
   }
   final pool = ref.read(relayPoolProvider);
-  final completer = Completer<Event?>();
-  late StreamSubscription<Event> evSub;
-  late StreamSubscription<String> eoseSub;
-  evSub = pool.rawEvents.listen((e) {
-    if (e.kind == 10003 &&
-        e.pubkey == identity.pubkeyHex &&
-        !completer.isCompleted) {
-      completer.complete(e);
-    }
-  });
-  final subId = nextSubId('bookmarks');
-  final connectedCount = pool.states
-      .where((s) => s.status == RelayStatus.connected)
-      .length;
-  var eoses = 0;
-  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    eoses++;
-    if (eoses >= connectedCount && !completer.isCompleted) {
-      completer.complete(null);
-    }
-  });
-  pool.request(subId, <String, dynamic>{
-    'authors': [identity.pubkeyHex],
-    'kinds': [10003],
-    'limit': 1,
-  }, closeOnEose: false);
+  // 1. SQLite cache first — kind-10003 is persisted by EventStoreNotifier's
+  //    replaceable-kinds path. If we have it, sign + publish immediately
+  //    WITHOUT the up-to-10s relay fetch below. That fetch (with its strict
+  //    "certain or cancel" guard) is what made bookmarking feel broken — a
+  //    slow relay would trip "无法确认现有书签列表…已取消". The cache holds
+  //    the current list so the new entry is added without wiping the rest.
   Event? current;
-  bool certain = false;
-  try {
-    current = await completer.future.timeout(
-      const Duration(seconds: 10),
-      onTimeout: () {
-        certain = false;
-        return null;
-      },
-    );
-    certain = true;
-  } finally {
-    await evSub.cancel();
-    await eoseSub.cancel();
-    pool.closeSubscription(subId);
+  final cache = ref.read(localCacheProvider).value;
+  if (cache != null) {
+    try {
+      final row = await cache.queryReplaceable(identity.pubkeyHex, 10003);
+      if (row != null) current = _replaceableToEvent(row);
+    } catch (_) {}
   }
-  if (!certain) {
-    return const RelayOk('', false, '无法确认现有书签列表（中继未及时响应），已取消以防清空。请重试。');
+  // 2. Cache miss (first-ever bookmark, cold start) → fetch the current
+  //    kind-10003 from relays with the don't-wipe safety guard.
+  if (current == null) {
+    final completer = Completer<Event?>();
+    late StreamSubscription<Event> evSub;
+    late StreamSubscription<String> eoseSub;
+    evSub = pool.rawEvents.listen((e) {
+      if (e.kind == 10003 &&
+          e.pubkey == identity.pubkeyHex &&
+          !completer.isCompleted) {
+        completer.complete(e);
+      }
+    });
+    final subId = nextSubId('bookmarks');
+    final connectedCount = pool.states
+        .where((s) => s.status == RelayStatus.connected)
+        .length;
+    var eoses = 0;
+    eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+      eoses++;
+      if (eoses >= connectedCount && !completer.isCompleted) {
+        completer.complete(null);
+      }
+    });
+    pool.request(subId, <String, dynamic>{
+      'authors': [identity.pubkeyHex],
+      'kinds': [10003],
+      'limit': 1,
+    }, closeOnEose: false);
+    bool certain = false;
+    try {
+      current = await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          certain = false;
+          return null;
+        },
+      );
+      certain = true;
+    } finally {
+      await evSub.cancel();
+      await eoseSub.cancel();
+      pool.closeSubscription(subId);
+    }
+    if (!certain) {
+      return const RelayOk(
+        '',
+        false,
+        '无法确认现有书签列表（中继未及时响应），已取消以防清空。请重试。',
+      );
+    }
   }
   final signed = NostrActions(
     identity,
   ).bookmark(current, eventId, publicList: publicList);
+  // Refresh the bookmarks stream so the new entry appears immediately.
+  ref.invalidate(bookmarksProvider(identity.pubkeyHex));
   return pool.publishAndWait(signed);
 }
 
@@ -3356,18 +3738,68 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
   StreamSubscription<Event>? defSub, idxSub;
   StreamSubscription<String>? defEose, idxEose;
   Timer? defTimer, idxTimer;
+  var closed = false;
 
-  void closeAll() {
-    if (ctrl.isClosed) return;
-    // Cold miss across both pools → resolve null so callers don't spin.
-    if (!anyHit && cached == null) ctrl.add(null);
-    ctrl.close();
+  void teardown() {
     defSub?.cancel();
     idxSub?.cancel();
     defEose?.cancel();
     idxEose?.cancel();
     defTimer?.cancel();
     idxTimer?.cancel();
+  }
+
+  // Cold-miss fallback: query the user's OWN NIP-65 outbox relays for kind-0.
+  // Users whose metadata lives only on their outbox relays — and isn't cached
+  // in either the default pool or an indexer — would otherwise resolve null
+  // and their avatar would stay on the initial-letter fallback forever
+  // (Amethyst's "widen to the author's own relays when indexers are
+  // exhausted" pattern). fetchFromUrls opens TRANSIENT connections, so this
+  // never pollutes the pool's persistent subscriptions.
+  Future<void> tryOutboxFallback() async {
+    if (anyHit || cached != null || ctrl.isClosed) {
+      if (!ctrl.isClosed) {
+        if (!anyHit && cached == null) ctrl.add(null);
+        ctrl.close();
+      }
+      return;
+    }
+    try {
+      final rl = await ref.read(userRelayListProvider(pubkey).future);
+      final readUrls = rl?.read ?? const <String>[];
+      if (readUrls.isNotEmpty) {
+        await defaultPool.fetchFromUrls(
+          <String, dynamic>{
+            'authors': [pubkey],
+            'kinds': [0],
+            'limit': 1,
+          },
+          readUrls,
+          onEvent: onMetaEvent,
+        );
+      }
+    } catch (_) {
+      // Relay-list fetch or outbox REQ failed — fall through to resolve.
+    }
+    // Resolve: onMetaEvent already emitted any found metadata (anyHit=true);
+    // emit null for a confirmed miss, then close.
+    if (!ctrl.isClosed) {
+      if (!anyHit && cached == null) ctrl.add(null);
+      ctrl.close();
+    }
+  }
+
+  void closeAll() {
+    if (closed) return;
+    closed = true;
+    teardown();
+    if (!anyHit && cached == null) {
+      // Cold miss across the default + indexer pools — try the user's own
+      // outbox relays before giving up. Async; resolves the stream when done.
+      unawaited(tryOutboxFallback());
+      return;
+    }
+    if (!ctrl.isClosed) ctrl.close();
   }
 
   // Default pool phase.
@@ -3388,7 +3820,8 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
   });
 
   // Indexer phase (concurrent). Its EOSE ends the lookup — it's the
-  // comprehensive aggregator, so an empty EOSE means "give up".
+  // comprehensive aggregator, so an empty EOSE means "give up" (modulo the
+  // outbox fallback above).
   idxSub = indexerPool.rawEvents.listen(onMetaEvent);
   final idxId = nextSubId('metaidx');
   indexerPool.request(idxId, <String, dynamic>{
@@ -3401,7 +3834,11 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
       .listen((_) => closeAll());
   idxTimer = Timer(const Duration(seconds: 8), closeAll);
 
-  ref.onDispose(closeAll);
+  ref.onDispose(() {
+    closed = true;
+    teardown();
+    if (!ctrl.isClosed) ctrl.close();
+  });
   yield* ctrl.stream;
 });
 

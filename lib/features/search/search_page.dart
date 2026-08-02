@@ -1,5 +1,9 @@
 /// Global search page — NIP-50 search for posts (kind 1) and users (kind 0)
-/// via the dedicated NIP-50 search pool. Entered from the feed AppBar search icon.
+/// via the dedicated NIP-50 search pool. Entered from the bottom-nav 搜索 tab.
+///
+/// A clearly-visible filled search field (so the user can tell where to type)
+/// with a 全部 / 帖子 / 用户 filter (default 全部), defaulting to showing both
+/// sections stacked. The per-section filter narrows to one kind.
 library;
 
 import 'package:flutter/material.dart';
@@ -7,9 +11,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/providers.dart';
+import '../../app/theme.dart';
 import '../../models/event.dart';
 import '../../widgets/avatar.dart';
 import '../feed/event_card.dart';
+
+enum _SearchTab { all, posts, users }
 
 class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key});
@@ -21,6 +28,7 @@ class SearchPage extends ConsumerStatefulWidget {
 class _SearchPageState extends ConsumerState<SearchPage> {
   final TextEditingController _controller = TextEditingController();
   String _query = '';
+  _SearchTab _tab = _SearchTab.all;
 
   @override
   void dispose() {
@@ -34,35 +42,89 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: TextField(
-          controller: _controller,
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          decoration: const InputDecoration(
-            hintText: '搜索帖子或用户…',
-            border: InputBorder.none,
+        titleSpacing: 0,
+        title: Padding(
+          padding: const EdgeInsets.only(right: 12),
+          // Filled, rounded, leading-icon search field — clearly visible as
+          // an input (the prior borderless AppBar TextField read as an empty
+          // bar, so the user couldn't tell where to type the keywords).
+          child: TextField(
+            controller: _controller,
+            autofocus: true,
+            textInputAction: TextInputAction.search,
+            style: const TextStyle(fontSize: 15),
+            decoration: InputDecoration(
+              hintText: '搜索帖子或用户…',
+              hintStyle: const TextStyle(fontSize: 15, color: CostrColors.text3),
+              prefixIcon: const Icon(Icons.search, size: 20, color: CostrColors.text3),
+              filled: true,
+              fillColor: CostrColors.bg2,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide: BorderSide.none,
+              ),
+              isDense: true,
+            ),
+            onSubmitted: (_) => _submit(),
           ),
-          onSubmitted: (_) => _submit(),
         ),
       ),
-      body: _query.isEmpty
-          ? const Center(child: Text('输入关键词搜索帖子与用户'))
-          : CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(child: _UsersSection(query: _query)),
-                SliverPadding(
-                  padding: const EdgeInsets.only(top: 8),
-                  sliver: _PostsSection(query: _query),
-                ),
+      body: Column(
+        children: <Widget>[
+          // 全部 / 帖子 / 用户 filter (default 全部).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: SegmentedButton<_SearchTab>(
+              segments: const [
+                ButtonSegment(value: _SearchTab.all, label: Text('全部')),
+                ButtonSegment(value: _SearchTab.posts, label: Text('帖子')),
+                ButtonSegment(value: _SearchTab.users, label: Text('用户')),
               ],
+              selected: {_tab},
+              onSelectionChanged: (s) => setState(() => _tab = s.first),
             ),
+          ),
+          Expanded(child: _buildBody()),
+        ],
+      ),
     );
+  }
+
+  Widget _buildBody() {
+    if (_query.isEmpty) {
+      return const Center(child: Text('输入关键词搜索帖子与用户'));
+    }
+    // 全部: users stacked above posts (as before). 帖子 / 用户: just the one.
+    switch (_tab) {
+      case _SearchTab.users:
+        return ListView(
+          children: [_UsersSection(query: _query, expanded: true)],
+        );
+      case _SearchTab.posts:
+        return CustomScrollView(
+          slivers: [
+            _PostsSection(query: _query, showHeader: false),
+          ],
+        );
+      case _SearchTab.all:
+        return CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(child: _UsersSection(query: _query, expanded: false)),
+            SliverPadding(
+              padding: const EdgeInsets.only(top: 8),
+              sliver: _PostsSection(query: _query, showHeader: true),
+            ),
+          ],
+        );
+    }
   }
 }
 
 class _UsersSection extends ConsumerWidget {
-  const _UsersSection({required this.query});
+  const _UsersSection({required this.query, required this.expanded});
   final String query;
+  final bool expanded;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -81,17 +143,27 @@ class _UsersSection extends ConsumerWidget {
       error: (Object e, _) =>
           Padding(padding: const EdgeInsets.all(16), child: Text('用户搜索失败：$e')),
       data: (List<UserResult> users) {
-        if (users.isEmpty) return const SizedBox.shrink();
+        if (users.isEmpty) {
+          // In users-only mode, show the empty hint; in 全部 mode, hide the
+          // section so a missing users result doesn't leave a stray header.
+          return expanded
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: Text('无用户结果')),
+                )
+              : const SizedBox.shrink();
+        }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Text(
-                '用户 (${users.length})',
-                style: Theme.of(context).textTheme.labelMedium,
+            if (!expanded)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text(
+                  '用户 (${users.length})',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
               ),
-            ),
             for (final u in users)
               ListTile(
                 leading: Avatar(pubkey: u.pubkey, radius: 18),
@@ -117,8 +189,9 @@ class _UsersSection extends ConsumerWidget {
 }
 
 class _PostsSection extends ConsumerWidget {
-  const _PostsSection({required this.query});
+  const _PostsSection({required this.query, required this.showHeader});
   final String query;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -143,11 +216,25 @@ class _PostsSection extends ConsumerWidget {
             child: Padding(padding: EdgeInsets.all(16), child: Text('无帖子结果')),
           );
         }
-        return SliverList(
-          delegate: SliverChildBuilderDelegate(
-            (BuildContext context, int i) => EventCard(event: posts[i]),
-            childCount: posts.length,
-          ),
+        return SliverMainAxisGroup(
+          slivers: <Widget>[
+            if (showHeader)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Text(
+                    '帖子 (${posts.length})',
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ),
+              ),
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (BuildContext context, int i) => EventCard(event: posts[i]),
+                childCount: posts.length,
+              ),
+            ),
+          ],
         );
       },
     );

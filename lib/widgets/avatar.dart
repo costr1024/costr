@@ -2,17 +2,16 @@
 /// via [metadataProvider], with a disk-cached image and an initial-letter fallback.
 library;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/providers.dart';
 import '../models/metadata.dart';
 import '../utils/nip19.dart';
+import 'proxied_network_image.dart';
 
 class Avatar extends ConsumerWidget {
   const Avatar({super.key, required this.pubkey, this.radius = 18});
-
   final String pubkey;
   final double radius;
 
@@ -28,15 +27,17 @@ class Avatar extends ConsumerWidget {
     if (url == null || url.trim().isEmpty) return fallback;
 
     return ClipOval(
-      child: CachedNetworkImage(
-        imageUrl: url,
+      // No auto-proxy here (manual proxy is a post-media affordance; avatars
+      // fall back to the initial-letter circle on failure). [metadataProvider]
+      // resolves the picture URL; if the host is unreachable the fallback
+      // shows rather than hammering the public proxy mirror.
+      child: CostrNetworkImage(
+        url: url,
         width: radius * 2,
         height: radius * 2,
         fit: BoxFit.cover,
-        placeholder: (BuildContext _, String _) => fallback,
-        errorWidget: (BuildContext _, String _, Object _) => fallback,
-        fadeInDuration: const Duration(milliseconds: 0),
-        fadeOutDuration: const Duration(milliseconds: 0),
+        placeholder: (BuildContext _) => fallback,
+        errorWidget: (BuildContext _) => fallback,
       ),
     );
   }

@@ -10,10 +10,10 @@
 /// a Hero would flicker) — a quick black fade is used instead.
 library;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../services/media_download.dart';
+import 'proxied_network_image.dart';
 
 /// Push the viewer over the current route with a black fade transition.
 /// [images] is the full set of images in the post (so the gallery can swipe
@@ -162,10 +162,20 @@ class _MediaViewerPageState extends State<_MediaViewerPage> {
   }
 }
 
-class _ZoomableImage extends StatelessWidget {
+class _ZoomableImage extends StatefulWidget {
   const _ZoomableImage({required this.url, required this.onTap});
   final String url;
   final VoidCallback onTap;
+
+  @override
+  State<_ZoomableImage> createState() => _ZoomableImageState();
+}
+
+class _ZoomableImageState extends State<_ZoomableImage> {
+  // Manual proxy opt-in for the fullscreen image (independent of the post
+  // card's toggle — the viewer is its own route). Flipped by the "使用代理加载"
+  // overlay shown on load failure.
+  bool _forceProxy = false;
 
   @override
   Widget build(BuildContext context) {
@@ -176,16 +186,30 @@ class _ZoomableImage extends StatelessWidget {
       // clipped to viewport while inspecting detail).
       boundaryMargin: const EdgeInsets.all(double.infinity),
       clipBehavior: Clip.none,
-      child: CachedNetworkImage(
-        imageUrl: url,
+      child: CostrNetworkImage(
+        url: widget.url,
+        forceProxy: _forceProxy,
         fit: BoxFit.contain,
         width: double.infinity,
         height: double.infinity,
-        placeholder: (BuildContext _, String _) => const Center(
+        placeholder: (BuildContext _) => const Center(
           child: CircularProgressIndicator(color: Colors.white54),
         ),
-        errorWidget: (BuildContext _, String _, Object _) => const Center(
-          child: Icon(Icons.broken_image_outlined, color: Colors.white54),
+        errorWidget: (BuildContext _) => InkWell(
+          onTap: () => setState(() => _forceProxy = true),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(Icons.broken_image_outlined, color: Colors.white54),
+                SizedBox(height: 8),
+                Text(
+                  '使用代理加载',
+                  style: TextStyle(color: Colors.white54, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

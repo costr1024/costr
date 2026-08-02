@@ -116,6 +116,42 @@ lib/
   既有 `follows.contains(pubkey)` 过滤复用，UI 零改动。
 - **个人主页**：`userPostsProvider` → `fetchFromUrls` 临时连接对方 outbox read 中继
   （`since` 增量，250ms 去抖流式 yield），无清单回落广播。
+- **资料 / 头像拉取**：`metadataProvider` 三级查找——SQLite 缓存 → 默认池 + indexer 池
+  并发 kind-0；两级都冷 miss 时，回落到对方 NIP-65 outbox read 中继（`fetchFromUrls` 临时
+  连接）。对方 kind-10002 中继清单本身也由 `userRelayListProvider` **默认池 + indexer 池并发**
+  拉取（只在 indexer 上的清单也能找到），避免只在自家 outbox 发布资料的用户头像/主页永久
+  加载不出。
+- **帖子详情 / 回帖线程**：`threadAncestorsProvider`（上级链）按 NIP-10 `e`-tag 并行 BFS 上溯，
+  tier-1 默认池广播 miss 后 **tier-2 用 `e`-tag 自带的 relay hint 定向 `fetchFromUrls`**
+  （nevent/回复自带的中继提示往往是线程所在处）；`repliesProvider`（下级回帖）默认池 REQ
+  之外**并发**拉取**被回帖作者 outbox read 中继**的 `#e` 回帖，回帖按 **时间线 + 层级**
+  （`threadReplies`：父子树深度优先、同层最旧在前、按深度缩进）展示而非扁平 createdAt 倒序。
+  回帖流收尾恒吐一次快照（即便空），避免零回复时 `StreamProvider` 卡在 `AsyncLoading` 转圈圈。
+  **转发嵌套**（`repostedEventProvider`）：优先解析 kind-6 自带的 NIP-18 内嵌 JSON（即时、
+  无网络），miss 时再用 `e`-tag relay hint 定向 `fetchFromUrls`，避免转发帖点进去看不到内容。
+- **通知聚合**（`notificationsProvider`）：`#p` 提及 + `#e` 互动按 `type:target` 聚合成 X 式
+  分组条目。**关注**按 **follower pubkey** 聚合（kind-3 每改一次都是新 event id，按 event id
+  聚合会出现同一用户多条「关注你」），点关注通知跳转该 follower 主页；**repost**（kind-6）
+  解析 NIP-18 内嵌 JSON 取**被转帖子的正文**做预览；**reaction**（kind-7）解析 NIP-30
+  `:shortcode:` + `emoji` tag 渲染自定义表情图片，不再裸露 `:xxx:` 文本。
+- **媒体加载**（头像/帖子图片/视频）：`CostrNetworkImage` **手工代理**——原 URL 加载失败时**不**自动回落
+  （避免公共代理被打爆），改为在帖子昵称栏显示「代理媒体」小按钮，用户点按后仅该帖的图/视频改走
+  `https://proxy.bostr.online/<原 URL>` 重载；媒体查看器全屏页同样有「使用代理加载」点按重试。
+- **关注 / 取消关注**（`followUser`/`unfollowUser`）：**乐观更新**——签名后立即更新本地 kind-3 缓存 +
+  `followingStateProvider`，`publishAndWait` 落到后台，按钮不再卡 5–20s 等中继 ACK；失败时 invalidate 重拉对账。
+- **关注集分组**（`_buildFollowGroups`）：按 kind-30000 的 **`d` tag**（稳定标识）分组，组名取该 d 下
+  **最新**修订的 `name` tag（回落 `d`）。Amethyst 把 UUID 放 `d`、人名放 `name`，旧修订无 `name`；
+  按显示名分组会把同一列表拆成「中文」「UUID」两条并闪烁——按 `d` 分组塌成一条。
+- **全局搜索**（`/search`）：可见的填充式圆角搜索框 + 全部/帖子/用户 SegmentedButton 筛选（默认全部）。
+- **收藏**（`bookmarkEvent`）：SQLite 缓存优先取当前 kind-10003 再签名发布，**不再每次等 10s 中继 ACK**
+  （冷启动才回落中继 + 防清空守卫）；收藏 tab 分公开/私人两段展示。
+- **首页分页**：滚动到底触发 `_loadMore`（global 广播 `until` / following 走 outbox `until`），底部加
+  转圈指示器；ScrollUpdate 临近底部也触发（避免 fling 错过 ScrollEnd）。
+- **首页 tab 滚动独立**：ListView 用 `PageStorageKey<FeedMode>(mode)`，全球/关注各自记忆滚动位置，
+  切换不互相串。
+- **帖子计数**（`postCountsProvider`）：动作栏回复/转发按钮旁显示已观察到的计数（客户端侧，开过
+  线程帖后准确；>999 显示 `1.2k`，为 0 不显示）。
+- **资料页屏蔽**：他人资料页 ⋮ 菜单含「屏蔽」/「取消屏蔽」（kind-10000 + 确认框），广告账号可直接在此屏蔽。
 - **本地缓存**：drift/SQLite，社交图谱 gated 持久化（follows + self 的 kind-1/7 落库，
   全球 firehose 不落库），replaceable 事件恒缓存；冷启动 hydration 秒出。
 

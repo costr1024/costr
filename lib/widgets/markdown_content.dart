@@ -10,7 +10,6 @@
 ///   images are gridded together, videos full-width.
 library;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,6 +25,7 @@ import '../utils/nip19.dart';
 import '../services/media_download.dart';
 import 'avatar.dart';
 import 'media_viewer_page.dart';
+import 'proxied_network_image.dart';
 import 'mention_linkifier.dart';
 import 'network_video.dart';
 
@@ -85,10 +85,21 @@ class MarkdownContent extends ConsumerStatefulWidget {
     super.key,
     required this.event,
     this.initiallyExpanded = false,
+    this.proxyMedia = false,
+    this.onMediaFailed,
   });
 
   final Event event;
   final bool initiallyExpanded;
+
+  /// When true, all images in this post load through the proxy mirror
+  /// ([proxiedUrl]) — flipped on by the post's "代理媒体" affordance. Manual
+  /// only: the proxy is opt-in per post so the mirror isn't overwhelmed.
+  final bool proxyMedia;
+
+  /// Fired (true) when an image fails to load, so the post can surface its
+  /// "代理媒体" affordance. One fire per failure.
+  final ValueChanged<bool>? onMediaFailed;
 
   @override
   ConsumerState<MarkdownContent> createState() => _MarkdownContentState();
@@ -181,13 +192,16 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       if (isEmoji) {
         return ClipRRect(
           borderRadius: BorderRadius.circular(4),
-          child: Image.network(
-            c.uri.toString(),
+          // forceProxy follows the post's manual "代理媒体" toggle; on a
+          // definitive miss fall back to :shortcode:.
+          child: CostrNetworkImage(
+            url: c.uri.toString(),
+            forceProxy: widget.proxyMedia,
             width: 22,
             height: 22,
             fit: BoxFit.cover,
-            gaplessPlayback: true,
-            errorBuilder: (_, Object e, _) => Text(':${c.alt ?? ''}:'),
+            errorWidget: (BuildContext _) => Text(':${c.alt ?? ''}:'),
+            onError: widget.onMediaFailed,
           ),
         );
       }
@@ -226,9 +240,17 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
           ),
         );
       } else if (seg is ImageGroupSeg) {
-        children.add(_ImageGrid(urls: seg.urls));
+        children.add(_ImageGrid(
+          urls: seg.urls,
+          proxyMedia: widget.proxyMedia,
+          onMediaFailed: widget.onMediaFailed,
+        ));
       } else if (seg is SingleVideoSeg) {
-        children.add(NetworkVideo(url: seg.url));
+        children.add(NetworkVideo(
+          url: seg.url,
+          forceProxy: widget.proxyMedia,
+          onError: widget.onMediaFailed,
+        ));
       }
     }
 
@@ -248,11 +270,21 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     final extraVideos = extra.where((m) => m.isVideo).toList();
     if (extraImages.isNotEmpty) {
       children.add(const SizedBox(height: 8));
-      children.add(_ImageGrid(urls: extraImages));
+      children.add(_ImageGrid(
+        urls: extraImages,
+        proxyMedia: widget.proxyMedia,
+        onMediaFailed: widget.onMediaFailed,
+      ));
     }
     for (final v in extraVideos) {
       children.add(const SizedBox(height: 8));
-      children.add(NetworkVideo(url: v.url, width: v.width, height: v.height));
+      children.add(NetworkVideo(
+        url: v.url,
+        width: v.width,
+        height: v.height,
+        forceProxy: widget.proxyMedia,
+        onError: widget.onMediaFailed,
+      ));
     }
     final extraFiles = extra.where((m) => !m.isImage && !m.isVideo).toList();
     if (extraFiles.isNotEmpty) {
@@ -498,12 +530,24 @@ class SingleVideoSeg extends ContentSeg {
 // --- image grid + single image --------------------------------------------
 
 class _ImageGrid extends StatelessWidget {
-  const _ImageGrid({required this.urls});
+  const _ImageGrid({
+    required this.urls,
+    required this.proxyMedia,
+    required this.onMediaFailed,
+  });
   final List<String> urls;
+  final bool proxyMedia;
+  final ValueChanged<bool>? onMediaFailed;
 
   @override
   Widget build(BuildContext context) {
-    if (urls.length == 1) return _SingleImage(url: urls.first);
+    if (urls.length == 1) {
+      return _SingleImage(
+        url: urls.first,
+        proxyMedia: proxyMedia,
+        onMediaFailed: onMediaFailed,
+      );
+    }
     return GridView.count(
       crossAxisCount: 3,
       shrinkWrap: true,
@@ -513,7 +557,13 @@ class _ImageGrid extends StatelessWidget {
       childAspectRatio: 1,
       children: [
         for (var i = 0; i < urls.length; i++)
-          _GridThumb(url: urls[i], urls: urls, index: i),
+          _GridThumb(
+            url: urls[i],
+            urls: urls,
+            index: i,
+            proxyMedia: proxyMedia,
+            onMediaFailed: onMediaFailed,
+          ),
       ],
     );
   }
@@ -524,10 +574,14 @@ class _GridThumb extends StatelessWidget {
     required this.url,
     required this.urls,
     required this.index,
+    required this.proxyMedia,
+    required this.onMediaFailed,
   });
   final String url;
   final List<String> urls;
   final int index;
+  final bool proxyMedia;
+  final ValueChanged<bool>? onMediaFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -535,12 +589,13 @@ class _GridThumb extends StatelessWidget {
       onTap: () => pushMediaViewer(context, images: urls, initialIndex: index),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),
-        child: CachedNetworkImage(
-          imageUrl: url,
+        child: CostrNetworkImage(
+          url: url,
+          forceProxy: proxyMedia,
           fit: BoxFit.cover,
-          placeholder: (BuildContext _, String _) => const _Placeholder(),
-          errorWidget: (BuildContext _, String _, Object _) =>
-              const _ErrorBox(),
+          placeholder: (BuildContext _) => const _Placeholder(),
+          errorWidget: (BuildContext _) => const _ErrorBox(),
+          onError: onMediaFailed,
         ),
       ),
     );
@@ -548,8 +603,14 @@ class _GridThumb extends StatelessWidget {
 }
 
 class _SingleImage extends StatelessWidget {
-  const _SingleImage({required this.url});
+  const _SingleImage({
+    required this.url,
+    required this.proxyMedia,
+    required this.onMediaFailed,
+  });
   final String url;
+  final bool proxyMedia;
+  final ValueChanged<bool>? onMediaFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -557,14 +618,16 @@ class _SingleImage extends StatelessWidget {
       onTap: () => pushMediaViewer(context, images: [url]),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: CachedNetworkImage(
-          imageUrl: url,
+        child: CostrNetworkImage(
+          url: url,
+          forceProxy: proxyMedia,
           width: double.infinity,
           fit: BoxFit.contain,
-          placeholder: (BuildContext _, String _) =>
+          placeholder: (BuildContext _) =>
               const _Placeholder(aspect: 16 / 9),
-          errorWidget: (BuildContext _, String _, Object _) =>
+          errorWidget: (BuildContext _) =>
               const _ErrorBox(aspect: 16 / 9),
+          onError: onMediaFailed,
         ),
       ),
     );

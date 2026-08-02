@@ -43,17 +43,20 @@ class PostActions extends ConsumerWidget {
     final theme = Theme.of(context);
     final fg = theme.colorScheme.onSurfaceVariant;
     final myReaction = ref.watch(myReactionProvider(event.id));
+    final counts = ref.watch(postCountsProvider(event.id));
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         _Action(
           icon: Icons.chat_bubble_outline,
           color: fg,
+          count: counts.replies,
           onTap: () => context.push('/compose', extra: {'replyTo': event}),
         ),
         _Action(
           icon: Icons.repeat_rounded,
           color: fg,
+          count: counts.reposts,
           onTap: () => _showRepostMenu(context, ref),
         ),
         _Action(
@@ -269,20 +272,52 @@ class PostActions extends ConsumerWidget {
 }
 
 class _Action extends StatelessWidget {
-  const _Action({required this.icon, required this.color, required this.onTap});
+  const _Action({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+    this.count = 0,
+  });
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
+  final int count;
 
   @override
   Widget build(BuildContext context) {
+    if (count <= 0) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: SizedBox(
+          width: 24,
+          height: 32,
+          child: Icon(icon, size: 18, color: color),
+        ),
+      );
+    }
+    // X-style: icon + a compact count to its right. Hidden when 0 so the
+    // row stays clean for posts with no observed interactions.
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: SizedBox(
-        width: 24,
         height: 32,
-        child: Icon(icon, size: 18, color: color),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 4),
+            Text(
+              count > 999 ? '${(count / 1000).toStringAsFixed(1)}k' : '$count',
+              style: TextStyle(
+                fontSize: 12,
+                color: color,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

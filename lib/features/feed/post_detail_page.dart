@@ -93,9 +93,19 @@ class _RepliesSection extends ConsumerWidget {
             child: Center(child: Text('暂无回复')),
           );
         }
+        // Flatten into a timeline-ordered + hierarchical tree (each reply
+        // followed by its own sub-thread) and indent per depth so the reply
+        // structure is visible instead of a flat createdAt-desc jumble.
+        final threaded = threadReplies(replies, eventId);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[for (final e in replies) EventCard(event: e)],
+          children: <Widget>[
+            for (final tr in threaded)
+              Padding(
+                padding: EdgeInsets.only(left: tr.depth * 24.0),
+                child: EventCard(event: tr.event),
+              ),
+          ],
         );
       },
     );

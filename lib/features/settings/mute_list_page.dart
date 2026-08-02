@@ -111,12 +111,12 @@ void _showAddSheet(BuildContext context, WidgetRef ref) {
       return StatefulBuilder(
         builder: (ctx, setState) {
           return AnimatedPadding(
-            padding: insets.copyWith(
-              left: 16,
-              right: 16,
-              top: 16,
-              bottom: 16,
-            ),
+            // Lift the sheet above the soft keyboard. NB: EdgeInsets.copyWith
+            // REPLACES fields — `.copyWith(bottom: 16)` would clobber the
+            // keyboard height (viewInsets.bottom) with 16 and the sheet would
+            // stay under the keyboard. Add them instead: keyboard height + a
+            // 16px breathing gap above it.
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + insets.bottom),
             duration: const Duration(milliseconds: 120),
             child: Column(
               mainAxisSize: MainAxisSize.min,

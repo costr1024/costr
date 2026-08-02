@@ -6,13 +6,29 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import 'fullscreen_video_page.dart';
+import 'proxied_network_image.dart';
 
 class NetworkVideo extends StatefulWidget {
-  const NetworkVideo({super.key, required this.url, this.width, this.height});
+  const NetworkVideo({
+    super.key,
+    required this.url,
+    this.width,
+    this.height,
+    this.forceProxy = false,
+    this.onError,
+  });
 
   final String url;
   final int? width;
   final int? height;
+
+  /// When true, load through the proxy mirror ([proxiedUrl]) — flipped on by
+  /// the post's "代理媒体" affordance. Manual only.
+  final bool forceProxy;
+
+  /// Fired when the video fails to initialize, so the post can surface its
+  /// "代理媒体" affordance.
+  final ValueChanged<bool>? onError;
 
   @override
   State<NetworkVideo> createState() => _NetworkVideoState();
@@ -26,14 +42,37 @@ class _NetworkVideoState extends State<NetworkVideo> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _init();
+  }
+
+  @override
+  void didUpdateWidget(covariant NetworkVideo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // forceProxy flip → re-init with the (un)proxied URL.
+    if (widget.forceProxy != oldWidget.forceProxy ||
+        widget.url != oldWidget.url) {
+      _controller?.dispose();
+      _controller = null;
+      _initialized = false;
+      _error = false;
+      _init();
+    }
+  }
+
+  void _init() {
+    final effectiveUrl =
+        widget.forceProxy ? proxiedUrl(widget.url) : widget.url;
+    _controller = VideoPlayerController.networkUrl(Uri.parse(effectiveUrl));
     _controller!
         .initialize()
         .then((_) {
           if (mounted) setState(() => _initialized = true);
         })
         .catchError((Object _) {
-          if (mounted) setState(() => _error = true);
+          if (mounted) {
+            setState(() => _error = true);
+            widget.onError?.call(true);
+          }
         });
   }
 

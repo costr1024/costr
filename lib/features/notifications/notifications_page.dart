@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../app/providers.dart';
 import '../../app/theme.dart';
@@ -36,6 +37,7 @@ class NotificationItem {
     this.sourceEventId,
     this.eventContent,
     this.reactionEmoji,
+    this.reactionEmojiUrl,
     required this.id,
     required this.unread,
   });
@@ -54,7 +56,17 @@ class NotificationItem {
   /// which have no `targetEventId` — tapping a mention opens this post.
   final String? sourceEventId;
   final String? eventContent;
+
+  /// For kind-7 reactions: the reaction payload. For a unicode reaction ("+",
+  /// "🔥") this is the raw content; for a NIP-30 custom-emoji reaction it is
+  /// the shortcode *without* the surrounding colons (e.g. "fire", not
+  /// ":fire:") — pair it with [reactionEmojiUrl] to render the image.
   final String? reactionEmoji;
+
+  /// The image URL for a NIP-30 custom-emoji reaction; null for unicode
+  /// reactions. When present, [reactionEmoji] is the shortcode.
+  final String? reactionEmojiUrl;
+
   final String id;
   final bool unread;
 }
@@ -71,6 +83,12 @@ final notificationsProvider =
       final pool = ref.watch(relayPoolProvider);
       final items = <NotificationItem>[];
       final myEventIds = <String>{};
+      // Mute set (read once + reactively updated WITHOUT restarting the
+      // generator — same pattern as myEventIds above). Muted pubkeys' events
+      // (mentions, follows, replies, reactions, reposts) are skipped so a
+      // muted account stops generating notifications, not just feed entries.
+      // Defaults to an empty set until muteListProvider resolves.
+      var muteSet = ref.read(myMuteSetProvider);
       // One-time snapshot (NOT ref.watch): watching eventStoreProvider
       // reactively would RESTART this whole generator on every incoming feed
       // event (esp. kind-0 metadata bursts), and each restart yields [] first
@@ -106,6 +124,20 @@ final notificationsProvider =
       });
 
       final controller = StreamController<List<NotificationItem>>.broadcast();
+      // Reactively update the mute set WITHOUT restarting the generator (same
+      // pattern as eventStoreProvider above). On mute, also drop any already-
+      // collected notifications from the now-muted pubkey so muting clears
+      // their stale items live (not just on the next generator restart).
+      ref.listen(myMuteSetProvider, (_, next) {
+        muteSet = next;
+        if (muteSet.pubkeys.isEmpty) return;
+        final before = items.length;
+        items.removeWhere((i) => i.pubkeys.any(muteSet.isMutedPubkey));
+        if (items.length != before) {
+          items.sort((a, b) => b.time.compareTo(a.time));
+          controller.add(List.unmodifiable(items));
+        }
+      });
       Timer? flush;
       bool dirty = false;
       // Per-session seen set: rawEvents (un-deduped) re-emits events already
@@ -124,6 +156,10 @@ final notificationsProvider =
       pool.rawEvents.listen((e) {
         if (e.pubkey == myPubkey) return; // skip my own events
         if (!seen.add(e.id)) return; // already processed this event
+        // Muted accounts don't generate notifications (mute applies to the
+        // feed AND the notification center — a muted spam/ad account that
+        // keeps following or @-mentioning you must not keep surfacing here).
+        if (muteSet.isMutedPubkey(e.pubkey)) return;
 
         // Check #p mention (kind 1, 7, 6 with p tag = me)
         bool mentionsMe = false;
@@ -146,7 +182,7 @@ final notificationsProvider =
         if (!mentionsMe && referencedId == null) return;
 
         final type = _classify(e, mentionsMe, referencedId != null);
-        final itemKey = '${type.name}:${referencedId ?? e.id}';
+        final itemKey = notificationItemKey(type, e, referencedId);
 
         // Aggregate: if an item with the same type+target exists, add this pubkey.
         final existing = items.where((i) => i.id == itemKey).firstOrNull;
@@ -162,6 +198,7 @@ final notificationsProvider =
               sourceEventId: existing.sourceEventId,
               eventContent: existing.eventContent,
               reactionEmoji: existing.reactionEmoji,
+              reactionEmojiUrl: existing.reactionEmojiUrl,
               id: existing.id,
               unread: true,
             );
@@ -169,19 +206,23 @@ final notificationsProvider =
             items[idx] = updated;
           }
         } else {
+          final preview = notificationPreview(e);
+          final emojiPair = reactionEmojiFor(e);
+          final emoji = emojiPair?.emoji;
+          final emojiUrl = emojiPair?.url;
+
           items.add(
             NotificationItem(
               type: type,
               pubkeys: [e.pubkey],
               extraCount: 0,
               time: e.createdAt,
-              preview: e.content.isNotEmpty ? e.content : null,
+              preview: preview,
               targetEventId: referencedId,
               sourceEventId: e.id,
               eventContent: e.content,
-              reactionEmoji: e.kind == 7
-                  ? (e.content.isEmpty ? '+' : e.content)
-                  : null,
+              reactionEmoji: emoji,
+              reactionEmojiUrl: emojiUrl,
               id: itemKey,
               unread: true,
             ),
@@ -230,6 +271,86 @@ NotificationType _classify(Event e, bool mentionsMe, bool interactsMyPost) {
   if (mentionsMe && !interactsMyPost) return NotificationType.mention;
   if (interactsMyPost) return NotificationType.reply;
   return NotificationType.mention;
+}
+
+/// Aggregation key for an incoming event — two events that should collapse
+/// into one notification item return the same key.
+///
+/// For most types this is `type:target` so multiple people interacting with
+/// the same post roll up into one grouped item. Follow is special: a contact
+/// list (kind 3) is re-published on every follow/unfollow change with a
+/// brand-new event id, so keying on the event id would spawn a duplicate
+/// "X followed you" notification for every revision of X's list. Key on the
+/// *follower's pubkey* instead so all of X's revisions collapse into one.
+String notificationItemKey(
+  NotificationType type,
+  Event e,
+  String? referencedId,
+) {
+  if (type == NotificationType.follow) return 'follow:${e.pubkey}';
+  return '${type.name}:${referencedId ?? e.id}';
+}
+
+/// The 2-line preview text shown under the notification head, or null.
+///
+/// - kind-1 replies/mentions: the author's own words.
+/// - kind-6 repost: NIP-18 content is the stringified-JSON of the reposted
+///   event — parse it and show the reposted post's OWN text, so the user
+///   sees WHICH of their posts was reposted (not the raw JSON, and not
+///   nothing). Falls back to null if the embedded JSON is missing/empty.
+/// - kind-7 reaction: content is just the emoji payload ("+", "🔥", or
+///   ":shortcode:") and is rendered via [reactionEmojiFor] instead, so it
+///   must not also appear as preview text (it would show the literal
+///   ":shortcode:" token).
+String? notificationPreview(Event e) {
+  if (e.kind == 1 && e.content.isNotEmpty) return e.content;
+  if (e.kind == 6) {
+    if (e.content.isEmpty) return null;
+    try {
+      final obj = jsonDecode(e.content);
+      if (obj is Map) {
+        final c = obj['content'];
+        if (c is String && c.isNotEmpty) return c;
+      }
+    } catch (_) {
+      // Embedded repost payload wasn't valid JSON — no preview.
+    }
+  }
+  return null;
+}
+
+/// Kind-7 reaction payload: `(emoji, url?)`. `url` is set for a NIP-30
+/// custom-emoji reaction (rendered as an inline image); null for unicode
+/// reactions. Returns null for non-kind-7 events.
+///
+/// - Empty content → the default "+" like (legacy NIP-25).
+/// - `:shortcode:` content with a matching `["emoji", shortcode, url]` tag →
+///   `(shortcode, url)` — caller renders the image.
+/// - `:shortcode:` content with no emoji tag → `(shortcode, null)` — show the
+///   bare shortcode (no surrounding colons) rather than the raw token.
+/// - Anything else (unicode "🔥", legacy "+") → `(content, null)`.
+({String emoji, String? url})? reactionEmojiFor(Event e) {
+  if (e.kind != 7) return null;
+  if (e.content.isEmpty) return (emoji: '+', url: null);
+  final match = RegExp(r'^:([a-zA-Z0-9_+-]+):$').firstMatch(e.content);
+  String? shortcode = match?.group(1);
+  String? url;
+  for (final t in e.tags) {
+    if (t.length >= 3 &&
+        t[0] == 'emoji' &&
+        t[1] is String &&
+        t[2] is String &&
+        (shortcode == null || t[1] == shortcode)) {
+      shortcode = t[1] as String;
+      url = t[2] as String;
+      break;
+    }
+  }
+  if (url != null && shortcode != null) {
+    return (emoji: shortcode, url: url);
+  }
+  if (shortcode != null) return (emoji: shortcode, url: null);
+  return (emoji: e.content, url: null);
 }
 
 // --- Read state (persisted) -----------------------------------------------
@@ -501,15 +622,26 @@ class _NotificationTile extends ConsumerWidget {
       onTap: () {
         // Mark this item read (per-item; stable unread styling until tap).
         ref.read(notificationReadProvider.notifier).markRead([item.id]);
-        // Replies/reactions/reposts point at the user's own post (targetEventId);
-        // pure mentions have no target, so fall back to the mentioner's own post
-        // (sourceEventId) — tapping a mention opens the post that mentioned you.
+        // Follow → open the follower's profile. MUST be checked before the
+        // target-event fallback below: a follow item carries sourceEventId
+        // (the kind-3 event's own id) but that is NOT a post to open —
+        // without this guard, tapping "X 关注你" would push a post-detail
+        // page for the kind-3 id (which isn't a post) instead of X's profile.
+        if (item.type == NotificationType.follow) {
+          if (item.pubkeys.isNotEmpty) {
+            context.push('/u/${item.pubkeys.first}');
+          } else {
+            context.go('/profile');
+          }
+          return;
+        }
+        // Replies/reactions/reposts point at the user's own post
+        // (targetEventId); pure mentions have no target, so fall back to the
+        // mentioner's own post (sourceEventId) — tapping a mention opens the
+        // post that mentioned you.
         final target = item.targetEventId ?? item.sourceEventId;
         if (target != null) {
           pushPostDetail(context, target);
-        } else if (item.type == NotificationType.follow) {
-          // Go to my followers tab.
-          context.go('/profile');
         }
       },
       child: Container(
@@ -574,6 +706,34 @@ class _NotificationTile extends ConsumerWidget {
                           text: ' $verb',
                           style: TextStyle(color: CostrColors.text2),
                         ),
+                        // For reactions, show the actual emoji inline after the
+                        // verb — a NIP-30 custom-emoji image when we have a URL,
+                        // otherwise the unicode payload (e.g. "🔥" or "+").
+                        // This replaces the old behavior of dumping the raw
+                        // ":shortcode:" content as preview text.
+                        if (item.type == NotificationType.reaction &&
+                            item.reactionEmoji != null) ...[
+                          const TextSpan(text: ' '),
+                          if (item.reactionEmojiUrl != null)
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.middle,
+                              child: CachedNetworkImage(
+                                imageUrl: item.reactionEmojiUrl!,
+                                width: 18,
+                                height: 18,
+                                memCacheHeight: 72,
+                                errorWidget: (_, _, _) => Text(
+                                  item.reactionEmoji!,
+                                  style: const TextStyle(fontSize: 16),
+                                ),
+                              ),
+                            )
+                          else
+                            TextSpan(
+                              text: item.reactionEmoji,
+                              style: const TextStyle(fontSize: 16),
+                            ),
+                        ],
                       ],
                     ),
                   ),
