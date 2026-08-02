@@ -1734,6 +1734,25 @@ class FollowGroup {
   final List<String> pubkeys;
 }
 
+/// Human-readable name of a NIP-51 kind-30000 follow set. Prefers the
+/// `name` tag (Amethyst puts the human name here and a UUID in `d`); falls
+/// back to the `d` tag (Costr's own lists use the human name directly as
+/// `d` and carry no `name` tag). Returns null for the default list (d="").
+String? kind30000DisplayName(Event e) {
+  String? name;
+  String? d;
+  for (final t in e.tags) {
+    if (t.length < 2 || t[1] is! String) continue;
+    if (t[0] == 'name') {
+      name ??= t[1] as String;
+    } else if (t[0] == 'd') {
+      d ??= t[1] as String;
+    }
+  }
+  final n = (name != null && name.isNotEmpty) ? name : d;
+  return (n == null || n.isEmpty) ? null : n;
+}
+
 /// The logged-in user's follows grouped by NIP-51 kind-30000 categories.
 /// First entry is 默认分组 (follows not in any custom group). Then one entry
 /// per custom group (d-tag name) with the pubkeys in that group.
@@ -1750,20 +1769,16 @@ List<FollowGroup> _buildFollowGroups(
   final groupNames = <String>[];
   final groupPubkeys = <String, Set<String>>{};
   for (final e in k30000Events) {
-    String? name;
+    final name = kind30000DisplayName(e);
+    if (name == null) continue; // default list (d="") — not a named group
     final pks = <String>{};
     for (final t in e.tags) {
-      if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
-        name = t[1] as String;
-      }
       if (t.length >= 2 && t[0] == 'p' && t[1] is String) {
         pks.add(t[1] as String);
       }
     }
-    if (name != null && name.isNotEmpty) {
-      if (!groupNames.contains(name)) groupNames.add(name);
-      groupPubkeys.putIfAbsent(name, () => <String>{}).addAll(pks);
-    }
+    if (!groupNames.contains(name)) groupNames.add(name);
+    groupPubkeys.putIfAbsent(name, () => <String>{}).addAll(pks);
   }
 
   // 2. Group the follows.
@@ -1917,12 +1932,8 @@ final userGroupNamesProvider = StreamProvider.family<List<String>, String>((
   if (cache != null) {
     try {
       for (final row in await cache.queryFollowSets(pubkey)) {
-        for (final t in _replaceableToEvent(row).tags) {
-          if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
-            final name = t[1] as String;
-            if (name.isNotEmpty && seen.add(name)) collected.add(name);
-          }
-        }
+        final name = kind30000DisplayName(_replaceableToEvent(row));
+        if (name != null && seen.add(name)) collected.add(name);
       }
     } catch (_) {}
   }
@@ -1936,13 +1947,11 @@ final userGroupNamesProvider = StreamProvider.family<List<String>, String>((
   final done = Completer<void>();
   evSub = pool.rawEvents.listen((e) {
     if (e.kind == 30000 && e.pubkey == pubkey) {
-      for (final t in e.tags) {
-        if (t.length >= 2 && t[0] == 'd' && t[1] is String) {
-          final name = t[1] as String;
-          if (name.isNotEmpty && seen.add(name)) collected.add(name);
-        }
+      final name = kind30000DisplayName(e);
+      if (name != null && seen.add(name)) {
+        collected.add(name);
+        ctrl.add(List<String>.unmodifiable(collected));
       }
-      ctrl.add(List<String>.unmodifiable(collected));
     }
   });
   final subId = nextSubId('groups');
@@ -2429,6 +2438,14 @@ Future<RelayOk> unfollowUser(WidgetRef ref, String pubkey) async {
 
 /// updated one with [pubkey] added. Best-effort (category list failure doesn't
 /// fail the follow).
+///
+/// [category] is the group's DISPLAY name. The existing kind-30000 event is
+/// resolved BY DISPLAY NAME (not `#d`): Amethyst stores a UUID in `d` and the
+/// human name in a `name` tag, so a `#d`=[category] filter would miss their
+/// lists and Costr would fork a second list. SQLite cache is checked first
+/// (instant); a relay REQ (all the author's kind-30000) covers lists not yet
+/// cached. The matched event is passed as `current` so [followCategory]
+/// preserves its real `d` + metadata tags.
 Future<void> _addToCategoryList(
   WidgetRef ref,
   Identity identity,
@@ -2436,50 +2453,64 @@ Future<void> _addToCategoryList(
   String category,
 ) async {
   final pool = ref.read(relayPoolProvider);
-  final completer = Completer<Event?>();
-  late StreamSubscription<Event> evSub;
-  late StreamSubscription<String> eoseSub;
-  evSub = pool.rawEvents.listen((e) {
-    if (e.kind == 30000 &&
-        e.pubkey == identity.pubkeyHex &&
-        !completer.isCompleted) {
-      // Check d-tag matches category.
-      for (final t in e.tags) {
-        if (t.length >= 2 && t[0] == 'd' && t[1] == category) {
-          completer.complete(e);
+
+  // 1. SQLite cache first (instant).
+  Event? current;
+  final cache = ref.read(localCacheProvider).value;
+  if (cache != null) {
+    try {
+      for (final row in await cache.queryFollowSets(identity.pubkeyHex)) {
+        final ev = _replaceableToEvent(row);
+        if (kind30000DisplayName(ev) == category) {
+          current = ev;
           break;
         }
       }
-    }
-  });
-  final subId = nextSubId('cat-$category');
-  final connectedCount = pool.states
-      .where((s) => s.status == RelayStatus.connected)
-      .length;
-  var eoses = 0;
-  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    eoses++;
-    if (eoses >= connectedCount && !completer.isCompleted) {
-      completer.complete(null);
-    }
-  });
-  pool.request(subId, <String, dynamic>{
-    'authors': [identity.pubkeyHex],
-    'kinds': [30000],
-    '#d': [category],
-    'limit': 1,
-  }, closeOnEose: false);
-  Event? current;
-  try {
-    current = await completer.future.timeout(
-      const Duration(seconds: 8),
-      onTimeout: () => null,
-    );
-  } finally {
-    await evSub.cancel();
-    await eoseSub.cancel();
-    pool.closeSubscription(subId);
+    } catch (_) {}
   }
+
+  // 2. Relay REQ (all author's kind-30000) for lists not yet cached, matched
+  //    by display name.
+  if (current == null) {
+    final completer = Completer<Event?>();
+    late StreamSubscription<Event> evSub;
+    late StreamSubscription<String> eoseSub;
+    evSub = pool.rawEvents.listen((e) {
+      if (e.kind == 30000 &&
+          e.pubkey == identity.pubkeyHex &&
+          !completer.isCompleted &&
+          kind30000DisplayName(e) == category) {
+        completer.complete(e);
+      }
+    });
+    final subId = nextSubId('cat-$category');
+    final connectedCount = pool.states
+        .where((s) => s.status == RelayStatus.connected)
+        .length;
+    var eoses = 0;
+    eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+      eoses++;
+      if (eoses >= connectedCount && !completer.isCompleted) {
+        completer.complete(null);
+      }
+    });
+    pool.request(subId, <String, dynamic>{
+      'authors': [identity.pubkeyHex],
+      'kinds': [30000],
+      'limit': 100,
+    }, closeOnEose: false);
+    try {
+      current = await completer.future.timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => null,
+      );
+    } finally {
+      await evSub.cancel();
+      await eoseSub.cancel();
+      pool.closeSubscription(subId);
+    }
+  }
+
   final signed = NostrActions(
     identity,
   ).followCategory(current, pubkey, category);

@@ -78,20 +78,38 @@ class NostrActions {
     );
   }
 
-  /// Add [pubkey] to a NIP-51 kind-30000 categorized people list (Follow set)
-  /// with `d`=[category]. [current] is the existing kind-30000 event for that
-  /// category (or null for a new list). Preserves existing p-tags.
+  /// Add [pubkey] to a NIP-51 kind-30000 categorized people list (Follow set).
+  ///
+  /// [current] is the user's existing kind-30000 event for that group (or
+  /// null for a new list). [category] is the group's display name — used as
+  /// the `d` identifier (and a `name` tag) ONLY when creating a new list.
+  ///
+  /// When editing an existing list ([current] != null), the original `d`
+  /// identifier is preserved verbatim and ALL metadata tags (`name`/`alt`/
+  /// `description`/`image`/…) are carried over — only the `p` roster is
+  /// rebuilt. This matters because Amethyst stores a UUID in `d` and the
+  /// human name in a `name` tag: rewriting `d` to the display name would
+  /// fork the list into a second replaceable event, and dropping the `name`
+  /// tag would erase the human name other clients (and Costr's own display)
+  /// rely on. See [kind30000DisplayName] for the matching read side.
   Event followCategory(
     Event? current,
     String pubkey,
     String category, {
     String relay = '',
   }) {
-    final tags = <List<String>>[
-      ['d', category],
-    ];
-    final seen = <String>{};
+    final tags = <List<String>>[];
     if (current != null) {
+      // 1. Carry over every non-`p`/non-`client` tag verbatim — preserves
+      //    Amethyst's UUID `d` + human `name` + alt/description/image/… .
+      for (final t in current.tags) {
+        if (t.isEmpty) continue;
+        if (t[0] == 'p' || t[0] == 'client') continue;
+        tags.add(t.map((e) => e.toString()).toList());
+      }
+      // 2. Rebuild the p roster: keep existing entries (minus [pubkey] so
+      //    its relay hint can be refreshed), then add [pubkey].
+      final seen = <String>{};
       for (final t in current.tags) {
         if (t.length < 2 || t[0] != 'p' || t[1] is! String) continue;
         final pk = t[1] as String;
@@ -100,8 +118,15 @@ class NostrActions {
         tags.add(['p', pk, r]);
         seen.add(pk);
       }
-    }
-    if (seen.add(pubkey)) {
+      if (seen.add(pubkey)) {
+        tags.add(['p', pubkey, relay]);
+      }
+    } else {
+      // New list: d = category (Costr convention) + a `name` tag so other
+      // clients (Amethyst) see a human name and Costr's name-first display
+      // reads it back consistently.
+      tags.add(['d', category]);
+      tags.add(['name', category]);
       tags.add(['p', pubkey, relay]);
     }
     return id.signEvent(kind: 30000, content: '', tags: [...tags, _clientTag]);

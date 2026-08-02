@@ -163,5 +163,79 @@ void main() {
       final r = actions.follow(existing, 'pk-1');
       expect(r.tags.where((t) => t[1] == 'pk-1').length, 1);
     });
+
+    // ---- NIP-51 kind-30000 categorized follow sets ----
+
+    group('followCategory', () {
+      Event k3(String evtId, {List<List<dynamic>> tags = const []}) => Event(
+            id: evtId,
+            pubkey: id.pubkeyHex,
+            createdAt: 1700000000,
+            kind: 30000,
+            tags: tags,
+            content: '',
+            sig: 's',
+          );
+
+      test('new list: d + name + p + client', () {
+        final r = actions.followCategory(null, 'new-pk', '真人用户');
+        expect(r.kind, 30000);
+        expect(r.tags, _tag(['d', '真人用户']));
+        expect(r.tags, _tag(['name', '真人用户']));
+        expect(r.tags, _tag(['p', 'new-pk', '']));
+        expect(r.tags, _tag(['client', 'Costr']));
+        expect(id.verifyEventSignature(id: r.id, sig: r.sig), isTrue);
+      });
+
+      test('edit Amethyst list: preserves UUID d + name + metadata, adds p',
+          () {
+        // An Amethyst-authored list: d=UUID, name="真人用户", plus alt/desc.
+        final amethyst = k3(
+          'amethyst-list',
+          tags: [
+            ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
+            ['alt', 'List of people'],
+            ['name', '真人用户'],
+            ['description', 'a group'],
+            ['p', 'existing-pk', 'wss://relay.damus.io/'],
+          ],
+        );
+        final r = actions.followCategory(amethyst, 'new-pk', '真人用户');
+        // Real d (UUID) preserved — NOT rewritten to the display name.
+        expect(
+          r.tags,
+          _tag(['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b']),
+        );
+        // Human name + other metadata preserved.
+        expect(r.tags, _tag(['name', '真人用户']));
+        expect(r.tags, _tag(['alt', 'List of people']));
+        expect(r.tags, _tag(['description', 'a group']));
+        // Existing p kept, new p added.
+        expect(r.tags, _tag(['p', 'existing-pk', 'wss://relay.damus.io/']));
+        expect(r.tags, _tag(['p', 'new-pk', '']));
+        expect(r.tags, _tag(['client', 'Costr']));
+        // No duplicate client.
+        expect(
+          r.tags.where((t) => t[0] == 'client').length,
+          1,
+        );
+      });
+
+      test('edit list: adding an already-member pubkey dedups', () {
+        final existing = k3(
+          'lst',
+          tags: [
+            ['d', 'friends'],
+            ['name', 'friends'],
+            ['p', 'dup-pk', ''],
+          ],
+        );
+        final r = actions.followCategory(existing, 'dup-pk', 'friends');
+        expect(r.tags.where((t) => t[0] == 'p' && t[1] == 'dup-pk').length, 1);
+        // d + name still present exactly once.
+        expect(r.tags.where((t) => t[0] == 'd').length, 1);
+        expect(r.tags.where((t) => t[0] == 'name').length, 1);
+      });
+    });
   });
 }
