@@ -10,6 +10,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:markdown/markdown.dart' hide Text;
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/providers.dart';
@@ -221,8 +222,10 @@ class _Header extends ConsumerWidget {
                       tooltip: '编辑资料',
                       onPressed: () => context.push('/profile/edit'),
                     ),
-                  ] else
+                  ] else ...[
                     _FollowButton(pubkey: pubkey),
+                    _ProfileActionMenu(pubkey: pubkey),
+                  ],
                 ],
               ),
               // NIP-38 user status — 2 lines under the name. Self sees an
@@ -414,12 +417,11 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
     }
     final follows = ref.watch(followingStateProvider).value ?? const <String>[];
     final followed = follows.contains(widget.pubkey);
-    final String label;
-    if (widget.isSelf) {
-      label = followed ? '已关注自己' : '关注自己';
-    } else {
-      label = followed ? '已关注' : (widget.followsMe ? '回关' : '关注');
-    }
+    // No self-special-case label — own profile shows the same 已关注 / 关注
+    // as everyone else (the user asked to drop the 已关注自己 distinction).
+    final String label = followed
+        ? '已关注'
+        : (widget.followsMe ? '回关' : '关注');
     final icon = followed ? Icons.check : Icons.person_add_outlined;
     return FilledButton.tonalIcon(
       icon: Icon(icon, size: 18),
@@ -532,6 +534,95 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// ⋮ action menu for OTHER users' profiles: 屏蔽/取消屏蔽, 复制 nprofile,
+/// 分享资料链接. (Self profile keeps its 编辑资料 button — no mute-self.)
+/// Follow stays a separate prominent button per the user's IA choice.
+class _ProfileActionMenu extends ConsumerWidget {
+  const _ProfileActionMenu({required this.pubkey});
+  final String pubkey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final muted = ref.watch(myMuteSetProvider).isMutedPubkey(pubkey);
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, size: 20),
+      tooltip: '更多',
+      onSelected: (v) async {
+        switch (v) {
+          case 'mute':
+            final ok = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: Text(muted ? '取消屏蔽？' : '屏蔽？'),
+                content: Text(muted
+                    ? '取消屏蔽后，该用户的帖子会重新出现在你的信息流里。'
+                    : '屏蔽后，该用户的帖子不再出现在你的信息流里（不会通知对方）。'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('取消'),
+                  ),
+                  FilledButton.tonal(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(muted ? '取消屏蔽' : '屏蔽'),
+                  ),
+                ],
+              ),
+            );
+            if (ok != true) return;
+            await muteEntry(ref, ['p', pubkey], add: !muted);
+          case 'copy':
+            final nprofile = hexToNprofile(pubkey);
+            await Clipboard.setData(ClipboardData(text: nprofile));
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('已复制 nprofile'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
+            }
+          case 'share':
+            final npub = hexToNpub(pubkey);
+            await SharePlus.instance.share(ShareParams(text: 'https://njump.me/$npub'));
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'mute',
+          child: ListTile(
+            dense: true,
+            leading: Icon(
+              muted ? Icons.visibility_outlined : Icons.block,
+              size: 20,
+            ),
+            title: Text(muted ? '取消屏蔽' : '屏蔽'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'copy',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.copy_outlined, size: 20),
+            title: Text('复制 nprofile'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'share',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.share_outlined, size: 20),
+            title: Text('分享资料链接'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
     );
   }
 }

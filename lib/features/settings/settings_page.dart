@@ -42,6 +42,11 @@ class SettingsPage extends ConsumerWidget {
             subtitle: 'Costr 连接的服务器，一般不用改',
             onTap: () => context.push('/settings/relays'),
           ),
+          _Row(
+            title: '屏蔽列表',
+            subtitle: '已屏蔽的用户、词、标签',
+            onTap: () => context.push('/settings/mute'),
+          ),
           const _SectionHeader('关于'),
           _Row(
             title: '关于 Costr',

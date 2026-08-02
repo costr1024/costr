@@ -16,6 +16,7 @@ import 'package:http/http.dart' as http;
 import '../models/bookmark_entry.dart';
 import '../models/event.dart';
 import '../models/metadata.dart';
+import '../models/mute_set.dart';
 import '../utils/nip19.dart';
 import '../nostr/actions.dart';
 import '../nostr/event_store.dart';
@@ -1592,6 +1593,23 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   if (tag != null) {
     events = events.where((e) => e.hashtags.contains(tag));
   }
+
+  // Mute list (NIP-51 kind-10000): hide posts from muted authors, posts
+  // carrying muted hashtags, posts whose content contains a muted word, and
+  // individually muted events. Owner's private (NIP-44) mutes are decrypted
+  // in [muteListProvider]. Applies in both global + following modes.
+  final mute = ref.watch(myMuteSetProvider);
+  if (!mute.isEmpty) {
+    events = events.where((e) {
+      if (mute.isMutedPubkey(e.pubkey)) return false;
+      if (mute.isMutedEvent(e.id)) return false;
+      if (e.isTextNote) {
+        if (mute.contentHasMutedWord(e.content)) return false;
+        if (mute.hasMutedHashtag(e.hashtags)) return false;
+      }
+      return true;
+    });
+  }
   return events.toList();
 });
 
@@ -2890,6 +2908,95 @@ Future<RelayOk> bookmarkEvent(
   return pool.publishAndWait(signed);
 }
 
+/// Add/remove an entry from the logged-in user's NIP-51 kind-10000 mute list
+/// (Amethyst interop: public `p`/`word`/`t`/`e` tags + NIP-44-encrypted
+/// private entries). Fetches the current kind-10000 (to preserve existing
+/// entries), signs an updated one via [NostrActions.muteList], publishes.
+/// [entry] is a Nostr tag pair: `['p', pubkey]` / `['word', str]` /
+/// `['t', hashtag]` / `['e', eventId]`. [publicList]: public tag vs
+/// NIP-44-private (default private — most users want their mute list hidden).
+Future<RelayOk> muteEntry(
+  WidgetRef ref,
+  MuteEntry entry, {
+  required bool add,
+  bool publicList = false,
+}) async {
+  final identity = ref.read(identityProvider).value;
+  if (identity == null) {
+    return const RelayOk('', false, '未登录');
+  }
+  final pool = ref.read(relayPoolProvider);
+  final completer = Completer<Event?>();
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  evSub = pool.rawEvents.listen((e) {
+    if (e.kind == 10000 &&
+        e.pubkey == identity.pubkeyHex &&
+        !completer.isCompleted) {
+      completer.complete(e);
+    }
+  });
+  final subId = nextSubId('mute');
+  final connectedCount = pool.states
+      .where((s) => s.status == RelayStatus.connected)
+      .length;
+  var eoses = 0;
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (eoses >= connectedCount && !completer.isCompleted) {
+      completer.complete(null);
+    }
+  });
+  pool.request(subId, <String, dynamic>{
+    'authors': [identity.pubkeyHex],
+    'kinds': [10000],
+    'limit': 1,
+  }, closeOnEose: false);
+  Event? current;
+  bool certain = false;
+  try {
+    current = await completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        certain = false;
+        return null;
+      },
+    );
+    certain = true;
+  } finally {
+    await evSub.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+  }
+  if (!certain) {
+    return const RelayOk('', false, '无法确认现有屏蔽列表（中继未及时响应），已取消以防清空。请重试。');
+  }
+  final signed = NostrActions(
+    identity,
+  ).muteList(current, entry: entry, add: add, publicList: publicList);
+  final ok = await pool.publishAndWait(signed);
+  // Local cache so the mute takes effect instantly (relay echo re-ingests +
+  // bumps muteListProvider, but do it now). Persist the kind-10000 row.
+  if (ok.ok) {
+    final cache = await ref.read(localCacheProvider.future);
+    try {
+      await cache.writeEvent(
+        id: signed.id,
+        pubkey: signed.pubkey,
+        kind: signed.kind,
+        createdAt: signed.createdAt,
+        content: signed.content,
+        sig: signed.sig,
+        raw: jsonEncode(signed.toWireObject()),
+        tagsJson: jsonEncode(signed.tags),
+        tags: signed.tags,
+      );
+    } catch (_) {}
+    ref.invalidate(muteListProvider(identity.pubkeyHex));
+  }
+  return ok;
+}
+
 /// A user's bookmarked note ids with origin (public vs private). NIP-51
 /// kind-10003 (single global list) AND kind-30003 (labeled bookmark lists,
 /// multi-instance — Amethyst uses these for named bookmark groups). Both
@@ -3025,6 +3132,83 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
     if (!ctrl.isClosed) ctrl.close();
   });
   yield* ctrl.stream;
+});
+
+/// The logged-in user's mute list (NIP-51 kind-10000). Amethyst stores public
+/// mutes as plain tags (`p`/`word`/`t`/`e`) and private mutes as the same shape
+/// NIP-44-encrypted in `.content`. Costr decrypts the owner's private entries
+/// and unions them with the public tags → a [MuteSet] the feed filter + mute
+/// UI consume. Yields the SQLite-cached list instantly, then refreshes from
+/// relays. Family by pubkey; only the owner gets private entries.
+final muteListProvider =
+    StreamProvider.family<MuteSet, String>((ref, pubkey) async* {
+  final identity = await ref.watch(identityProvider.future);
+  final isSelf = identity != null && identity.pubkeyHex == pubkey;
+  MuteSet muteSetOf(Event? e) => identity != null
+      ? NostrActions(identity).muteSetOf(e, includePrivate: isSelf)
+      : const MuteSet();
+
+  // 1. SQLite cache (instant) — kind-10000 is persisted by EventStoreNotifier.
+  final cache = ref.read(localCacheProvider).value;
+  Event? cached;
+  if (cache != null) {
+    try {
+      final row = await cache.queryReplaceable(pubkey, 10000);
+      if (row != null) cached = _replaceableToEvent(row);
+    } catch (_) {}
+  }
+  var latest = muteSetOf(cached);
+  if (!latest.isEmpty) yield latest;
+
+  // 2. Relay refresh — newest kind-10000 by createdAt.
+  final pool = ref.watch(relayPoolProvider);
+  final ctrl = StreamController<MuteSet>();
+  Event? newest = cached;
+  late StreamSubscription<Event> evSub;
+  late StreamSubscription<String> eoseSub;
+  final done = Completer<void>();
+  evSub = pool.rawEvents.listen((e) {
+    if (e.kind != 10000 || e.pubkey != pubkey) return;
+    if (newest == null || e.createdAt > newest!.createdAt) {
+      newest = e;
+      latest = muteSetOf(e);
+      if (!ctrl.isClosed) ctrl.add(latest);
+    }
+  });
+  final subId = nextSubId('mute');
+  eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    if (!done.isCompleted) done.complete();
+  });
+  pool.request(subId, <String, dynamic>{
+    'authors': [pubkey],
+    'kinds': [10000],
+    'limit': 1,
+  }, closeOnEose: true);
+  final t = Timer(const Duration(seconds: 8), () {
+    if (!done.isCompleted) done.complete();
+  });
+  done.future.whenComplete(() {
+    if (!ctrl.isClosed) ctrl.add(latest);
+    if (!ctrl.isClosed) ctrl.close();
+  });
+  ref.onDispose(() {
+    t.cancel();
+    evSub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+    if (!ctrl.isClosed) ctrl.close();
+  });
+  yield* ctrl.stream;
+});
+
+/// Convenience: the logged-in user's [MuteSet] (empty if logged out). Watches
+/// [muteListProvider] for the current identity's pubkey. Used by the feed
+/// filter + mute UI to hide muted content.
+final myMuteSetProvider = Provider<MuteSet>((ref) {
+  final id = ref.watch(identityProvider).value;
+  if (id == null) return const MuteSet();
+  final async = ref.watch(muteListProvider(id.pubkeyHex));
+  return async.value ?? const MuteSet();
 });
 
 // --- NSFW settings (local, not synced to relays) ---------------------------

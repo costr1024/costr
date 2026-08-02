@@ -140,7 +140,7 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 - [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md) — AUTH 认证
 - [NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md) — v2 加密（私人书签用）
 - [NIP-50](https://github.com/nostr-protocol/nips/blob/master/50.md) — 全文搜索
-- [NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) — 关注集 / 兴趣集（kind 30000 / 30015 / 10015，含 NIP-44 私密兴趣列表）
+- [NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) — 关注集 / 兴趣集 / 屏蔽列表 / 书签（kind 30000 / 30015 / 10015 / 10000 / 10003 / 30003，含 NIP-44 私密列表）
 - [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) — 打闪 Zap
 - [NIP-65](https://github.com/nostr-protocol/nips/blob/master/65.md) — outbox 路由（kind 10002）
 - [NIP-92](https://github.com/nostr-protocol/nips/blob/master/92.md) — imeta 媒体元数据
@@ -247,6 +247,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 - **自定义关注列表（NIP-51 kind-30000）**：兼容 Amethyst 的 `d`=UUID + `name`=人类名约定；`kind30000DisplayName` 优先 `name` 回退 `d`；编辑保留 UUID `d`+元数据。**重命名**（⋯ 菜单 → 底部弹窗，`d` 不变只改 `name`，列表不分叉）+ **删除**（发 NIP-09 kind-5 `a`-坐标 `30000:pubkey:d`，删全版本——Amethyst 自带删除只发 `e` 对 replaceable 无效，这是修正）。新列表创建用 UUID `d`（Amethyst 约定，避免重命名后 `d` 冲突）。列表人数显示真实 `p` 标签数（非「已关注 ∩ 组内」交集，对齐 Amethyst）。
 - **服务器节点页**：中继（连接状态 + 真实 WS RTT，NIP-50 CLOSED 回退 search 重试）+ Blossom（HTTP HEAD RTT）。时延缓存 SQLite，颜色绿快黄慢红离线。NIP-50 搜索中继单列。
 - **通知未读角标**：底栏通知图标红点角标 + 持久化已读（`notificationReadProvider` 存 SQLite，跨会话保持）；**逐条点开标记已读**（不再整页标记），未读项浅色背景底 + 小圆点稳定区分，点开后转已读；通知页 AppBar「全部标记已读」（首次登录历史未读过多时一键清空当前 tab）。
+- **屏蔽列表（NIP-51 kind-10000）**：对齐 Amethyst——公开 `p`/`word`/`t`/`e` 标签 + NIP-44 加密私密条目同事件并存（默认私密，仅 owner 可解）。信息流过滤：屏蔽用户的帖子、含屏蔽词/标签的帖子不显示。入口：用户主页 ⋮ → 屏蔽、信息流 hashtag chip 长按 → 屏蔽此标签、设置 → 屏蔽列表（管理 + 添加词/标签）。
 - **新手引导**：首次登录 7 步气泡（发帖、搜索、通知、关注、语言过滤、关注过滤、设置），可跳过，后续不再弹。覆盖首页语言/关注过滤、搜索、设置入口（含服务器节点列表与时延页，只读）等核心操作。
 - **安全存储**：OS keystore 优先；Linux libsecret 失败（keyring 锁）自动回退 0600 文件 `~/.config/costr/secret.json`，独占单用户主机可用。
 

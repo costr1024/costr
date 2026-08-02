@@ -18,6 +18,7 @@ import '../features/notifications/notifications_page.dart';
 import '../features/profile/edit_profile_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/settings/account_settings_page.dart';
+import '../features/settings/mute_list_page.dart';
 import '../features/settings/relays_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/search/search_page.dart';
@@ -109,6 +110,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/settings/relays',
         builder: (BuildContext context, GoRouterState state) =>
             const RelaysPage(),
+      ),
+      GoRoute(
+        path: '/settings/mute',
+        builder: (BuildContext context, GoRouterState state) =>
+            const MuteListPage(),
       ),
       StatefulShellRoute.indexedStack(
         builder:

@@ -8,6 +8,7 @@ import 'dart:math' show Random;
 
 import '../models/bookmark_entry.dart';
 import '../models/event.dart';
+import '../models/mute_set.dart';
 import '../utils/nip19.dart';
 import '../utils/nip44.dart';
 import 'identity.dart';
@@ -618,5 +619,121 @@ class NostrActions {
       }
     }
     return out;
+  }
+
+  /// Build/modify the user's NIP-51 kind-10000 mute list. **Amethyst stores
+  /// public mutes as plain tags** (`p` user, `word` word, `t` hashtag, `e`
+  /// event) **and private mutes as the same tag shape NIP-44-encrypted in
+  /// `.content`** (a `[["p",…],["word",…]]` JSON array, owner-only). Costr
+  /// matches this exactly so mute lists interoperate both ways. [entry] is
+  /// the tag to add/remove (e.g. `['p', pubkey]`, `['word', 'spam']`,
+  /// `['t', 'nsfw']`). [publicList]: public tag vs NIP-44-private. [add]:
+  /// add vs remove.
+  Event muteList(
+    Event? current, {
+    required MuteEntry entry,
+    required bool add,
+    required bool publicList,
+  }) {
+    final publicTags = <List<String>>[];
+    final privateTags = <List<String>>[];
+    if (current != null) {
+      for (final t in current.tags) {
+        if (t.isEmpty) continue;
+        final name = t[0].toString();
+        if (name == 'p' || name == 'word' || name == 't' || name == 'e') {
+          publicTags.add(t.map((e) => e.toString()).toList());
+        }
+      }
+      if (current.content.isNotEmpty) {
+        try {
+          final decoded = nip44Decrypt(
+            id.privkeyHex,
+            id.pubkeyHex,
+            current.content,
+          );
+          final arr = jsonDecode(decoded);
+          if (arr is List) {
+            for (final t in arr) {
+              if (t is List) {
+                privateTags.add(t.map((e) => e.toString()).toList());
+              }
+            }
+          }
+        } catch (_) {
+          // Malformed/undecryptable — start fresh private list.
+        }
+      }
+    }
+    final target = publicList ? publicTags : privateTags;
+    bool eq(List<String> a, List<String> b) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (a[i] != b[i]) return false;
+      }
+      return true;
+    }
+    if (add) {
+      if (!target.any((t) => eq(t, entry))) target.add(entry);
+    } else {
+      target.removeWhere((t) => eq(t, entry));
+    }
+    final content = privateTags.isEmpty
+        ? ''
+        : nip44Encrypt(id.privkeyHex, id.pubkeyHex, jsonEncode(privateTags));
+    return id.signEvent(
+      kind: 10000,
+      content: content,
+      tags: [...publicTags, _clientTag],
+    );
+  }
+
+  /// Parse a kind-10000 mute list into a [MuteSet]: public `p`/`word`/`t`/`e`
+  /// tags + NIP-44-decrypted private entries (owner-only — needs the privkey;
+  /// non-owners get only the public entries). Empty for a null event.
+  MuteSet muteSetOf(Event? e, {bool includePrivate = true}) {
+    final pubkeys = <String>{};
+    final words = <String>{};
+    final hashtags = <String>{};
+    final eventIds = <String>{};
+    void addTag(List<String> t) {
+      if (t.length < 2) return;
+      switch (t[0]) {
+        case 'p':
+          pubkeys.add(t[1]);
+        case 'word':
+          words.add(t[1]);
+        case 't':
+          hashtags.add(t[1].toLowerCase());
+        case 'e':
+          eventIds.add(t[1]);
+      }
+    }
+
+    if (e != null) {
+      for (final t in e.tags) {
+        if (t.isEmpty) continue;
+        addTag(t.map((x) => x.toString()).toList());
+      }
+      if (includePrivate && e.content.isNotEmpty) {
+        try {
+          final decoded = nip44Decrypt(id.privkeyHex, id.pubkeyHex, e.content);
+          final arr = jsonDecode(decoded);
+          if (arr is List) {
+            for (final t in arr) {
+              if (t is List) addTag(t.map((x) => x.toString()).toList());
+            }
+          }
+        } catch (_) {
+          // Not the owner or malformed — public entries only.
+        }
+      }
+    }
+    return MuteSet(
+      pubkeys: pubkeys,
+      words: words,
+      hashtags: hashtags,
+      eventIds: eventIds,
+    );
   }
 }
