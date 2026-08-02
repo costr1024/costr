@@ -10,15 +10,21 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.1.5-beta** | `app-release.apk`（≈71 MB，arm/x64 split per ABI） |
+| Android | **0.3.0-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.3-beta/app-release.apk)（≈68 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 0.1 beta 为首个公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
+>
+> **覆盖安装即可**：versionCode 递增、签名密钥不变，Android 允许直接升级安装，
+> 登录 / 关注 / 屏蔽列表 / 收藏 / 本地缓存全部保留，无需卸载旧版。
+> （仅当签名密钥变更导致 INSTALL_FAILED_VERIFICATION_FAILURE 时才需先卸载。）
 >
 > release 包曾缺 `INTERNET` 权限（仅 debug 变体声明），导致 release 连不上中继——
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
+
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta）。
 
 ---
 
@@ -214,7 +220,7 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 ```bash
 flutter pub get          # 安装/刷新依赖
 flutter run -d linux     # 桌面运行（或 android / macos / windows）
-flutter test             # 全套测试（209 个）
+flutter test             # 全套测试（277 个）
 flutter analyze          # 静态分析（须 0 警告）
 dart format lib/ test/   # 格式化
 flutter build linux      # 桌面构建验证
@@ -247,7 +253,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 209 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 277 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -256,9 +262,15 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ## 当前状态
 
-**v0.1.5-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
+**v0.3.0-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v0.3-beta 相对 v0.2 的主要修复**（详见 [v0.3-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.3-beta)）：
+通知去重 / 转发与表情 reaction 渲染 / 关注通知跳主页 / 屏蔽账号不再通知；
+线程上下级定向加载 + 线程化排序；资料 outbox 三级查找；失败媒体手工「代理媒体」按钮；
+关注乐观更新 + 关注集 d-tag 分组（修中文↔UUID 闪烁）；搜索框 + 全部/帖子/用户筛选；
+收藏 SQLite 缓存优先；首页加载更老帖 + 全球/关注滚动独立 + 动作栏回复/转发计数。
 
 <details>
 <summary><b>已实现功能详情（点击展开）</b></summary>
