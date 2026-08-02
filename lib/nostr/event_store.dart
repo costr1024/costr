@@ -44,6 +44,11 @@ class EventStore {
 
   int get length => _sorted.length;
 
+  /// Look up a live event by id (O(1)). Used to validate a NIP-09 kind-5
+  /// deletion's authorship before removing the deleted event from the store
+  /// (you can only delete your own events). Returns null if not held.
+  Event? byId(String id) => _byId[id];
+
   /// Remove an event by id (e.g. after a NIP-09 kind-5 deletion). Returns true
   /// if it was present.
   bool remove(String id) {

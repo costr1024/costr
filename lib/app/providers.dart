@@ -495,6 +495,15 @@ class EventStoreNotifier extends Notifier<List<Event>> {
             ref.read(contactListCacheProvider.notifier).set(e);
           }
         }
+      } else if (e.kind == 5) {
+        // NIP-09 deletion (kind 5): honor `a` tags (replaceable coordinate
+        // delete) + `e` tags (event id delete) ONLY when the deletion's author
+        // matches the deleted event's author (you can only delete your own).
+        // Best-effort — not all relays honor deletions, and cached rows may
+        // linger, but this clears the local SQLite cache + live store when a
+        // deletion arrives (e.g. a kind-30000 follow set you deleted from
+        // another client, whose row would otherwise persist in cache).
+        unawaited(_applyDeletion(e));
       }
     });
     ref.onDispose(() {
@@ -635,6 +644,50 @@ class EventStoreNotifier extends Notifier<List<Event>> {
       try {
         await db.deleteEvent(id);
       } catch (_) {}
+    }
+  }
+
+  /// Apply a NIP-09 kind-5 deletion: clear `a`-coordinate replaceable rows +
+  /// `e`-id events from the local cache + live store, but only when the
+  /// deletion's author owns what it deletes (you can only delete your own).
+  /// Best-effort — relays additionally stop serving the deleted event.
+  Future<void> _applyDeletion(Event del) async {
+    final db = _cache;
+    final me = ref.read(identityProvider).value?.pubkeyHex;
+    for (final t in del.tags) {
+      if (t.length < 2 || t[0] is! String) continue;
+      final tagName = t[0] as String;
+      if (tagName == 'a' && t[1] is String) {
+        // a-tag = "<kind>:<pubkey>:<d>" (NIP-33 coordinate).
+        final parts = (t[1] as String).split(':');
+        if (parts.length < 3) continue;
+        final kind = int.tryParse(parts[0]);
+        final owner = parts[1];
+        final d = parts.sublist(2).join(':'); // d may technically contain ':'
+        if (kind == null || owner != del.pubkey) continue; // not the author's
+        if (db != null) {
+          try {
+            await db.deleteReplaceableByCoord(owner, kind, d);
+          } catch (_) {}
+        }
+        // Reactive refresh for the logged-in user's own lists.
+        if (owner == me && !_disposed) {
+          if (kind == 30000) {
+            ref.read(kind30000VersionProvider.notifier).bump();
+          } else if (kind == 10002) {
+            _relayListCache.remove(owner); // evict stale relay-list cache
+          }
+        }
+      } else if (tagName == 'e' && t[1] is String) {
+        // e-tag = event id to delete. Validate authorship via the live store
+        // (events only held in SQLite but not in memory are dropped on the
+        // next relay fetch anyway, since relays stop serving deleted events).
+        final id = t[1] as String;
+        final existing = _store.byId(id);
+        if (existing != null && existing.pubkey == del.pubkey) {
+          await removeEvent(id);
+        }
+      }
     }
   }
 

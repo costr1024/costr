@@ -237,6 +237,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 - **用户状态（NIP-38）**：kind-30315 短文本，信息流卡昵称下一行显示，自己主页内联编辑。
 - **用户主页**：NestedScrollView（banner/头像可滚走 + TabBar 吸顶）+ sliver 根治 overflow。4+1 tab：帖子/回帖/关注/关注者/收藏。`userPostsProvider` StreamProvider：先 yield 内存+SQLite 快照，后台 NIP-65 outbox 定向拉取（`since` 增量，250ms 去抖流式 yield）。下拉刷新、发帖后立即可见。
 - **帖子交互（X 风格）**：💬回复 / 🔁转发（菜单二选一：NIP-18 kind-6 / 引用）/ ❤️reaction（NIP-25+NIP-30，二次点击撤回签 kind-5）/ 🔖收藏（NIP-51 kind-10003，公开 + NIP-44 私密）/ ↗分享（njump.me）。帖子菜单 `⋮`：复制帖子 id（`nostr:nevent1`）/ 复制全文 / ⚡打闪 / 删除（自己的帖，NIP-09 kind-5）。
+- **NIP-09 删除应用层隐藏**：收到 kind-5 删除事件时按作者校验（只能删自己的）应用：`a` 标签坐标（`K:pubkey:d`）删本地 replaceable 行 + 自己的 kind-30000 触发版本刷新、kind-10002 清 relay-list 缓存；`e` 标签按 id 从内存库 + SQLite 移除（信息流即时消失）。best-effort——并非所有中继支持删除，已传播的帖可能仍被其他客户端保留。
 - **打闪 Zap（NIP-57）**：自定义聪 + 预设 chip + 留言 → 解析 lud16/lud06 → LNURL-pay → 签 kind-9734 → BOLT11 发票二维码 + 复制 + `lightning:` deeplink。`lib/services/zap.dart` 纯函数可单测。
 - **NIP-27 事件引用**：发帖框粘 `nostr:nevent1`/`note1` 自动补 `e` mention tag；渲染端嵌引用卡。
 - **发帖（Compose）**：FAB，字数计数，`Identity.signEvent` 签名 + 发布。EVENT 用对象形式（2026 NIP-01）。NIP-42 AUTH 自动签 kind-22242。发布可靠性：`publishAndWait` per-relay 1s/2s/3s 重试，任一 OK 即成功、其余后台重试；全失败存草稿跨会话补发（`retryDrafts` + `onPublishExhausted`）。

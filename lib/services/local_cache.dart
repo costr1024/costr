@@ -254,7 +254,10 @@ class LocalCache extends _$LocalCache {
     String dTag = '',
   }) async {
     final q = select(replaceableEvents)
-      ..where((e) => e.pubkey.equals(pubkey) & e.kind.equals(kind) & e.dTag.equals(dTag))
+      ..where(
+        (e) =>
+            e.pubkey.equals(pubkey) & e.kind.equals(kind) & e.dTag.equals(dTag),
+      )
       ..limit(1);
     final rows = await q.get();
     return rows.isEmpty ? null : rows.first;
@@ -516,7 +519,9 @@ class LocalCache extends _$LocalCache {
     final results = await customSelect(
       'SELECT rowid, raw_json FROM drafts ORDER BY created_at ASC',
     ).get();
-    return results.map((r) => (r.read<int>('rowid'), r.read<String>('raw_json'))).toList();
+    return results
+        .map((r) => (r.read<int>('rowid'), r.read<String>('raw_json')))
+        .toList();
   }
 
   /// Delete a draft after successful publish.
@@ -529,6 +534,20 @@ class LocalCache extends _$LocalCache {
   Future<void> deleteEvent(String id) async {
     await customStatement('DELETE FROM event_tags WHERE event_id = ?', [id]);
     await customStatement('DELETE FROM events WHERE id = ?', [id]);
+  }
+
+  /// Delete a replaceable event by its NIP-01 coordinate (pubkey, kind, d) —
+  /// used to honor a NIP-09 kind-5 deletion with an `a` tag
+  /// `"<kind>:<pubkey>:<d>"`. Safe to call when no matching row exists (no-op).
+  Future<void> deleteReplaceableByCoord(
+    String pubkey,
+    int kind,
+    String dTag,
+  ) async {
+    await customStatement(
+      'DELETE FROM replaceable_events WHERE pubkey = ? AND kind = ? AND d_tag = ?',
+      [pubkey, kind, dTag],
+    );
   }
 
   /// Increment attempt count on a draft (for backoff decisions).
