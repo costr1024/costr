@@ -389,18 +389,10 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
                           )
                           .toList()
                     : items;
-                // Mark all currently-visible items as read (DESIGN §5.2:
-                // "进入页面后整页标记已读"). Idempotent + debounced-write, so
-                // calling on every rebuild is fine; the bottom-nav badge
-                // clears as soon as the user opens the notifications tab.
-                if (filtered.isNotEmpty) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (!mounted) return;
-                    ref
-                        .read(notificationReadProvider.notifier)
-                        .markRead(filtered.map((i) => i.id));
-                  });
-                }
+                // Read/unread is per-item, marked read on tap (DESIGN §5.2
+                // updated): no whole-page auto-markRead — unread styling stays
+                // stable until the user actually opens an item. The bottom-nav
+                // badge counts items not yet marked read.
                 if (filtered.isEmpty) {
                   return const Center(
                     child: Padding(
@@ -472,11 +464,9 @@ class _NotificationTile extends ConsumerWidget {
     final icon = _iconForType(item.type);
     final iconColor = _colorForType(item.type);
     // Unread is derived from the persisted read-set (not the vestigial
-    // item.unread flag, which is always true at creation). Lets the dot
-    // clear once the user opens the notifications tab.
-    final unread = ref
-        .watch(notificationReadProvider.notifier)
-        .isUnread(item.id);
+    // item.unread flag, which is always true at creation). Per-item: stays
+    // unread until the user taps it (stable styling — no whole-page clear).
+    final unread = !ref.watch(notificationReadProvider).contains(item.id);
     final head = item.extraCount > 0
         ? '${item.pubkeys.length} 人和另外 ${item.extraCount} 人'
         : item.pubkeys.map((pk) => _displayName(ref, pk)).take(3).join('、');
@@ -484,6 +474,8 @@ class _NotificationTile extends ConsumerWidget {
 
     return InkWell(
       onTap: () {
+        // Mark this item read (per-item; stable unread styling until tap).
+        ref.read(notificationReadProvider.notifier).markRead([item.id]);
         // Replies/reactions/reposts point at the user's own post (targetEventId);
         // pure mentions have no target, so fall back to the mentioner's own post
         // (sourceEventId) — tapping a mention opens the post that mentioned you.
@@ -497,8 +489,11 @@ class _NotificationTile extends ConsumerWidget {
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: CostrColors.border)),
+        // Subtle background tint on unread items (X-style); read items stay
+        // plain. Combined with the dot below for a stable read/unread split.
+        decoration: BoxDecoration(
+          color: unread ? CostrColors.bg2 : null,
+          border: const Border(bottom: BorderSide(color: CostrColors.border)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
