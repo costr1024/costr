@@ -252,7 +252,7 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 ```bash
 flutter pub get          # 安装/刷新依赖
 flutter run -d linux     # 桌面运行（或 android / macos / windows）
-flutter test             # 全套测试（286 个）
+flutter test             # 全套测试（317 个）
 flutter analyze          # 静态分析（须 0 警告）
 dart format lib/ test/   # 格式化
 flutter build linux      # 桌面构建验证
@@ -285,7 +285,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 294 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 317 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -347,7 +347,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 294 个测试
+flutter test             # 317 个测试
 flutter build linux      # 桌面构建
 ```
 
@@ -367,4 +367,4 @@ flutter build linux      # 桌面构建
 
 ## 许可证
 
-待定。
+[MIT](LICENSE) —— 与 Costr 参考的两个 Nostr 客户端一致（[Amethyst](https://github.com/vitorpamplona/amethyst) 与 [Jumble](https://github.com/CodyTseng/jumble) 均为 MIT）。宽松许可：可自由使用/修改/分发，保留版权声明即可，无 copyleft 义务。
