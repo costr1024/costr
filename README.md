@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.5.5-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.5.5-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.6-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -24,7 +24,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta）。
 
 ---
 
@@ -294,9 +294,19 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ## 当前状态
 
-**v0.5.5-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
+**v0.6-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v0.6-beta 相对 v0.5.5-beta 的修复/新增**（详见 [v0.6-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.6-beta)）：
+**深色模式全面修复**（X 风格深色 + 全部颜色按亮度解析）；
+**键盘 GIF/贴纸直插发帖框**（Gboard 表情面板选中即传 Blossom，Amethyst 式）；
+**MIT 开源许可证**（与 Amethyst/Jumble 一致）；
+二级及以上回复发送后在线程页立即可见；回帖卡片显示被回复帖内容（仅上一层）；
+转发「内容不可用」兜底被转者 outbox + 可重试；搜索零结果不再永久转圈、搜索框 X 一键清空；
+主页 5 个过滤/搜索框 X 一键清空；发帖/回帖发送快返（首个中继 OK 即成功，不再等最慢中继）；
+点回复/点赞通知跳到具体回帖/被点赞帖而非 root 主贴；自己的帖发帖后立即进关注信息流；
+个人主页加载完整帖子/回帖历史（修复只显示几条、刷新刷不出更多）。
 
 **v0.5.5-beta 相对 v0.5-beta 的修复**（详见 [v0.5.5-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.5.5-beta)）：
 回复他人帖子发送成功后立即可见（不再需要退出重进主贴——发送即落库 + 刷新父帖回帖列表）；
