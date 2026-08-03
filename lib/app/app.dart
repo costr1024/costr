@@ -16,10 +16,10 @@ import 'theme.dart';
 /// first, so non-zh/en devices default to Chinese.
 const List<LocalizationsDelegate<dynamic>> _localizationsDelegates =
     <LocalizationsDelegate<dynamic>>[
-  GlobalMaterialLocalizations.delegate,
-  GlobalWidgetsLocalizations.delegate,
-  GlobalCupertinoLocalizations.delegate,
-];
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ];
 
 const List<Locale> _supportedLocales = <Locale>[
   Locale('zh', 'CN'),
@@ -74,6 +74,8 @@ class _AppRootState extends ConsumerState<AppRoot> with WidgetsBindingObserver {
       loading: () => MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        themeMode: ThemeMode.system,
         localizationsDelegates: _localizationsDelegates,
         supportedLocales: _supportedLocales,
         localeResolutionCallback: _localeResolutionCallback,
@@ -82,6 +84,8 @@ class _AppRootState extends ConsumerState<AppRoot> with WidgetsBindingObserver {
       error: (Object error, StackTrace _) => MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        themeMode: ThemeMode.system,
         localizationsDelegates: _localizationsDelegates,
         supportedLocales: _supportedLocales,
         localeResolutionCallback: _localeResolutionCallback,

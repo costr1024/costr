@@ -108,7 +108,7 @@ class _LoginViewState extends ConsumerState<_LoginView> {
       mainAxisSize: MainAxisSize.min,
       children: [
         const SizedBox(height: 32),
-        const CostrLogo(size: 56, color: CostrColors.brand),
+        const CostrLogo(size: 56),
         const SizedBox(height: 16),
         Text('欢迎来到 Costr', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 6),
@@ -308,8 +308,8 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
                     border: Border(
                       bottom: BorderSide(
                         color: i <= _step
-                            ? CostrColors.brand
-                            : CostrColors.border,
+                            ? CostrColors.of(context).brand
+                            : CostrColors.of(context).border,
                         width: 2,
                       ),
                     ),
@@ -319,7 +319,9 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 12,
-                      color: i <= _step ? CostrColors.brand : CostrColors.text3,
+                      color: i <= _step
+                          ? CostrColors.of(context).brand
+                          : CostrColors.of(context).text3,
                       fontWeight: i == _step
                           ? FontWeight.w600
                           : FontWeight.normal,
@@ -350,9 +352,9 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
       Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: CostrColors.bg2,
+          color: CostrColors.of(context).bg2,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: CostrColors.border),
+          border: Border.all(color: CostrColors.of(context).border),
         ),
         child: SelectableText(
           _newNsec,
@@ -369,14 +371,14 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
       Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFF4E6),
+          color: CostrColors.of(context).warnBg,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFFFD9A0)),
+          border: Border.all(color: CostrColors.of(context).warnBorder),
         ),
         child: Text(
           '⚠️ 这把钥匙就是你的整个账号。请抄写或复制到安全的地方保管好。'
           '丢失无法找回——去中心化里没人能帮你重置，因为它不属于任何平台。',
-          style: TextStyle(fontSize: 13, color: CostrColors.text),
+          style: TextStyle(fontSize: 13, color: CostrColors.of(context).text),
         ),
       ),
       const SizedBox(height: 12),
@@ -406,8 +408,12 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
       const SizedBox(height: 16),
       CircleAvatar(
         radius: 40,
-        backgroundColor: CostrColors.brand,
-        child: const Icon(Icons.person, color: Colors.white, size: 32),
+        backgroundColor: CostrColors.of(context).brand,
+        child: Icon(
+          Icons.person,
+          color: CostrColors.of(context).onBrand,
+          size: 32,
+        ),
       ),
       const SizedBox(height: 16),
       TextField(
@@ -439,8 +445,8 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
       Container(
         width: 64,
         height: 64,
-        decoration: const BoxDecoration(
-          color: CostrColors.green,
+        decoration: BoxDecoration(
+          color: CostrColors.of(context).green,
           shape: BoxShape.circle,
         ),
         child: const Icon(Icons.check, color: Colors.white, size: 32),
@@ -517,7 +523,7 @@ Future<void> showLogoutSheet(BuildContext context, WidgetRef ref) async {
                   child: FilledButton(
                     onPressed: () => Navigator.pop(ctx, true),
                     style: FilledButton.styleFrom(
-                      backgroundColor: CostrColors.red,
+                      backgroundColor: CostrColors.of(context).red,
                     ),
                     child: const Text('退出登录'),
                   ),

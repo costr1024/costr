@@ -83,24 +83,34 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             style: const TextStyle(fontSize: 15),
             decoration: InputDecoration(
               hintText: '搜索帖子或用户…',
-              hintStyle: const TextStyle(fontSize: 15, color: CostrColors.text3),
-              prefixIcon: const Icon(Icons.search, size: 20, color: CostrColors.text3),
+              hintStyle: TextStyle(
+                fontSize: 15,
+                color: CostrColors.of(context).text3,
+              ),
+              prefixIcon: Icon(
+                Icons.search,
+                size: 20,
+                color: CostrColors.of(context).text3,
+              ),
               suffixIcon: _controller.text.isEmpty
                   ? null
                   : GestureDetector(
                       onTap: _clearSearch,
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 10),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
                         child: Icon(
                           Icons.close,
                           size: 18,
-                          color: CostrColors.text3,
+                          color: CostrColors.of(context).text3,
                         ),
                       ),
                     ),
               filled: true,
-              fillColor: CostrColors.bg2,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+              fillColor: CostrColors.of(context).bg2,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 0,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(24),
                 borderSide: BorderSide.none,
@@ -144,14 +154,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         );
       case _SearchTab.posts:
         return CustomScrollView(
-          slivers: [
-            _PostsSection(query: _query, showHeader: false),
-          ],
+          slivers: [_PostsSection(query: _query, showHeader: false)],
         );
       case _SearchTab.all:
         return CustomScrollView(
           slivers: [
-            SliverToBoxAdapter(child: _UsersSection(query: _query, expanded: false)),
+            SliverToBoxAdapter(
+              child: _UsersSection(query: _query, expanded: false),
+            ),
             SliverPadding(
               padding: const EdgeInsets.only(top: 8),
               sliver: _PostsSection(query: _query, showHeader: true),

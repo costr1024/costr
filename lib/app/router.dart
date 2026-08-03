@@ -267,7 +267,8 @@ class _AppShellState extends ConsumerState<AppShell> {
     // Immersive browse: hide the bottom nav + FAB when the user scrolls down
     // (gated by the local immersive toggle). Only the bottom nav + FAB live
     // here; each page's top app bar is handled by ImmersiveScaffold.
-    final hideBars = ref.watch(immersiveBrowseProvider) &&
+    final hideBars =
+        ref.watch(immersiveBrowseProvider) &&
         !ref.watch(appBarsVisibleProvider);
     const animDuration = Duration(milliseconds: 220);
     return Stack(
@@ -287,9 +288,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 onDestinationSelected: (int index) {
                   // Switching tabs restores the chrome so the new page isn't
                   // stuck with the previous page's hidden state.
-                  ref
-                      .read(appBarsVisibleProvider.notifier)
-                      .setVisible(true);
+                  ref.read(appBarsVisibleProvider.notifier).setVisible(true);
                   shell.goBranch(
                     index,
                     initialLocation: index == shell.currentIndex,
@@ -321,17 +320,17 @@ class _AppShellState extends ConsumerState<AppShell> {
                             child: const Icon(Icons.notifications),
                           )
                         : const Icon(Icons.notifications),
-                label: '通知',
-              ),
-              const NavigationDestination(
-                icon: Icon(Icons.person_outline),
-                selectedIcon: Icon(Icons.person),
-                label: '我的',
-              ),
-            ],
-          ), // NavigationBar
-          ), // ClipRect
-        ), // AnimatedContainer
+                    label: '通知',
+                  ),
+                  const NavigationDestination(
+                    icon: Icon(Icons.person_outline),
+                    selectedIcon: Icon(Icons.person),
+                    label: '我的',
+                  ),
+                ],
+              ), // NavigationBar
+            ), // ClipRect
+          ), // AnimatedContainer
         ), // Scaffold
         // Draggable compose FAB. Tap = open compose; drag = reposition
         // (persisted). Lets the user move it off any sheet/menu/popup that
@@ -372,7 +371,7 @@ class _AppShellState extends ConsumerState<AppShell> {
         width: _fabSize,
         height: _fabSize,
         decoration: BoxDecoration(
-          color: CostrColors.brand,
+          color: CostrColors.of(context).brand,
           shape: BoxShape.circle,
           boxShadow: const <BoxShadow>[
             BoxShadow(
@@ -382,7 +381,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
           ],
         ),
-        child: const CostrLogo.light(size: 26),
+        child: CostrLogo(size: 26, color: CostrColors.of(context).onBrand),
       ),
     );
   }

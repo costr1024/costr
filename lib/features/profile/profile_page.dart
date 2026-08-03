@@ -112,43 +112,43 @@ class _ProfileBody extends ConsumerWidget {
     return ImmersiveScrollDetector(
       child: NestedScrollView(
         headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
-        return <Widget>[
-          SliverToBoxAdapter(
-            child: _Header(
-              pubkey: pubkey,
-              identity: identity,
-              meta: meta,
-              isSelf: isSelf,
-            ),
-          ),
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _StickyTabBarDelegate(
-              TabBar(
-                tabAlignment: TabAlignment.start,
-                isScrollable: true,
-                tabs: const [
-                  Tab(text: '帖子'),
-                  Tab(text: '回帖'),
-                  Tab(text: '关注'),
-                  Tab(text: '关注者'),
-                  Tab(text: '收藏'),
-                ],
+          return <Widget>[
+            SliverToBoxAdapter(
+              child: _Header(
+                pubkey: pubkey,
+                identity: identity,
+                meta: meta,
+                isSelf: isSelf,
               ),
-              color: theme.colorScheme.surface,
             ),
-          ),
-        ];
-      },
-      body: TabBarView(
-        children: [
-          _PostsTab(pubkey: pubkey),
-          _RepliesTab(pubkey: pubkey),
-          _FollowsTab(pubkey: pubkey, isSelf: isSelf),
-          _FollowersTab(pubkey: pubkey, isSelf: isSelf),
-          _BookmarksTab(pubkey: pubkey),
-        ],
-      ),
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _StickyTabBarDelegate(
+                TabBar(
+                  tabAlignment: TabAlignment.start,
+                  isScrollable: true,
+                  tabs: const [
+                    Tab(text: '帖子'),
+                    Tab(text: '回帖'),
+                    Tab(text: '关注'),
+                    Tab(text: '关注者'),
+                    Tab(text: '收藏'),
+                  ],
+                ),
+                color: theme.colorScheme.surface,
+              ),
+            ),
+          ];
+        },
+        body: TabBarView(
+          children: [
+            _PostsTab(pubkey: pubkey),
+            _RepliesTab(pubkey: pubkey),
+            _FollowsTab(pubkey: pubkey, isSelf: isSelf),
+            _FollowersTab(pubkey: pubkey, isSelf: isSelf),
+            _BookmarksTab(pubkey: pubkey),
+          ],
+        ),
       ),
     );
   }
@@ -265,7 +265,7 @@ class _Header extends ConsumerWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: CostrColors.text3,
+                      color: CostrColors.of(context).text3,
                       fontStyle: FontStyle.italic,
                     ),
                   ),
@@ -405,7 +405,11 @@ class _ProfileStats extends ConsumerWidget {
 /// already follows them (per followingStateProvider); tap publishes an updated
 /// kind-3 via [followUser].
 class _FollowButton extends ConsumerStatefulWidget {
-  const _FollowButton({required this.pubkey, this.followsMe = false, this.isSelf = false});
+  const _FollowButton({
+    required this.pubkey,
+    this.followsMe = false,
+    this.isSelf = false,
+  });
   final String pubkey;
 
   /// True when this pubkey follows the logged-in user (→ show "回关" until
@@ -441,9 +445,7 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
     final followed = follows.contains(widget.pubkey);
     // No self-special-case label — own profile shows the same 已关注 / 关注
     // as everyone else (the user asked to drop the 已关注自己 distinction).
-    final String label = followed
-        ? '已关注'
-        : (widget.followsMe ? '回关' : '关注');
+    final String label = followed ? '已关注' : (widget.followsMe ? '回关' : '关注');
     final icon = followed ? Icons.check : Icons.person_add_outlined;
     return FilledButton.tonalIcon(
       icon: Icon(icon, size: 18),
@@ -479,9 +481,9 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('取消失败：$e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('取消失败：$e')));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -525,9 +527,9 @@ class _FollowButtonState extends ConsumerState<_FollowButton> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('关注失败：$e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('关注失败：$e')));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -580,9 +582,11 @@ class _ProfileActionMenu extends ConsumerWidget {
               context: context,
               builder: (ctx) => AlertDialog(
                 title: Text(muted ? '取消屏蔽？' : '屏蔽？'),
-                content: Text(muted
-                    ? '取消屏蔽后，该用户的帖子会重新出现在你的信息流里。'
-                    : '屏蔽后，该用户的帖子不再出现在你的信息流里（不会通知对方）。'),
+                content: Text(
+                  muted
+                      ? '取消屏蔽后，该用户的帖子会重新出现在你的信息流里。'
+                      : '屏蔽后，该用户的帖子不再出现在你的信息流里（不会通知对方）。',
+                ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(ctx, false),
@@ -610,7 +614,9 @@ class _ProfileActionMenu extends ConsumerWidget {
             }
           case 'share':
             final npub = hexToNpub(pubkey);
-            await SharePlus.instance.share(ShareParams(text: 'https://njump.me/$npub'));
+            await SharePlus.instance.share(
+              ShareParams(text: 'https://njump.me/$npub'),
+            );
         }
       },
       itemBuilder: (_) => [
@@ -687,8 +693,10 @@ class _MultiGroupFollowSheetState extends State<_MultiGroupFollowSheet> {
                     child: Text('加入关注分组', style: theme.textTheme.titleSmall),
                   ),
                   TextButton(
-                    onPressed: () =>
-                        Navigator.pop(context, _selected.where((g) => g.isNotEmpty).toSet()),
+                    onPressed: () => Navigator.pop(
+                      context,
+                      _selected.where((g) => g.isNotEmpty).toSet(),
+                    ),
                     child: const Text('关注'),
                   ),
                 ],
@@ -1149,15 +1157,20 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
       isScrollControlled: true,
       builder: (ctx) => Padding(
         padding: EdgeInsets.fromLTRB(
-          16, 16, 16, 16 + MediaQuery.of(ctx).viewInsets.bottom,
+          16,
+          16,
+          16,
+          16 + MediaQuery.of(ctx).viewInsets.bottom,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
-                const Text('重命名列表',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                const Text(
+                  '重命名列表',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
                 const Spacer(),
                 TextButton(
                   onPressed: () => Navigator.pop(ctx),
@@ -1175,8 +1188,7 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: () =>
-                    Navigator.pop(ctx, controller.text.trim()),
+                onPressed: () => Navigator.pop(ctx, controller.text.trim()),
                 child: const Text('确定'),
               ),
             ),
@@ -1221,8 +1233,10 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除列表'),
-        content: Text('删除「${g.name}」？会发布 NIP-09 删除事件，'
-            '所有客户端同步后会移除该列表。列表里的关注人不会被取消关注。'),
+        content: Text(
+          '删除「${g.name}」？会发布 NIP-09 删除事件，'
+          '所有客户端同步后会移除该列表。列表里的关注人不会被取消关注。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -1278,17 +1292,23 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
       ),
       data: (List<String> tags) {
         if (tags.isEmpty) {
-          return const SliverFillRemaining(
+          return SliverFillRemaining(
             hasScrollBody: false,
             child: Center(
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 48,
+                ),
                 child: Text(
                   '还没关注的标签。\n'
                   '在帖子正文里长按 #标签 可关注；\n'
                   '在首页按某标签过滤时也能点星标关注。',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: CostrColors.text2, height: 1.6),
+                  style: TextStyle(
+                    color: CostrColors.of(context).text2,
+                    height: 1.6,
+                  ),
                 ),
               ),
             ),
@@ -1526,9 +1546,7 @@ class _BookmarksTabState extends ConsumerState<_BookmarksTab> {
               if (public.isEmpty && private.isEmpty) {
                 return SliverFillRemaining(
                   hasScrollBody: false,
-                  child: Center(
-                    child: Text(_query.isEmpty ? '暂无收藏' : '无匹配结果'),
-                  ),
+                  child: Center(child: Text(_query.isEmpty ? '暂无收藏' : '无匹配结果')),
                 );
               }
               return SliverMainAxisGroup(
@@ -2096,8 +2114,9 @@ class _StatusEditField extends ConsumerStatefulWidget {
 }
 
 class _StatusEditFieldState extends ConsumerState<_StatusEditField> {
-  late final TextEditingController _c =
-      TextEditingController(text: widget.current ?? '');
+  late final TextEditingController _c = TextEditingController(
+    text: widget.current ?? '',
+  );
   bool _saving = false;
   bool _focused = false;
 
@@ -2158,8 +2177,10 @@ class _StatusEditFieldState extends ConsumerState<_StatusEditField> {
         decoration: InputDecoration(
           hintText: '状态签名（NIP-38）',
           isDense: true,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 8,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
             borderSide: BorderSide(color: theme.colorScheme.outline),
@@ -2202,6 +2223,7 @@ class _AboutText extends ConsumerStatefulWidget {
 
 class _AboutTextState extends ConsumerState<_AboutText> {
   bool _expanded = false;
+
   /// True once the full body has been laid out and found to exceed
   /// [_collapsedHeight]. Until measured, the body renders unclipped so it can
   /// be measured (and so genuinely short bios never clip).

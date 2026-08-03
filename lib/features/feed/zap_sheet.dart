@@ -119,7 +119,7 @@ class _ZapSheetState extends ConsumerState<_ZapSheet> {
               padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
               child: Row(
                 children: [
-                  const Icon(Icons.bolt, color: CostrColors.brand),
+                  Icon(Icons.bolt, color: CostrColors.of(context).brand),
                   const SizedBox(width: 8),
                   Text('打闪', style: theme.textTheme.titleMedium),
                   const Spacer(),
@@ -148,7 +148,7 @@ class _ZapSheetState extends ConsumerState<_ZapSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.bolt, size: 40, color: CostrColors.text3),
+          Icon(Icons.bolt, size: 40, color: CostrColors.of(context).text3),
           const SizedBox(height: 12),
           Text(
             '$_recipientName 未配置闪电地址，无法打闪',
@@ -159,7 +159,9 @@ class _ZapSheetState extends ConsumerState<_ZapSheet> {
           Text(
             '对方需在个人资料里设置 Lightning 地址（lud16）后才能接收打闪。',
             textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.text3),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: CostrColors.of(context).text3,
+            ),
           ),
         ],
       ),
@@ -177,8 +179,7 @@ class _ZapSheetState extends ConsumerState<_ZapSheet> {
             children: [
               Avatar(pubkey: widget.event.pubkey, radius: 16),
               const SizedBox(width: 8),
-              Text('打闪给 $_recipientName',
-                  style: theme.textTheme.bodyMedium),
+              Text('打闪给 $_recipientName', style: theme.textTheme.bodyMedium),
             ],
           ),
           const SizedBox(height: 16),
@@ -224,7 +225,9 @@ class _ZapSheetState extends ConsumerState<_ZapSheet> {
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
                   : const Icon(Icons.bolt, size: 20),
               label: const Text('生成发票'),
@@ -243,14 +246,13 @@ class _ZapSheetState extends ConsumerState<_ZapSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('发票已生成',
-              style: theme.textTheme.titleMedium),
+          Text('发票已生成', style: theme.textTheme.titleMedium),
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border.all(color: CostrColors.border),
+              border: Border.all(color: CostrColors.of(context).border),
               borderRadius: BorderRadius.circular(12),
             ),
             child: QrImageView(
@@ -264,14 +266,14 @@ class _ZapSheetState extends ConsumerState<_ZapSheet> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: CostrColors.bg2,
+              color: CostrColors.of(context).bg2,
               borderRadius: BorderRadius.circular(8),
             ),
             child: SelectableText(
               invoice,
               style: theme.textTheme.bodySmall?.copyWith(
                 fontFamily: 'monospace',
-                color: CostrColors.text2,
+                color: CostrColors.of(context).text2,
               ),
               maxLines: 3,
             ),

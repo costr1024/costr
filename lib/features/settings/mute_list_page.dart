@@ -60,11 +60,13 @@ class MuteListPage extends ConsumerWidget {
               ],
               if (mute.words.isNotEmpty) ...[
                 _MuteSectionHeader('词（${mute.words.length}）'),
-                for (final w in mute.words) _MuteWordTile(word: w, isHashtag: false),
+                for (final w in mute.words)
+                  _MuteWordTile(word: w, isHashtag: false),
               ],
               if (mute.hashtags.isNotEmpty) ...[
                 _MuteSectionHeader('标签（${mute.hashtags.length}）'),
-                for (final t in mute.hashtags) _MuteWordTile(word: t, isHashtag: true),
+                for (final t in mute.hashtags)
+                  _MuteWordTile(word: t, isHashtag: true),
               ],
               const SizedBox(height: 24),
             ],
@@ -89,7 +91,7 @@ class _MuteSectionHeader extends StatelessWidget {
         style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: CostrColors.text2,
+          color: CostrColors.of(context).text2,
         ),
       ),
     );
@@ -130,7 +132,8 @@ void _showAddSheet(BuildContext context, WidgetRef ref) {
                     ButtonSegment(value: true, label: Text('标签')),
                   ],
                   selected: {isHashtag},
-                  onSelectionChanged: (s) => setState(() => isHashtag = s.first),
+                  onSelectionChanged: (s) =>
+                      setState(() => isHashtag = s.first),
                 ),
                 const SizedBox(height: 8),
                 TextField(
@@ -168,11 +171,12 @@ Future<void> _commit(
 ) async {
   final v = raw.replaceAll('#', '').trim();
   if (v.isEmpty) return;
-  final entry = isHashtag ? <String>['t', v.toLowerCase()] : <String>['word', v];
+  final entry = isHashtag
+      ? <String>['t', v.toLowerCase()]
+      : <String>['word', v];
   Navigator.pop(ctx);
   await muteEntry(ref, entry, add: true);
 }
-
 
 class _MuteUserTile extends ConsumerWidget {
   const _MuteUserTile({required this.pubkey});
@@ -186,10 +190,10 @@ class _MuteUserTile extends ConsumerWidget {
       title: Text(meta?.bestName ?? pubkey.substring(0, 12)),
       subtitle: Text(
         pubkey.substring(0, 16),
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 11,
           fontFamily: 'monospace',
-          color: CostrColors.text3,
+          color: CostrColors.of(context).text3,
         ),
       ),
       trailing: TextButton(
@@ -216,7 +220,7 @@ class _MuteWordTile extends ConsumerWidget {
       leading: Icon(
         isHashtag ? Icons.tag : Icons.block,
         size: 20,
-        color: CostrColors.text2,
+        color: CostrColors.of(context).text2,
       ),
       title: Text(isHashtag ? '#$word' : word),
       trailing: TextButton(

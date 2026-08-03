@@ -252,7 +252,7 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 ```bash
 flutter pub get          # 安装/刷新依赖
 flutter run -d linux     # 桌面运行（或 android / macos / windows）
-flutter test             # 全套测试（317 个）
+flutter test             # 全套测试（323 个）
 flutter analyze          # 静态分析（须 0 警告）
 dart format lib/ test/   # 格式化
 flutter build linux      # 桌面构建验证
@@ -285,7 +285,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 317 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 323 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -316,6 +316,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 <summary><b>已实现功能详情（点击展开）</b></summary>
 
 - **身份**：粘贴 `nsec1` → BIP-340 `getPublicKey` 派生公钥 → OS 安全存储，下次自动登录。创建账号多步向导（备份钥匙→设资料→完成），强制备份提示。
+- **主题 / 深色模式**：X 风格浅色基线（纯白底 + 黑 `#0F1419` 主色）+ **X 风格深色**（纯黑底 + 近白 `#E7E9EA` 主色），`themeMode: system` 跟随系统。全部 UI 颜色经 `CostrColors.of(context)` 按亮度解析（`CostrPalette`：bg/bg2/border/text/text2/text3/brand/onBrand/red/green/blue/warnBg/warnBorder）——历史上的静态浅色常量已删除，任何残留硬编码都会编译报错，杜绝再次「深色下白块/黑字不可见」。`brand` 语义反转：浅色下近黑既作前景又作填充，深色下反转为近白，填充其上的内容（FAB logo、新帖胶囊、代理媒体 chip、登录头像圈）一律用 `onBrand`（不再硬编码白）。`AppTheme.dark()` 补齐深色 ColorScheme + 全套组件主题（card/chip/appBar/navBar/filledButton/iconButton），Material 组件不再回落 M3 默认紫。保留的例外：打闪 QR 白底（扫码必需）、媒体查看器黑底、头像渐变。
 - **信息流**：**全球**（广播到默认中继，live）与**关注**（按 followee NIP-65 outbox 定向拉取，详见上方 SVG）切换。只显帖子（Amethyst 式事件类型门控：kind-7/3 不当帖显示）。repost 进信息流（kinds `[0,1,6,7]`，EventCard 渲染「↻ 转发」header + 嵌入被转帖）。**自己的帖进关注流**：你不会关注自己，旧过滤 `set.contains(pubkey)` 会把刚发布的帖（`publishAndWait` 已回显入库）静默丢掉——个人页「帖子」看得到、信息流看不到、下拉刷新也刷不回；现过滤加上 `|| pubkey == me`，且关注流额外开一条针对自己近期帖的小 REQ（内存库 5000 上限淘汰后还能拉回）。**回帖带上下文**：回复帖卡片在「回复 @用户」行下方渲染**被回复帖**（仅上一层，非完整链路）的预览框（作者名 + 正文截断纯文本、无 markdown/图），经 `eventByIdProvider` 三级查找取父帖——父帖不在当前 feed 窗口也能补全；NSFW 父帖遵守 autoReveal、转发类父帖显示占位。点按跳父帖线程。
 - **中继池**：多中继 fan-out，按 id 去重（`events` 流给全球流）；另开 `rawEvents`（不去重）给一次性定向拉取（kind-3、关注者 `#p`、NIP-50 搜索）。断线指数退避重连，重连后自动重发活跃订阅。`RelayClient.connect` 等 `channel.ready` 才标 connected（+10s 超时让被墙中继快速判离线）。
 - **事件存储**：内存单源，按 id 去重，时间倒序，上限 5000 淘汰最旧。`ingest` 经 `_scheduleFlush` 200ms 去抖批量刷新（避免突发百条 jank）。
@@ -347,7 +348,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 317 个测试
+flutter test             # 323 个测试
 flutter build linux      # 桌面构建
 ```
 

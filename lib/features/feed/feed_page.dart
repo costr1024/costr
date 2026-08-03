@@ -292,9 +292,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                 onRefresh: _refresh,
                 child: events.isEmpty
                     ? ListView(
-                        children: [
-                          _EmptyState(followingEmpty: followingEmpty),
-                        ],
+                        children: [_EmptyState(followingEmpty: followingEmpty)],
                       )
                     : Stack(
                         children: <Widget>[
@@ -344,45 +342,49 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                                   return EventCard(event: visible[i]);
                                 }
                                 // Trailing indicator: spinner while loading
-                              // more, else a quiet hint. The mere presence of
-                              // this row also keeps the list scrollable past
-                              // the last real post so the scroll-update trigger
-                              // above can fire even when the feed barely fills
-                              // the screen.
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 24),
-                                child: Center(
-                                  child: _loadingMore
-                                      ? const SizedBox(
-                                          width: 22,
-                                          height: 22,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: CostrColors.text3,
-                                          ),
-                                        )
-                                      : const SizedBox(height: 22),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                        if (pending > 0)
-                          Positioned(
-                            top: 8,
-                            left: 0,
-                            right: 0,
-                            child: Center(
-                              child: _NewPostsPill(
-                                count: pending,
-                                onTap: _onPillTap,
-                              ),
+                                // more, else a quiet hint. The mere presence of
+                                // this row also keeps the list scrollable past
+                                // the last real post so the scroll-update trigger
+                                // above can fire even when the feed barely fills
+                                // the screen.
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 24,
+                                  ),
+                                  child: Center(
+                                    child: _loadingMore
+                                        ? SizedBox(
+                                            width: 22,
+                                            height: 22,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: CostrColors.of(
+                                                context,
+                                              ).text3,
+                                            ),
+                                          )
+                                        : const SizedBox(height: 22),
+                                  ),
+                                );
+                              },
                             ),
                           ),
-                      ],
-                    ),
+                          if (pending > 0)
+                            Positioned(
+                              top: 8,
+                              left: 0,
+                              right: 0,
+                              child: Center(
+                                child: _NewPostsPill(
+                                  count: pending,
+                                  onTap: _onPillTap,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
             ),
-          ),
           ),
         ],
       ),
@@ -408,7 +410,7 @@ class _NewPostsPill extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
           decoration: BoxDecoration(
-            color: CostrColors.brand,
+            color: CostrColors.of(context).brand,
             borderRadius: BorderRadius.circular(999),
             boxShadow: const <BoxShadow>[
               BoxShadow(
@@ -421,12 +423,16 @@ class _NewPostsPill extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              const Icon(Icons.arrow_upward, size: 14, color: Colors.white),
+              Icon(
+                Icons.arrow_upward,
+                size: 14,
+                color: CostrColors.of(context).onBrand,
+              ),
               const SizedBox(width: 5),
               Text(
                 '$count 条新帖',
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: CostrColors.of(context).onBrand,
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                 ),
@@ -582,7 +588,11 @@ class _LanguageGlobeButton extends ConsumerWidget {
                   Text(e.$1),
                   if (e.$2 == value) ...[
                     const Spacer(),
-                    const Icon(Icons.check, size: 16, color: CostrColors.brand),
+                    Icon(
+                      Icons.check,
+                      size: 16,
+                      color: CostrColors.of(context).brand,
+                    ),
                   ],
                 ],
               ),

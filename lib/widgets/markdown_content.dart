@@ -693,7 +693,7 @@ class _EventEmbed extends ConsumerWidget {
         margin: const EdgeInsets.only(top: 8),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: CostrColors.bg2,
+          color: CostrColors.of(context).bg2,
           border: Border(
             left: BorderSide(color: theme.colorScheme.outline, width: 3),
           ),
@@ -701,7 +701,7 @@ class _EventEmbed extends ConsumerWidget {
         ),
         child: Text(
           notFound ? '引用内容不可用' : '加载引用…',
-          style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.text3),
+          style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.of(context).text3),
         ),
       );
     }
@@ -719,7 +719,7 @@ class _EventEmbed extends ConsumerWidget {
         margin: const EdgeInsets.only(top: 8),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: CostrColors.bg2,
+          color: CostrColors.of(context).bg2,
           border: Border(
             left: BorderSide(color: theme.colorScheme.outline, width: 3),
           ),
@@ -750,7 +750,7 @@ class _EventEmbed extends ConsumerWidget {
                 ev.content,
                 ref,
                 baseStyle: theme.textTheme.bodySmall?.copyWith(
-                  color: CostrColors.text2,
+                  color: CostrColors.of(context).text2,
                   height: 1.4,
                 ),
                 mentionStyle: theme.textTheme.bodySmall?.copyWith(
@@ -792,7 +792,7 @@ class _NonPostRefLabel extends StatelessWidget {
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: CostrColors.bg2,
+        color: CostrColors.of(context).bg2,
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: theme.colorScheme.outline, width: 0.5),
       ),
@@ -804,7 +804,7 @@ class _NonPostRefLabel extends StatelessWidget {
           Text(
             label,
             style: theme.textTheme.bodySmall?.copyWith(
-              color: CostrColors.text3,
+              color: CostrColors.of(context).text3,
             ),
           ),
         ],

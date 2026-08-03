@@ -54,8 +54,10 @@ class _EventCardState extends ConsumerState<EventCard> {
     return InkWell(
       onTap: () => pushPostDetail(context, event.id),
       child: Container(
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: Color(0xFFEFF3F4))),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: CostrColors.of(context).border),
+          ),
         ),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -125,10 +127,7 @@ class _EventCardState extends ConsumerState<EventCard> {
                       _StatusLine(text: status),
                     if (event.isReply) _ReplyContext(event: event),
                     const SizedBox(height: 6),
-                    _NsfwAwareContent(
-                      event: event,
-                      proxyMedia: _proxyMedia,
-                    ),
+                    _NsfwAwareContent(event: event, proxyMedia: _proxyMedia),
                     if (event.hashtags.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       _Hashtags(tags: event.hashtags),
@@ -185,17 +184,21 @@ class _ProxyMediaButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
-          color: active ? CostrColors.brand : Colors.transparent,
+          color: active ? CostrColors.of(context).brand : Colors.transparent,
           borderRadius: BorderRadius.circular(4),
           border: active
               ? null
-              : Border.all(color: CostrColors.brand.withValues(alpha: 0.5)),
+              : Border.all(
+                  color: CostrColors.of(context).brand.withValues(alpha: 0.5),
+                ),
         ),
         child: Text(
           '代理媒体',
           style: TextStyle(
             fontSize: 11,
-            color: active ? Colors.white : CostrColors.brand,
+            color: active
+                ? CostrColors.of(context).onBrand
+                : CostrColors.of(context).brand,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -220,7 +223,7 @@ class _StatusLine extends StatelessWidget {
         maxLines: 1,
         softWrap: false,
         style: theme.textTheme.bodySmall?.copyWith(
-          color: CostrColors.text3,
+          color: CostrColors.of(context).text3,
           fontStyle: FontStyle.italic,
         ),
       ),
@@ -243,8 +246,10 @@ class _RepostView extends ConsumerWidget {
     final theme = Theme.of(context);
     final repostedId = event.repostedEventId;
     return Container(
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFEFF3F4))),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: CostrColors.of(context).border),
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -261,7 +266,7 @@ class _RepostView extends ConsumerWidget {
                       Icon(
                         Icons.repeat_rounded,
                         size: 15,
-                        color: CostrColors.text3,
+                        color: CostrColors.of(context).text3,
                       ),
                       const SizedBox(width: 6),
                       Avatar(pubkey: event.pubkey, radius: 10),
@@ -277,7 +282,7 @@ class _RepostView extends ConsumerWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelSmall?.copyWith(
-                        color: CostrColors.text3,
+                        color: CostrColors.of(context).text3,
                       ),
                     ),
                   ),
@@ -297,7 +302,7 @@ class _RepostView extends ConsumerWidget {
                 child: Text(
                   '转发内容不可用',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: CostrColors.text3,
+                    color: CostrColors.of(context).text3,
                   ),
                 ),
               )
@@ -334,18 +339,17 @@ class _RepostedEmbed extends ConsumerWidget {
             Text(
               async.isLoading ? '加载转发内容…' : '转发内容不可用',
               style: theme.textTheme.bodySmall?.copyWith(
-                color: CostrColors.text3,
+                color: CostrColors.of(context).text3,
               ),
             ),
             if (!async.isLoading) ...[
               const SizedBox(width: 10),
               GestureDetector(
-                onTap: () =>
-                    ref.invalidate(repostedEventProvider(repost.id)),
+                onTap: () => ref.invalidate(repostedEventProvider(repost.id)),
                 child: Text(
                   '重试',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: CostrColors.brand,
+                    color: CostrColors.of(context).brand,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -360,7 +364,9 @@ class _RepostedEmbed extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(vertical: 16),
         child: Text(
           '转发内容不可用',
-          style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.text3),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: CostrColors.of(context).text3,
+          ),
         ),
       );
     }
@@ -406,11 +412,14 @@ class _ReplyContext extends ConsumerWidget {
         padding: const EdgeInsets.only(bottom: 4),
         child: Row(
           children: [
-            Icon(Icons.reply, size: 14, color: CostrColors.text3),
+            Icon(Icons.reply, size: 14, color: CostrColors.of(context).text3),
             const SizedBox(width: 4),
             Text(
               '回复',
-              style: TextStyle(fontSize: 13, color: CostrColors.text3),
+              style: TextStyle(
+                fontSize: 13,
+                color: CostrColors.of(context).text3,
+              ),
             ),
           ],
         ),
@@ -429,7 +438,11 @@ class _ReplyContext extends ConsumerWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.reply, size: 14, color: CostrColors.text3),
+                Icon(
+                  Icons.reply,
+                  size: 14,
+                  color: CostrColors.of(context).text3,
+                ),
                 const SizedBox(width: 4),
                 Flexible(
                   child: Text(
@@ -438,7 +451,7 @@ class _ReplyContext extends ConsumerWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 13,
-                      color: CostrColors.text3,
+                      color: CostrColors.of(context).text3,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -488,9 +501,9 @@ class _ReplyParentPreview extends ConsumerWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: CostrColors.bg2,
+        color: CostrColors.of(context).bg2,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: CostrColors.border),
+        border: Border.all(color: CostrColors.of(context).border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -500,7 +513,7 @@ class _ReplyParentPreview extends ConsumerWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.labelSmall?.copyWith(
-              color: CostrColors.text3,
+              color: CostrColors.of(context).text3,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -511,7 +524,7 @@ class _ReplyParentPreview extends ConsumerWidget {
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: CostrColors.text2,
+                color: CostrColors.of(context).text2,
               ),
             ),
           ],
@@ -524,10 +537,7 @@ class _ReplyParentPreview extends ConsumerWidget {
 /// Shows NSFW warning overlay if the event has an "nsfw" tag, unless
 /// autoReveal is on or the user has already tapped "查看" on this card.
 class _NsfwAwareContent extends ConsumerStatefulWidget {
-  const _NsfwAwareContent({
-    required this.event,
-    this.proxyMedia = false,
-  });
+  const _NsfwAwareContent({required this.event, this.proxyMedia = false});
   final Event event;
   final bool proxyMedia;
 
@@ -641,8 +651,10 @@ class _ReactionChips extends ConsumerWidget {
                           width: 16,
                           height: 16,
                           fit: BoxFit.cover,
-                          errorWidget: (BuildContext _) =>
-                              Text(entry.key, style: const TextStyle(fontSize: 13)),
+                          errorWidget: (BuildContext _) => Text(
+                            entry.key,
+                            style: const TextStyle(fontSize: 13),
+                          ),
                         ),
                       ),
                     )
@@ -650,7 +662,10 @@ class _ReactionChips extends ConsumerWidget {
                     Text(entry.key, style: const TextStyle(fontSize: 13)),
                   if (entry.value.count > 1) ...[
                     const SizedBox(width: 2),
-                    Text('${entry.value.count}', style: theme.textTheme.labelSmall),
+                    Text(
+                      '${entry.value.count}',
+                      style: theme.textTheme.labelSmall,
+                    ),
                   ],
                 ],
               ),
@@ -678,8 +693,7 @@ class _HashtagsState extends State<_Hashtags> {
   @override
   Widget build(BuildContext context) {
     final tags = widget.tags;
-    final show =
-        _expanded ? tags : tags.take(_kCollapsedChips).toList();
+    final show = _expanded ? tags : tags.take(_kCollapsedChips).toList();
     final hidden = tags.length - show.length;
     return Wrap(
       spacing: 6,
@@ -799,21 +813,12 @@ class _PostMenu extends ConsumerWidget {
       icon: const Icon(Icons.more_vert, size: 18),
       padding: EdgeInsets.zero,
       itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-        const PopupMenuItem<String>(
-          value: 'copy_id',
-          child: Text('复制帖子 id'),
-        ),
-        const PopupMenuItem<String>(
-          value: 'copy_content',
-          child: Text('复制全文'),
-        ),
+        const PopupMenuItem<String>(value: 'copy_id', child: Text('复制帖子 id')),
+        const PopupMenuItem<String>(value: 'copy_content', child: Text('复制全文')),
         const PopupMenuItem<String>(value: 'zap', child: Text('打闪')),
         if (isSelf) ...[
           const PopupMenuDivider(),
-          const PopupMenuItem<String>(
-            value: 'delete',
-            child: Text('删除'),
-          ),
+          const PopupMenuItem<String>(value: 'delete', child: Text('删除')),
         ],
       ],
       onSelected: (String value) async {

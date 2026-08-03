@@ -4,27 +4,29 @@ library;
 
 import 'package:flutter/material.dart';
 
-/// Size-configurable Costr logo mark (broadcast arcs + dot).
-/// On dark backgrounds use [CostrLogo.light] (white on dark).
-class CostrLogo extends StatelessWidget {
-  const CostrLogo({
-    super.key,
-    this.size = 28,
-    this.color = const Color(0xFF0F1419),
-  });
+import '../app/theme.dart';
 
-  /// White logo for dark backgrounds (FAB, splash, login).
+/// Size-configurable Costr logo mark (broadcast arcs + dot).
+/// [color] defaults to the ambient [CostrColors.of] brand — dark-mode aware.
+/// Pass an explicit color only when drawing on a contrasting fill (e.g. the
+/// FAB passes its `onBrand`).
+class CostrLogo extends StatelessWidget {
+  const CostrLogo({super.key, this.size = 28, this.color});
+
+  /// White logo for permanently-dark backgrounds (splash).
   const CostrLogo.light({super.key, this.size = 28}) : color = Colors.white;
 
   final double size;
-  final Color color;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(painter: _LogoPainter(color: color)),
+      child: CustomPaint(
+        painter: _LogoPainter(color: color ?? CostrColors.of(context).brand),
+      ),
     );
   }
 }
@@ -85,25 +87,27 @@ class _LogoPainter extends CustomPainter {
   bool shouldRepaint(covariant _LogoPainter old) => old.color != color;
 }
 
-/// A text logo: mark + "Costr" wordmark.
+/// A text logo: mark + "Costr" wordmark. [color] defaults to the ambient
+/// [CostrColors.of] brand (dark-mode aware).
 class CostrWordmark extends StatelessWidget {
   const CostrWordmark({
     super.key,
     this.logoSize = 28,
     this.fontSize = 20,
-    this.color = const Color(0xFF0F1419),
+    this.color,
   });
 
   final double logoSize;
   final double fontSize;
-  final Color color;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
+    final c = color ?? CostrColors.of(context).brand;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        CostrLogo(size: logoSize, color: color),
+        CostrLogo(size: logoSize, color: c),
         const SizedBox(width: 8),
         Text(
           'Costr',
@@ -111,7 +115,7 @@ class CostrWordmark extends StatelessWidget {
             fontSize: fontSize,
             fontWeight: FontWeight.w800,
             letterSpacing: -0.3,
-            color: color,
+            color: c,
           ),
         ),
       ],

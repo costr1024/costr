@@ -53,7 +53,10 @@ class NotificationSettingsPage extends ConsumerWidget {
           const SizedBox(height: 20),
           Text(
             '所有通知只存在你这台手机上。Costr 不收集、不上传你的通知记录。',
-            style: TextStyle(fontSize: 12, color: CostrColors.text3),
+            style: TextStyle(
+              fontSize: 12,
+              color: CostrColors.of(context).text3,
+            ),
             textAlign: TextAlign.center,
           ),
         ],
@@ -73,7 +76,7 @@ class _SectionHeader extends StatelessWidget {
       style: TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w600,
-        color: CostrColors.text3,
+        color: CostrColors.of(context).text3,
       ),
     ),
   );
@@ -95,8 +98,8 @@ class _SwitchRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: CostrColors.border)),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: CostrColors.of(context).border)),
       ),
       child: Row(
         children: [
@@ -108,7 +111,10 @@ class _SwitchRow extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
-                  style: TextStyle(fontSize: 12, color: CostrColors.text2),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: CostrColors.of(context).text2,
+                  ),
                 ),
               ],
             ),
@@ -116,7 +122,7 @@ class _SwitchRow extends StatelessWidget {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeThumbColor: CostrColors.green,
+            activeThumbColor: CostrColors.of(context).green,
           ),
         ],
       ),
@@ -132,8 +138,8 @@ class _InfoRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: CostrColors.border)),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: CostrColors.of(context).border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -142,7 +148,10 @@ class _InfoRow extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             subtitle,
-            style: TextStyle(fontSize: 12, color: CostrColors.text2),
+            style: TextStyle(
+              fontSize: 12,
+              color: CostrColors.of(context).text2,
+            ),
           ),
         ],
       ),

@@ -502,8 +502,7 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
       );
     }
     final async = ref.watch(notificationsProvider(myPubkey));
-    final unreadCount =
-        ref.watch(unreadNotificationCountProvider(myPubkey));
+    final unreadCount = ref.watch(unreadNotificationCountProvider(myPubkey));
     // Lifted out of `.when` so the AppBar action can mark-all-read without
     // rebuilding the body. `filtered` follows the current _tab.
     final allItems = async.value ?? const <NotificationItem>[];
@@ -530,9 +529,9 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
               tooltip: '全部标记已读',
               onPressed: () {
                 final ids = filtered
-                    .where((i) => !ref
-                        .read(notificationReadProvider)
-                        .contains(i.id))
+                    .where(
+                      (i) => !ref.read(notificationReadProvider).contains(i.id),
+                    )
                     .map((i) => i.id)
                     .toList();
                 if (ids.isEmpty) return;
@@ -549,7 +548,7 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
         children: [
           // All / Mentions tabs.
           Material(
-            color: CostrColors.bg,
+            color: CostrColors.of(context).bg,
             child: Row(
               children: [
                 _TabButton(
@@ -568,8 +567,7 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
           Expanded(
             child: ImmersiveScrollDetector(
               child: async.when(
-                loading: () =>
-                    const Center(child: CircularProgressIndicator()),
+                loading: () => const Center(child: CircularProgressIndicator()),
                 error: (_, _) => const Center(child: Text('通知加载失败')),
                 data: (_) {
                   // Read/unread is per-item, marked read on tap (DESIGN §5.2
@@ -595,9 +593,9 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
                       myPubkey: myPubkey,
                     ),
                   );
-              },
+                },
+              ),
             ),
-          ),
           ),
         ],
       ),
@@ -620,7 +618,9 @@ class _TabButton extends StatelessWidget {
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: selected ? CostrColors.brand : Colors.transparent,
+                color: selected
+                    ? CostrColors.of(context).brand
+                    : Colors.transparent,
                 width: 3,
               ),
             ),
@@ -631,7 +631,9 @@ class _TabButton extends StatelessWidget {
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
-              color: selected ? CostrColors.text : CostrColors.text3,
+              color: selected
+                  ? CostrColors.of(context).text
+                  : CostrColors.of(context).text3,
             ),
           ),
         ),
@@ -649,7 +651,7 @@ class _NotificationTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final icon = _iconForType(item.type);
-    final iconColor = _colorForType(item.type);
+    final iconColor = _colorForType(item.type, CostrColors.of(context));
     // Unread is derived from the persisted read-set (not the vestigial
     // item.unread flag, which is always true at creation). Per-item: stays
     // unread until the user taps it (stable styling — no whole-page clear).
@@ -705,8 +707,10 @@ class _NotificationTile extends ConsumerWidget {
         // Subtle background tint on unread items (X-style); read items stay
         // plain. Combined with the dot below for a stable read/unread split.
         decoration: BoxDecoration(
-          color: unread ? CostrColors.bg2 : null,
-          border: const Border(bottom: BorderSide(color: CostrColors.border)),
+          color: unread ? CostrColors.of(context).bg2 : null,
+          border: Border(
+            bottom: BorderSide(color: CostrColors.of(context).border),
+          ),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -722,8 +726,8 @@ class _NotificationTile extends ConsumerWidget {
                     Container(
                       width: 8,
                       height: 8,
-                      decoration: const BoxDecoration(
-                        color: CostrColors.brand,
+                      decoration: BoxDecoration(
+                        color: CostrColors.of(context).brand,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -760,7 +764,9 @@ class _NotificationTile extends ConsumerWidget {
                         ),
                         TextSpan(
                           text: ' $verb',
-                          style: TextStyle(color: CostrColors.text2),
+                          style: TextStyle(
+                            color: CostrColors.of(context).text2,
+                          ),
                         ),
                         // For reactions, show the actual emoji inline after the
                         // verb — a NIP-30 custom-emoji image when we have a URL,
@@ -801,11 +807,11 @@ class _NotificationTile extends ConsumerWidget {
                         ref,
                         baseStyle: TextStyle(
                           fontSize: 14,
-                          color: CostrColors.text2,
+                          color: CostrColors.of(context).text2,
                         ),
                         mentionStyle: TextStyle(
                           fontSize: 14,
-                          color: CostrColors.brand,
+                          color: CostrColors.of(context).brand,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -816,7 +822,10 @@ class _NotificationTile extends ConsumerWidget {
                   const SizedBox(height: 4),
                   Text(
                     _relativeTime(item.time),
-                    style: TextStyle(fontSize: 12, color: CostrColors.text3),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: CostrColors.of(context).text3,
+                    ),
                   ),
                 ],
               ),
@@ -869,16 +878,16 @@ IconData _iconForType(NotificationType t) {
   }
 }
 
-Color _colorForType(NotificationType t) {
+Color _colorForType(NotificationType t, CostrPalette c) {
   switch (t) {
     case NotificationType.reaction:
-      return CostrColors.red;
+      return c.red;
     case NotificationType.repost:
-      return CostrColors.green;
+      return c.green;
     case NotificationType.follow:
-      return CostrColors.blue;
+      return c.blue;
     default:
-      return CostrColors.text2;
+      return c.text2;
   }
 }
 

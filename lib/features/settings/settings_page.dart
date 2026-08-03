@@ -63,8 +63,7 @@ class SettingsPage extends ConsumerWidget {
             subtitleOn: '已开启：向下滚动隐藏顶栏/底栏/发帖键，向上滚动恢复。仅本机，不同步',
             subtitleOff: '关闭：顶栏底栏常驻。仅本机设置，不同步中继',
             enabled: ref.watch(immersiveBrowseProvider),
-            onChanged: (v) =>
-                ref.read(immersiveBrowseProvider.notifier).set(v),
+            onChanged: (v) => ref.read(immersiveBrowseProvider.notifier).set(v),
           ),
           const _SectionHeader('关于'),
           _Row(
@@ -75,7 +74,7 @@ class SettingsPage extends ConsumerWidget {
           const _SectionHeader('账号'),
           _Row(
             title: '退出登录',
-            titleColor: CostrColors.red,
+            titleColor: CostrColors.of(context).red,
             subtitle: '保留本地数据，下次可恢复',
             onTap: () => showLogoutSheet(context, ref),
           ),
@@ -93,7 +92,11 @@ class SettingsPage extends ConsumerWidget {
     );
   }
 
-  void _showTextScaleSheet(BuildContext context, WidgetRef ref, TextScaleLevel current) {
+  void _showTextScaleSheet(
+    BuildContext context,
+    WidgetRef ref,
+    TextScaleLevel current,
+  ) {
     showModalBottomSheet<void>(
       context: context,
       builder: (BuildContext ctx) {
@@ -105,8 +108,10 @@ class SettingsPage extends ConsumerWidget {
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text('字号',
-                      style: Theme.of(context).textTheme.titleSmall),
+                  child: Text(
+                    '字号',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
                 ),
               ),
               for (final l in TextScaleLevel.values)
@@ -116,7 +121,9 @@ class SettingsPage extends ConsumerWidget {
                     Navigator.pop(context);
                   },
                   leading: Icon(
-                    current == l ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                    current == l
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
                     color: Theme.of(context).colorScheme.primary,
                   ),
                   title: Text(l.label),
@@ -152,14 +159,20 @@ class AboutPage extends StatelessWidget {
           Center(
             child: Text(
               'Costr = Chinese Nostr',
-              style: TextStyle(fontSize: 13, color: CostrColors.text2),
+              style: TextStyle(
+                fontSize: 13,
+                color: CostrColors.of(context).text2,
+              ),
             ),
           ),
           const SizedBox(height: 8),
           Center(
             child: Text(
               '更适合中文用户的 Nostr 开源社交客户端',
-              style: TextStyle(fontSize: 14, color: CostrColors.text2),
+              style: TextStyle(
+                fontSize: 14,
+                color: CostrColors.of(context).text2,
+              ),
             ),
           ),
           const SizedBox(height: 18),
@@ -171,7 +184,8 @@ class AboutPage extends StatelessWidget {
           _IntroCard(
             icon: Icons.lock_outline,
             title: '匿名，一把钥匙就是身份',
-            body: '不用手机号、不用邮箱、不实名。一串钥匙就是你的整个账号，不绑定任何现实身份。'
+            body:
+                '不用手机号、不用邮箱、不实名。一串钥匙就是你的整个账号，不绑定任何现实身份。'
                 '想更进一步隐身？搭配 VPN 代理服务一起用——中继只能看到代理的地址，'
                 '看不到你的真实网络位置，匿名保障更高。',
           ),
@@ -210,7 +224,10 @@ class AboutPage extends StatelessWidget {
             'Costr · 更适合中文用户的 Nostr 开源社交客户端\n'
             'Nostr 是一个去中心化开放社交协议\n'
             'Costr 应用代码开源，谁都能审计',
-            style: TextStyle(fontSize: 12, color: CostrColors.text3),
+            style: TextStyle(
+              fontSize: 12,
+              color: CostrColors.of(context).text3,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
@@ -264,18 +281,18 @@ Costr 在协议实现与渲染上重点参考了两个出色的开源 Nostr 客�
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: CostrColors.text2,
+              color: CostrColors.of(context).text2,
             ),
           ),
         ),
         MarkdownBody(
           data: _md,
           styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-            p: TextStyle(fontSize: 14, color: CostrColors.text),
+            p: TextStyle(fontSize: 14, color: CostrColors.of(context).text),
             h2: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: CostrColors.text,
+              color: CostrColors.of(context).text,
             ),
             a: TextStyle(color: Theme.of(context).colorScheme.primary),
           ),
@@ -297,7 +314,7 @@ class _ExplainCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: CostrColors.bg2,
+        color: CostrColors.of(context).bg2,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -312,7 +329,7 @@ class _ExplainCard extends StatelessWidget {
             body,
             style: TextStyle(
               fontSize: 13.5,
-              color: CostrColors.text2,
+              color: CostrColors.of(context).text2,
               height: 1.6,
             ),
           ),
@@ -333,7 +350,7 @@ class _NostrProtocolDiagram extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border.all(color: CostrColors.border),
+        border: Border.all(color: CostrColors.of(context).border),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -343,7 +360,7 @@ class _NostrProtocolDiagram extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: CostrColors.text2,
+              color: CostrColors.of(context).text2,
             ),
           ),
           const SizedBox(height: 12),
@@ -351,7 +368,9 @@ class _NostrProtocolDiagram extends StatelessWidget {
             height: 150,
             child: CustomPaint(
               size: Size.infinite,
-              painter: _ProtocolPainter(),
+              painter: _ProtocolPainter(
+                lineColor: CostrColors.of(context).border,
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -381,7 +400,7 @@ class _NostrProtocolDiagram extends StatelessWidget {
             '每个 app 同时连多台中继；你把帖子写进自己的「发件箱」中继，别人去你的发件箱取。没有中心服务器。',
             style: TextStyle(
               fontSize: 12,
-              color: CostrColors.text3,
+              color: CostrColors.of(context).text3,
               height: 1.5,
             ),
             textAlign: TextAlign.center,
@@ -402,9 +421,12 @@ class _NodeLabel extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16, color: CostrColors.text2),
+        Icon(icon, size: 16, color: CostrColors.of(context).text2),
         const SizedBox(width: 4),
-        Text(label, style: TextStyle(fontSize: 12, color: CostrColors.text2)),
+        Text(
+          label,
+          style: TextStyle(fontSize: 12, color: CostrColors.of(context).text2),
+        ),
       ],
     );
   }
@@ -412,10 +434,13 @@ class _NodeLabel extends StatelessWidget {
 
 /// Draws many-to-many lines between 3 left nodes (apps) and 3 right nodes (relays).
 class _ProtocolPainter extends CustomPainter {
+  _ProtocolPainter({required this.lineColor});
+  final Color lineColor;
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = CostrColors.border
+      ..color = lineColor
       ..strokeWidth = 1;
     const n = 3;
     final dx = size.width;
@@ -445,7 +470,7 @@ class _SectionHeader extends StatelessWidget {
       style: TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w600,
-        color: CostrColors.text3,
+        color: CostrColors.of(context).text3,
       ),
     ),
   );
@@ -469,8 +494,10 @@ class _Row extends StatelessWidget {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: CostrColors.border)),
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: CostrColors.of(context).border),
+          ),
         ),
         child: Row(
           children: [
@@ -482,18 +509,21 @@ class _Row extends StatelessWidget {
                     title,
                     style: TextStyle(
                       fontSize: 15,
-                      color: titleColor ?? CostrColors.text,
+                      color: titleColor ?? CostrColors.of(context).text,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: TextStyle(fontSize: 12, color: CostrColors.text2),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: CostrColors.of(context).text2,
+                    ),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: CostrColors.text3),
+            Icon(Icons.chevron_right, color: CostrColors.of(context).text3),
           ],
         ),
       ),
@@ -522,8 +552,8 @@ class _LocalSwitchTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: CostrColors.border)),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: CostrColors.of(context).border)),
       ),
       child: Row(
         children: [
@@ -533,12 +563,18 @@ class _LocalSwitchTile extends ConsumerWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(fontSize: 15, color: CostrColors.text),
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: CostrColors.of(context).text,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   enabled ? subtitleOn : subtitleOff,
-                  style: const TextStyle(fontSize: 12, color: CostrColors.text2),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: CostrColors.of(context).text2,
+                  ),
                 ),
               ],
             ),
@@ -594,7 +630,7 @@ class _IntroCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        border: Border.all(color: CostrColors.border),
+        border: Border.all(color: CostrColors.of(context).border),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
@@ -604,7 +640,7 @@ class _IntroCard extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: CostrColors.bg2,
+              color: CostrColors.of(context).bg2,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(icon, size: 26),
@@ -626,7 +662,7 @@ class _IntroCard extends StatelessWidget {
                   body,
                   style: TextStyle(
                     fontSize: 14,
-                    color: CostrColors.text2,
+                    color: CostrColors.of(context).text2,
                     height: 1.5,
                   ),
                 ),

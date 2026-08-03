@@ -22,11 +22,14 @@ class AccountSettingsPage extends ConsumerWidget {
       body: ListView(
         children: [
           const _SectionHeader('账号级 NSFW 设置'),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
               '只保存在本机，不上传中继。',
-              style: TextStyle(fontSize: 12, color: CostrColors.text2),
+              style: TextStyle(
+                fontSize: 12,
+                color: CostrColors.of(context).text2,
+              ),
             ),
           ),
           SwitchListTile(
@@ -50,7 +53,9 @@ class AccountSettingsPage extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: FilledButton.icon(
-              style: FilledButton.styleFrom(backgroundColor: CostrColors.red),
+              style: FilledButton.styleFrom(
+                backgroundColor: CostrColors.of(context).red,
+              ),
               icon: const Icon(Icons.key, size: 18),
               label: const Text('验证身份并复制私钥'),
               onPressed: () => _copyKey(context, ref),
@@ -121,14 +126,20 @@ class _DangerWarning extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: CostrColors.red.withValues(alpha: 0.08),
-        border: Border.all(color: CostrColors.red.withValues(alpha: 0.4)),
+        color: CostrColors.of(context).red.withValues(alpha: 0.08),
+        border: Border.all(
+          color: CostrColors.of(context).red.withValues(alpha: 0.4),
+        ),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.warning_amber_rounded, size: 20, color: CostrColors.red),
+          Icon(
+            Icons.warning_amber_rounded,
+            size: 20,
+            color: CostrColors.of(context).red,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -138,7 +149,7 @@ class _DangerWarning extends StatelessWidget {
               '复制后尽快粘贴到离线、可信的地方，不要留在剪贴板里。',
               style: TextStyle(
                 fontSize: 13,
-                color: CostrColors.red,
+                color: CostrColors.of(context).red,
                 height: 1.6,
               ),
             ),
@@ -157,10 +168,10 @@ class _SectionHeader extends StatelessWidget {
     padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
     child: Text(
       text,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w600,
-        color: CostrColors.text3,
+        color: CostrColors.of(context).text3,
       ),
     ),
   );

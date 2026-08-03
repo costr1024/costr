@@ -17,6 +17,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../app/theme.dart';
+
 class OnboardingOverlay extends StatefulWidget {
   const OnboardingOverlay({super.key, required this.onDone});
   final VoidCallback onDone;
@@ -147,8 +149,8 @@ class _OnboardingOverlayState extends State<OnboardingOverlay> {
                     const SizedBox(height: 4),
                     Text(
                       s.text,
-                      style: const TextStyle(
-                        color: Color(0xFF536471),
+                      style: TextStyle(
+                        color: CostrColors.of(context).text2,
                         fontSize: 13,
                         height: 1.5,
                       ),
