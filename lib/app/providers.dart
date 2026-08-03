@@ -1599,11 +1599,22 @@ final followingOutboxProvider = Provider<void>((ref) {
   // resolves, but onDispose must be registered synchronously during build.
   // Capture it in a mutable holder the disposer reads at teardown.
   String? defaultSubId;
+  // Own-posts sub: you don't follow yourself, so neither the outbox tier nor
+  // the default bucket ever fetches your notes. The publish echo puts a fresh
+  // one in the store, but once it's evicted (5000 in-memory cap) nothing would
+  // ever re-fetch it — so keep a small live REQ for your own recent posts.
+  final meSubId = nextSubId('feed-me');
   ref.onDispose(() {
     router.close();
     final sid = defaultSubId;
     if (sid != null) pool.closeSubscription(sid);
+    pool.closeSubscription(meSubId);
   });
+  pool.request(meSubId, <String, dynamic>{
+    'kinds': [1, 6],
+    'authors': [identity.pubkeyHex],
+    'limit': 100,
+  }, closeOnEose: false);
 
   // Fire-and-forget the async build+start; the provider stays alive while
   // watched. The onDispose above closes the router + default sub when
@@ -1658,7 +1669,13 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   if (mode == FeedMode.following) {
     final follows = ref.watch(followingStateProvider).value ?? const <String>[];
     final set = follows.toSet();
-    events = events.where((e) => set.contains(e.pubkey));
+    final me = ref.watch(identityProvider).value?.pubkeyHex;
+    // The user's OWN posts always belong in their home feed. You don't follow
+    // yourself, so without `|| e.pubkey == me` a just-published note (already
+    // echoed into the store by publishAndWait) was silently dropped here —
+    // visible in the profile 帖子 tab but never in the feed, and pull-refresh
+    // couldn't bring it back either.
+    events = events.where((e) => set.contains(e.pubkey) || e.pubkey == me);
 
     // Following-list filter (DESIGN §8): narrow to a custom group's authors
     // or a hashtag. Client-side on the already-loaded following feed.

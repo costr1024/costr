@@ -316,7 +316,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 <summary><b>已实现功能详情（点击展开）</b></summary>
 
 - **身份**：粘贴 `nsec1` → BIP-340 `getPublicKey` 派生公钥 → OS 安全存储，下次自动登录。创建账号多步向导（备份钥匙→设资料→完成），强制备份提示。
-- **信息流**：**全球**（广播到默认中继，live）与**关注**（按 followee NIP-65 outbox 定向拉取，详见上方 SVG）切换。只显帖子（Amethyst 式事件类型门控：kind-7/3 不当帖显示）。repost 进信息流（kinds `[0,1,6,7]`，EventCard 渲染「↻ 转发」header + 嵌入被转帖）。**回帖带上下文**：回复帖卡片在「回复 @用户」行下方渲染**被回复帖**（仅上一层，非完整链路）的预览框（作者名 + 正文截断纯文本、无 markdown/图），经 `eventByIdProvider` 三级查找取父帖——父帖不在当前 feed 窗口也能补全；NSFW 父帖遵守 autoReveal、转发类父帖显示占位。点按跳父帖线程。
+- **信息流**：**全球**（广播到默认中继，live）与**关注**（按 followee NIP-65 outbox 定向拉取，详见上方 SVG）切换。只显帖子（Amethyst 式事件类型门控：kind-7/3 不当帖显示）。repost 进信息流（kinds `[0,1,6,7]`，EventCard 渲染「↻ 转发」header + 嵌入被转帖）。**自己的帖进关注流**：你不会关注自己，旧过滤 `set.contains(pubkey)` 会把刚发布的帖（`publishAndWait` 已回显入库）静默丢掉——个人页「帖子」看得到、信息流看不到、下拉刷新也刷不回；现过滤加上 `|| pubkey == me`，且关注流额外开一条针对自己近期帖的小 REQ（内存库 5000 上限淘汰后还能拉回）。**回帖带上下文**：回复帖卡片在「回复 @用户」行下方渲染**被回复帖**（仅上一层，非完整链路）的预览框（作者名 + 正文截断纯文本、无 markdown/图），经 `eventByIdProvider` 三级查找取父帖——父帖不在当前 feed 窗口也能补全；NSFW 父帖遵守 autoReveal、转发类父帖显示占位。点按跳父帖线程。
 - **中继池**：多中继 fan-out，按 id 去重（`events` 流给全球流）；另开 `rawEvents`（不去重）给一次性定向拉取（kind-3、关注者 `#p`、NIP-50 搜索）。断线指数退避重连，重连后自动重发活跃订阅。`RelayClient.connect` 等 `channel.ready` 才标 connected（+10s 超时让被墙中继快速判离线）。
 - **事件存储**：内存单源，按 id 去重，时间倒序，上限 5000 淘汰最旧。`ingest` 经 `_scheduleFlush` 200ms 去抖批量刷新（避免突发百条 jank）。
 - **头像资料**：`metadataProvider` 是 StreamProvider——先 yield SQLite/内存缓存（即时），再异步拉 kind-0 刷新（按 `created_at` 不回退）。社交图谱资料预取（冷启动延迟 5s 对 follows+followers+self bulk REQ kind-0 落库）。
