@@ -2166,18 +2166,19 @@ final userPostsProvider = StreamProvider.family<List<Event>, String>((
     });
   }
 
-  // `since`增量: only pull posts newer than the newest we already hold, so a
-  // re-visit is near-instant instead of re-fetching the full window.
+  // Fetch the NEWEST window of the author's notes. Do NOT use a `since`
+  // incremental filter anchored on the newest cached post: for users outside
+  // the social graph the cache is only a partial glimpse (whatever flowed
+  // through the global feed — their posts are never persisted to SQLite), so
+  // anchoring `since` there permanently hid the rest of their history
+  // ("有的用户只能看到几条帖子/回帖，下拉刷新也刷不出更多"). Always pulling the
+  // newest `limit` window is correct regardless of cache completeness; merged
+  // dedups against the snapshot already shown.
   final filter = <String, dynamic>{
     'authors': [pubkey],
     'kinds': [1],
     'limit': 100,
   };
-  final newest = merged.values.fold<int>(
-    0,
-    (m, e) => e.createdAt > m ? e.createdAt : m,
-  );
-  if (newest > 0) filter['since'] = newest;
 
   // The broadcast path streams via rawEvents (set up before the await so
   // events arriving during the kind-10002 lookup are captured). The outbox
@@ -2191,41 +2192,64 @@ final userPostsProvider = StreamProvider.family<List<Event>, String>((
   }
 
   evSub = pool.rawEvents.listen(onFresh);
+
+  // Relay fetch as a fire-and-forget phase (NOT awaited inline): the
+  // generator must reach `yield* ctrl.stream` so relay hits written to `ctrl`
+  // (debounced scheduleEmit + final flush) actually reach the UI. The old
+  // code awaited the fetch inline and had NO `yield*` — every relay result
+  // was buffered in `ctrl` and dropped when the generator returned, so the
+  // profile only ever showed the cached snapshot ("有的用户只有几条帖子/回帖，
+  // 下拉刷新也刷不出更多"). onFresh still ingests into the store for the next
+  // visit regardless.
+  Future<void> fetchPhase() async {
+    final relays = await ref.read(userRelayListProvider(pubkey).future);
+    final outbox = relays?.read ?? const <String>[];
+    if (outbox.isNotEmpty) {
+      // Outbox routing: per-URL transient clients. onEvent streams each event
+      // as its relay responds (debounced), instead of waiting for the batch.
+      await pool.fetchFromUrls(filter, outbox, onEvent: onFresh);
+    } else {
+      // No published relay list — broadcast to the main pool, resolve on first
+      // EOSE (closeOnEose waits ALL relays in the pool impl; resolve locally on
+      // the first one so a slow relay doesn't stall the snapshot).
+      final subId = nextSubId('user');
+      final done = Completer<void>();
+      final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+        if (!done.isCompleted) done.complete();
+      });
+      pool.request(subId, filter, closeOnEose: true);
+      final t = Timer(const Duration(seconds: 10), () {
+        if (!done.isCompleted) done.complete();
+      });
+      await done.future;
+      t.cancel();
+      await eoseSub.cancel();
+      pool.closeSubscription(subId);
+    }
+  }
+
+  // When the fetch settles: emit any pending events, then close the controller
+  // so `yield* ctrl.stream` completes (subsequent visits re-subscribe via
+  // refresh/invalidate). Runs even if the fetch threw (cached snapshot already
+  // emitted, so the provider still resolves to data instead of spinning).
+  unawaited(
+    fetchPhase().catchError((Object _) {}).whenComplete(() {
+      flush?.cancel();
+      if (!ctrl.isClosed) {
+        if (dirty) {
+          dirty = false;
+          ctrl.add(_snapshotSorted(merged));
+        }
+        ctrl.close();
+      }
+    }),
+  );
   ref.onDispose(() {
     flush?.cancel();
     evSub.cancel();
-    ctrl.close();
+    if (!ctrl.isClosed) ctrl.close();
   });
-
-  final relays = await ref.watch(userRelayListProvider(pubkey).future);
-  final outbox = relays?.read ?? const <String>[];
-  if (outbox.isNotEmpty) {
-    // Outbox routing: per-URL transient clients. onEvent streams each event
-    // as its relay responds (debounced), instead of waiting for the batch.
-    await pool.fetchFromUrls(filter, outbox, onEvent: onFresh);
-  } else {
-    // No published relay list — broadcast to the main pool, resolve on first
-    // EOSE (closeOnEose waits ALL relays in the pool impl; resolve locally on
-    // the first one so a slow relay doesn't stall the snapshot).
-    final subId = nextSubId('user');
-    final done = Completer<void>();
-    final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-      if (!done.isCompleted) done.complete();
-    });
-    pool.request(subId, filter, closeOnEose: true);
-    final t = Timer(const Duration(seconds: 10), () {
-      if (!done.isCompleted) done.complete();
-    });
-    await done.future;
-    t.cancel();
-    await eoseSub.cancel();
-    pool.closeSubscription(subId);
-  }
-  // Flush any pending events collected during the fetch, then close so the
-  // stream completes (subsequent visits re-subscribe via refresh/invalidate).
-  flush?.cancel();
-  if (dirty && !ctrl.isClosed) ctrl.add(_snapshotSorted(merged));
-  await ctrl.close();
+  yield* ctrl.stream;
 });
 
 /// Newest-first snapshot of an id→event map, with id-ascending tie-break so

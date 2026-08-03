@@ -121,7 +121,7 @@ lib/
   分组定向拉取（详见上面的 SVG）。事件经 `EventStoreNotifier.ingest` 入内存库，`currentFeedEventsProvider`
   既有 `follows.contains(pubkey)` 过滤复用，UI 零改动。
 - **个人主页**：`userPostsProvider` → `fetchFromUrls` 临时连接对方 outbox read 中继
-  （`since` 增量，250ms 去抖流式 yield），无清单回落广播。
+  （每次拉最新 `limit:100` 窗口、250ms 去抖流式 yield，经 `yield* ctrl.stream` 吐出），无清单回落广播。
 - **资料 / 头像拉取**：`metadataProvider` 三级查找——SQLite 缓存 → 默认池 + indexer 池
   并发 kind-0；两级都冷 miss 时，回落到对方 NIP-65 outbox read 中继（`fetchFromUrls` 临时
   连接）。对方 kind-10002 中继清单本身也由 `userRelayListProvider` **默认池 + indexer 池并发**
@@ -323,7 +323,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 - **正文渲染**：GitHub 风格 markdown。多图九宫格、裸图片/视频 URL 当图渲染、NIP-92 imeta + `["image",url]`/`["video",url]` tag 跨协议去重、NIP-30 自定义表情 `:shortcode:` 内联、长帖折叠、空行保留（Amethyst 式）。NIP-19 npub/nprofile 提及 linkify。
 - **标签与语言过滤**：NIP-12 `t` tag + 正文内联 `#hashtag`（支持中文），chip 点选过滤/长按关注。**关注 hashtag 存 NIP-51 kind-10015 + NIP-44 加密 content**（`[["t",…]]` JSON，对齐 Amethyst 的私密兴趣列表，迁移互通），同时只读聚合 kind-30015 命名兴趣集的明文 `t`。语言下拉 🌐/🇨🇳/🇬🇧/🇯🇵，假名优先判日文。
 - **用户状态（NIP-38）**：kind-30315 短文本，信息流卡昵称下一行显示，自己主页内联编辑。
-- **用户主页**：NestedScrollView（banner/头像可滚走 + TabBar 吸顶）+ sliver 根治 overflow。4+1 tab：帖子/回帖/关注/关注者/收藏。`userPostsProvider` StreamProvider：先 yield 内存+SQLite 快照，后台 NIP-65 outbox 定向拉取（`since` 增量，250ms 去抖流式 yield）。下拉刷新、发帖后立即可见。各 tab 的过滤/搜索框（搜帖子/搜回帖/过滤已关注/过滤关注者/搜收藏）共用一个 `_SearchBar`，带 **X 一键清空**——清空文本同时回调 `onChanged('')` 复位父级 `_query`，列表回到全量（`controller.clear()` 本身不触发 `TextField.onChanged`，须手动回调）。
+- **用户主页**：NestedScrollView（banner/头像可滚走 + TabBar 吸顶）+ sliver 根治 overflow。4+1 tab：帖子/回帖/关注/关注者/收藏。`userPostsProvider` StreamProvider：先 yield 内存+SQLite 快照，后台 NIP-65 outbox 定向拉取（250ms 去抖流式 yield），拉取经 `yield* ctrl.stream` 吐给 UI——**修复了两处「有的用户只能看到几条帖子/回帖、下拉刷新也刷不出更多」**：① 原实现把中继结果写进 `ctrl` 却没有 `yield*` 管道，全部静默丢弃、主页永远只显示缓存快照；② 原 `since` 增量以「缓存里最新一条」为锚点，而社交圈外用户的帖子不落库、缓存只是信息流里瞥见的几条，锚点之后的历史永远拉不到——现改为每次拉最新 `limit:100` 窗口（merged 按 id 去重）。下拉刷新、发帖后立即可见。各 tab 的过滤/搜索框（搜帖子/搜回帖/过滤已关注/过滤关注者/搜收藏）共用一个 `_SearchBar`，带 **X 一键清空**——清空文本同时回调 `onChanged('')` 复位父级 `_query`，列表回到全量（`controller.clear()` 本身不触发 `TextField.onChanged`，须手动回调）。
 - **帖子交互（X 风格）**：💬回复 / 🔁转发（菜单二选一：NIP-18 kind-6 / 引用）/ ❤️reaction（NIP-25+NIP-30，二次点击撤回签 kind-5）/ 🔖收藏（NIP-51 kind-10003，公开 + NIP-44 私密）/ ↗分享（njump.me）。帖子菜单 `⋮`：复制帖子 id（`nostr:nevent1`）/ 复制全文 / ⚡打闪 / 删除（自己的帖，NIP-09 kind-5）。
 - **NIP-09 删除应用层隐藏**：收到 kind-5 删除事件时按作者校验（只能删自己的）应用：`a` 标签坐标（`K:pubkey:d`）删本地 replaceable 行 + 自己的 kind-30000 触发版本刷新、kind-10002 清 relay-list 缓存；`e` 标签按 id 从内存库 + SQLite 移除（信息流即时消失）。best-effort——并非所有中继支持删除，已传播的帖可能仍被其他客户端保留。
 - **打闪 Zap（NIP-57）**：自定义聪 + 预设 chip + 留言 → 解析 lud16/lud06 → LNURL-pay → 签 kind-9734 → BOLT11 发票二维码 + 复制 + `lightning:` deeplink。`lib/services/zap.dart` 纯函数可单测。
