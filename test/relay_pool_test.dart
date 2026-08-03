@@ -300,14 +300,24 @@ void main() {
   group('fetchFromUrls (NIP-65 outbox routing)', () {
     test('empty urls → no fetch, empty result', () async {
       final pool = RelayPool([]);
-      expect(await pool.fetchFromUrls({'kinds': [1]}, const []), isEmpty);
+      expect(
+        await pool.fetchFromUrls({
+          'kinds': [1],
+        }, const []),
+        isEmpty,
+      );
       await pool.dispose();
     });
 
     test('non-ws urls are skipped', () async {
       final pool = RelayPool([]);
       expect(
-        await pool.fetchFromUrls({'kinds': [1]}, const ['http://x', 'ftp://y']),
+        await pool.fetchFromUrls(
+          {
+            'kinds': [1],
+          },
+          const ['http://x', 'ftp://y'],
+        ),
         isEmpty,
       );
       await pool.dispose();
@@ -316,9 +326,12 @@ void main() {
     test('collects events + dedups by id + closes on EOSE', () async {
       final fake = _FakeRelay('wss://a');
       final pool = RelayPool([])..makeClient = (url) => fake;
-      final fut = pool.fetchFromUrls({
-        'kinds': [1],
-      }, const ['wss://a']);
+      final fut = pool.fetchFromUrls(
+        {
+          'kinds': [1],
+        },
+        const ['wss://a'],
+      );
       // Let connect() + request() run (async).
       await Future<void>.delayed(Duration.zero);
       final req = fake.sent.where((m) => m[0] == 'REQ').single;
@@ -333,23 +346,27 @@ void main() {
       await pool.dispose();
     });
 
-    test('no EOSE → timeout returns whatever was collected, still disposes',
-        () async {
-          final fake = _FakeRelay('wss://a');
-          final pool = RelayPool([])..makeClient = (url) => fake;
-          final fut = pool.fetchFromUrls(
-            {'kinds': [1]},
-            const ['wss://a'],
-            timeout: const Duration(milliseconds: 50),
-          );
-          await Future<void>.delayed(Duration.zero);
-          // Emit an event but never EOSE.
-          fake.emit(_event('e1'));
-          final result = await fut;
-          expect(result.map((e) => e.id), ['e1']);
-          expect(fake.sent.last[0], 'CLOSE'); // disposed regardless
-          await pool.dispose();
-        });
+    test(
+      'no EOSE → timeout returns whatever was collected, still disposes',
+      () async {
+        final fake = _FakeRelay('wss://a');
+        final pool = RelayPool([])..makeClient = (url) => fake;
+        final fut = pool.fetchFromUrls(
+          {
+            'kinds': [1],
+          },
+          const ['wss://a'],
+          timeout: const Duration(milliseconds: 50),
+        );
+        await Future<void>.delayed(Duration.zero);
+        // Emit an event but never EOSE.
+        fake.emit(_event('e1'));
+        final result = await fut;
+        expect(result.map((e) => e.id), ['e1']);
+        expect(fake.sent.last[0], 'CLOSE'); // disposed regardless
+        await pool.dispose();
+      },
+    );
   });
 
   group('publishAndWait (per-relay retry spec)', () {
@@ -371,25 +388,28 @@ void main() {
       await pool.dispose();
     });
 
-    test('all relays timeout → foreground retries then fails (4 sends)', () async {
-      final a = _FakeRelay('wss://a');
-      final pool = RelayPool([a]);
-      await pool.connect();
-      final ev = _event('e1');
-      final ok = await pool.publishAndWait(
-        ev,
-        retryDelays: const [
-          Duration(milliseconds: 20),
-          Duration(milliseconds: 20),
-          Duration(milliseconds: 20),
-        ],
-        perRoundTimeout: const Duration(milliseconds: 30),
-      );
-      expect(ok.ok, isFalse);
-      // initial round + 3 retries = 4 EVENT sends.
-      expect(a.sent.where((m) => m[0] == 'EVENT').length, 4);
-      await pool.dispose();
-    });
+    test(
+      'all relays timeout → foreground retries then fails (4 sends)',
+      () async {
+        final a = _FakeRelay('wss://a');
+        final pool = RelayPool([a]);
+        await pool.connect();
+        final ev = _event('e1');
+        final ok = await pool.publishAndWait(
+          ev,
+          retryDelays: const [
+            Duration(milliseconds: 20),
+            Duration(milliseconds: 20),
+            Duration(milliseconds: 20),
+          ],
+          perRoundTimeout: const Duration(milliseconds: 30),
+        );
+        expect(ok.ok, isFalse);
+        // initial round + 3 retries = 4 EVENT sends.
+        expect(a.sent.where((m) => m[0] == 'EVENT').length, 4);
+        await pool.dispose();
+      },
+    );
 
     test('auth-required rejection → foreground retry succeeds', () async {
       final a = _FakeRelay('wss://a');
@@ -415,7 +435,10 @@ void main() {
       a.emitOk(RelayOk(ev.id, true, '', url: 'wss://a'));
       final ok = await fut;
       expect(ok.ok, isTrue);
-      expect(a.sent.where((m) => m[0] == 'EVENT').length, 2); // initial + 1 retry
+      expect(
+        a.sent.where((m) => m[0] == 'EVENT').length,
+        2,
+      ); // initial + 1 retry
       await pool.dispose();
     });
 
@@ -441,6 +464,36 @@ void main() {
       expect(a.sent.where((m) => m[0] == 'EVENT').length, 1); // no retry
       await pool.dispose();
     });
+
+    test(
+      'success returns on the FIRST relay ack, not after the slowest',
+      () async {
+        // Regression for the "发帖/回帖要等 1～3s" latency: _collectOks used to
+        // wait for EVERY relay's verdict (or the full per-round cap), so one
+        // slow/silent relay made the whole send wait even after a fast relay
+        // acked within ~RTT. Now the success path returns on the first ok:true.
+        final fast = _FakeRelay('wss://fast');
+        final slow = _FakeRelay('wss://slow'); // never acks
+        final pool = RelayPool([fast, slow]);
+        await pool.connect();
+        final ev = _event('latency1');
+        final sw = Stopwatch()..start();
+        final fut = pool.publishAndWait(
+          ev,
+          retryDelays: const [Duration(milliseconds: 20)],
+          perRoundTimeout: const Duration(milliseconds: 250),
+        );
+        await Future<void>.delayed(Duration.zero);
+        fast.emitOk(RelayOk(ev.id, true, '', url: 'wss://fast'));
+        final ok = await fut;
+        sw.stop();
+        expect(ok.ok, isTrue);
+        // Pre-fix this blocked until the 250ms round cap waiting for the silent
+        // relay; with the fix it returns right after the fast relay's ack.
+        expect(sw.elapsed, lessThan(const Duration(milliseconds: 120)));
+        await pool.dispose();
+      },
+    );
 
     test('failed publish does NOT echo (no phantom); success echoes', () async {
       // Echo must happen ONLY on success. A failed publish used to echo

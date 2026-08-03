@@ -323,7 +323,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 - **NIP-09 删除应用层隐藏**：收到 kind-5 删除事件时按作者校验（只能删自己的）应用：`a` 标签坐标（`K:pubkey:d`）删本地 replaceable 行 + 自己的 kind-30000 触发版本刷新、kind-10002 清 relay-list 缓存；`e` 标签按 id 从内存库 + SQLite 移除（信息流即时消失）。best-effort——并非所有中继支持删除，已传播的帖可能仍被其他客户端保留。
 - **打闪 Zap（NIP-57）**：自定义聪 + 预设 chip + 留言 → 解析 lud16/lud06 → LNURL-pay → 签 kind-9734 → BOLT11 发票二维码 + 复制 + `lightning:` deeplink。`lib/services/zap.dart` 纯函数可单测。
 - **NIP-27 事件引用**：发帖框粘 `nostr:nevent1`/`note1` 自动补 `e` mention tag；渲染端嵌引用卡。
-- **发帖（Compose）**：FAB，字数计数，`Identity.signEvent` 签名 + 发布。EVENT 用对象形式（2026 NIP-01）。NIP-42 AUTH 自动签 kind-22242。发布可靠性：`publishAndWait` per-relay 1s/2s/3s 重试，任一 OK 即成功、其余后台重试；全失败存草稿跨会话补发（`retryDrafts` + `onPublishExhausted`）。
+- **发帖（Compose）**：FAB，字数计数，`Identity.signEvent` 签名 + 发布。EVENT 用对象形式（2026 NIP-01）。NIP-42 AUTH 自动签 kind-22242。发布可靠性：`publishAndWait` per-relay 1s/2s/3s 重试，**任一 OK 即成功**、其余后台重试；全失败存草稿跨会话补发（`retryDrafts` + `onPublishExhausted`）。**发送快返**：`_collectOks` 首个中继 `ok:true` 即返回（此前等齐所有中继裁决/整轮超时，一台慢中继把每次发送拖到 1~5s——用户实测中继 RTT 仅 100ms~1s，发送却要等 1~3s 的根因），慢/无响应的中继转后台重试，发送耗时≈最快中继 RTT。
 - **媒体上传（Blossom BUD-02/BUD-11）**：图片≤10MB 最多 9 张 / 视频≤100MB 单条 / 文件≤100MB 最多 4 个。签 kind-24242 auth → `PUT /upload` → url + NIP-92 imeta。默认服务器逐台尝试失败自动换。
 - **媒体/文件下载**：`lib/services/media_download.dart` 统一入口。移动端图片/视频走 `gal` 存相册；桌面/普通文件走 `file_picker` save-as。接入点：图片全屏查看器、全屏视频页、文件 chip。
 - **关注信息流 outbox 路由（★）**：`OutboxRouter` 按 followee kind-10002 分组开持久连接（30 上限、authors 200 分片、live、重连重发、NIP-42 AUTH），`since` 增量刷新 limit 提到 500（根治漏帖），加载更多走 `fetchOnce(until:)` + 默认桶广播。全球路径不动。

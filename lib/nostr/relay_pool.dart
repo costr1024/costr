@@ -413,6 +413,13 @@ class RelayPool {
   /// Collect per-relay OK verdicts for [event] from [relays] within [perRound].
   /// Sends EVENT to each relay, then waits for OKs (or [perRound]). Relays
   /// with no verdict within the window are timeouts (transient).
+  ///
+  /// Completes EARLY the moment ANY relay returns `ok: true` — the publish is
+  /// a success once one relay has the event; the rest are handled by
+  /// background retries. Previously this waited for ALL relays to verdict (or
+  /// the full [perRound] cap), so a single slow/hung relay made every send
+  /// take 1–5s even when a fast relay acked in ~100ms (the reported
+  /// "发帖要等 1～3s" latency).
   Future<Map<String, RelayOk>> _collectOks(
     Event event,
     List<RelayConnection> relays,
@@ -428,7 +435,10 @@ class RelayPool {
       if (!pending.contains(ok.url!)) return;
       verdicts[ok.url!] = ok;
       pending.remove(ok.url!);
-      if (pending.isEmpty && !completer.isCompleted) completer.complete();
+      if (completer.isCompleted) return;
+      // First acceptance → done waiting (success path); otherwise wait until
+      // every relay has verdicted.
+      if (ok.ok || pending.isEmpty) completer.complete();
     });
     for (final c in relays) {
       c.publish(event);
