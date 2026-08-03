@@ -32,10 +32,35 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   _SearchTab _tab = _SearchTab.all;
 
   @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onTextChanged);
+  }
+
+  @override
   void dispose() {
+    _controller.removeListener(_onTextChanged);
     _controller.dispose();
     super.dispose();
   }
+
+  /// Live text changes: (1) refresh the X clear-button visibility; (2) when
+  /// the keyword is deleted to EMPTY, stop the in-flight search and clear the
+  /// results — invalidating the old query's providers disposes their relay
+  /// REQs/timers, so nothing keeps searching in the background (user
+  /// request: 清空关键词即停止搜索并清空结果).
+  void _onTextChanged() {
+    if (!mounted) return;
+    if (_controller.text.trim().isEmpty && _query.isNotEmpty) {
+      final last = _query;
+      _query = '';
+      ref.invalidate(searchPostsProvider(last));
+      ref.invalidate(searchUsersProvider(last));
+    }
+    setState(() {});
+  }
+
+  void _clearSearch() => _controller.clear(); // → _onTextChanged
 
   void _submit() => setState(() => _query = _controller.text.trim());
 
@@ -49,6 +74,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           // Filled, rounded, leading-icon search field — clearly visible as
           // an input (the prior borderless AppBar TextField read as an empty
           // bar, so the user couldn't tell where to type the keywords).
+          // Trailing X (Amethyst-style) one-tap clears the keyword — which
+          // also stops the search + clears results via [_onTextChanged].
           child: TextField(
             controller: _controller,
             autofocus: true,
@@ -58,6 +85,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               hintText: '搜索帖子或用户…',
               hintStyle: const TextStyle(fontSize: 15, color: CostrColors.text3),
               prefixIcon: const Icon(Icons.search, size: 20, color: CostrColors.text3),
+              suffixIcon: _controller.text.isEmpty
+                  ? null
+                  : GestureDetector(
+                      onTap: _clearSearch,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 10),
+                        child: Icon(
+                          Icons.close,
+                          size: 18,
+                          color: CostrColors.text3,
+                        ),
+                      ),
+                    ),
               filled: true,
               fillColor: CostrColors.bg2,
               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),

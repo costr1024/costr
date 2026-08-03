@@ -170,6 +170,12 @@ lib/
   **最新**修订的 `name` tag（回落 `d`）。Amethyst 把 UUID 放 `d`、人名放 `name`，旧修订无 `name`；
   按显示名分组会把同一列表拆成「中文」「UUID」两条并闪烁——按 `d` 分组塌成一条。
 - **全局搜索**（`/search`）：可见的填充式圆角搜索框 + 全部/帖子/用户 SegmentedButton 筛选（默认全部）。
+  搜索框带 **X 一键清空**（Amethyst 式）；把关键词删空同样触发——清空即 `invalidate` 该词的
+  帖子/用户搜索 provider（dispose 其 relay REQ/定时器，后台不再继续搜）并清空结果。**零结果不再
+  永久转圈**：`searchUsersProvider` 无初始 yield（帖子侧有 SQLite-FTS 首包），原收尾 flush 又被
+  `if (dirty)` 门控，零命中时 `StreamController` 未 emit 即关闭 → Riverpod 永远停在
+  `AsyncLoading`，切走再回搜索 tab 仍转圈；现在对齐 `repliesProvider`，收尾**恒吐一次快照（即便
+  空列表）**再关流，provider 落到 data（「无用户结果」）。
 - **收藏**（`bookmarkEvent`）：SQLite 缓存优先取当前 kind-10003 再签名发布，**不再每次等 10s 中继 ACK**
   （冷启动才回落中继 + 防清空守卫）；收藏 tab 分公开/私人两段展示。
 - **首页分页**：滚动到底触发 `_loadMore`（global 广播 `until` / following 走 outbox `until`），底部加

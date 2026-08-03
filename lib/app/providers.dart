@@ -2943,19 +2943,24 @@ final searchUsersProvider = StreamProvider.family<List<UserResult>, String>((
     if (!done.isCompleted) done.complete();
   });
   // Same fix as searchPostsProvider: pipe `ctrl` out via `yield*` so the
-  // StreamProvider emits relay results (and the final flush) instead of
-  // staying in loading forever — without this, user search spun indefinitely.
+  // StreamProvider emits relay results instead of staying in loading forever.
+  // AND always emit a final snapshot — EVEN AN EMPTY ONE — before closing:
+  // when zero users match, nothing was ever added to `ctrl` (the flush only
+  // fires on results), so the stream closed without emitting and Riverpod
+  // left the provider stuck in AsyncLoading — the perpetual "用户列表" spinner
+  // that even survived leaving and re-entering the search tab. Emitting an
+  // empty list resolves it to data (「无用户结果」), same fix as repliesProvider.
   done.future.whenComplete(() {
     t.cancel();
     flush?.cancel();
     evSub.cancel();
     eoseSub.cancel();
     pool.closeSubscription(subId);
-    if (dirty && !ctrl.isClosed) {
+    if (!ctrl.isClosed) {
       dirty = false;
       ctrl.add(merged.values.toList());
+      ctrl.close();
     }
-    if (!ctrl.isClosed) ctrl.close();
   });
   ref.onDispose(() {
     t.cancel();
