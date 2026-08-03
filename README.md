@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.5.0-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.5-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.5.5-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.5.5-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -24,7 +24,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta）。
 
 ---
 
@@ -267,7 +267,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 291 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 294 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -276,9 +276,14 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ## 当前状态
 
-**v0.5.0-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
+**v0.5.5-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v0.5.5-beta 相对 v0.5-beta 的修复**（详见 [v0.5.5-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.5.5-beta)）：
+回复他人帖子发送成功后立即可见（不再需要退出重进主贴——发送即落库 + 刷新父帖回帖列表）；
+代理媒体拼链修正（去掉原 URL 的 `https://` 前缀——代理要求 `/<域名>/<路径>` 格式，
+带 scheme 返回 400 Invalid origin domain，表现为点「代理媒体」后反而图裂、退出重进又好）。
 
 **v0.5-beta 相对 v0.3 的主要修复/新增**（详见 [v0.5-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.5-beta)）：
 沉浸式浏览（向下滚动隐藏顶/底栏，向上恢复，本地开关默认关）；
@@ -287,10 +292,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 个人页下拉刷新重拉资料；帖子详情回帖列表不再底部永久转圈；
 全球流开语言过滤不再卡顿（语言检测按事件缓存，不再每 200ms 全库正则扫描）；
 点赞/回复通知更容易打开原帖（缓存清理豁免自己的帖子 + 池内找不到兜底查自己的 NIP-65 写中继 +
-全部中继 EOSE 快速返回 + 「未找到」可重试）；
-回复他人帖子发送成功后立即可见（不再需要退出重进主贴）；
-代理媒体拼链修正（去掉原 URL 的 `https://` 前缀，修复点「代理媒体」后反而图裂——代理要求
-`/<域名>/<路径>` 格式，带 scheme 返回 400 Invalid origin domain）。
+全部中继 EOSE 快速返回 + 「未找到」可重试）。
 
 <details>
 <summary><b>已实现功能详情（点击展开）</b></summary>
@@ -327,7 +329,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 291 个测试
+flutter test             # 294 个测试
 flutter build linux      # 桌面构建
 ```
 
