@@ -10,7 +10,10 @@
 //
 // Test 1 pins the staleness (late rawEvents arrivals can never fix it alone);
 // test 2 proves the fix mechanism: awaited cacheThreadEvent + invalidate →
-// the list reloads from SQLite and contains the reply.
+// the list reloads from SQLite and contains the reply. Test 3 covers the
+// nested case: replying to a REPLY must refresh the ROOT thread's list too
+// (the page under compose watches repliesProvider(rootId), so invalidating
+// only the direct parent leaves 2nd-level replies invisible).
 
 import 'dart:async';
 
@@ -320,5 +323,80 @@ void main() {
     );
     final list = container.read(repliesProvider('parent2')).value!;
     expect(list.map((e) => e.id), contains('reply2'));
+  });
+
+  test(
+      'nested reply: replying to a REPLY invalidates the ROOT thread list '
+      'too, so the 2nd-level reply shows in the open root thread', () async {
+    await setUpPools();
+    // Root post A + first-level reply B (already visible in A's thread).
+    final root = _note(id: 'root3', pubkey: 'c' * 64);
+    final replyB = _note(
+      id: 'replyB3',
+      pubkey: 'd' * 64,
+      tags: [
+        ['e', 'root3', '', 'root'],
+        ['e', 'root3', '', 'reply'],
+      ],
+    );
+    db.seedEvent(root);
+    // Persist B the way the real thread view does (cacheThreadEvent keeps the
+    // tagsJson intact — seedEvent blanks it, which would strip B's e tags on
+    // reconstruction and make isReplyToEvent reject it).
+    await container
+        .read(eventStoreProvider.notifier)
+        .cacheThreadEvent(replyB);
+
+    // The open thread page under compose watches the ROOT's replies list.
+    final sub = container.listen(repliesProvider('root3'), (_, _) {});
+    addTearDown(sub.close);
+    await awaitRepliesReqClosed('root3');
+    expect(
+      container.read(repliesProvider('root3')).value!.map((e) => e.id),
+      contains('replyB3'),
+    );
+
+    // Nested reply C to B: NIP-10 tags carry the root (A) AND the parent (B).
+    final replyC = _note(
+      id: 'replyC3',
+      pubkey: 'm' * 64,
+      tags: [
+        ['e', 'root3', '', 'root'],
+        ['e', 'replyB3', '', 'reply'],
+      ],
+    );
+    await container.read(eventStoreProvider.notifier).cacheThreadEvent(replyC);
+
+    // OLD behavior: invalidate ONLY the direct parent's list. The open page
+    // watches repliesProvider('root3'), not 'replyB3' — so the root thread
+    // stays stale and C is invisible (the reported bug). Pin that.
+    container.invalidate(repliesProvider('replyB3'));
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    expect(
+      container.read(repliesProvider('root3')).value!.map((e) => e.id),
+      isNot(contains('replyC3')),
+    );
+
+    // FIX: also invalidate the thread root's list (compose_page._send now
+    // invalidates {replyTo.id, replyTo.rootEventId}).
+    container.invalidate(repliesProvider('root3'));
+    await pollUntil(
+      () =>
+          container
+              .read(repliesProvider('root3'))
+              .value
+              ?.any((e) => e.id == 'replyC3') ??
+          false,
+    );
+    final list = container.read(repliesProvider('root3')).value!;
+    expect(list.map((e) => e.id), containsAll(['replyB3', 'replyC3']));
+
+    // And the threaded view nests C directly under B (depth 1, DFS order).
+    final threaded = threadReplies(list, 'root3');
+    final iB = threaded.indexWhere((t) => t.event.id == 'replyB3');
+    final iC = threaded.indexWhere((t) => t.event.id == 'replyC3');
+    expect(iB, isNonNegative);
+    expect(iC, iB + 1);
+    expect(threaded[iC].depth, 1);
   });
 }

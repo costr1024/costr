@@ -136,7 +136,10 @@ lib/
   **发送回复后立即可见**：回帖流是一次性加载（EOSE 即关），用户打完字时流早已关闭、且发布本地
   回显走 `events` 流而非回帖流监听的 `rawEvents`，旧实现回复后必须退出重进主贴才能看到；现在
   发送成功后先 awaited 落库（`cacheThreadEvent`）再 `invalidate` 父帖 `repliesProvider`，
-  回到线程页即从 SQLite→中继重查显示（Amethyst 式发送即入库）。
+  回到线程页即从 SQLite→中继重查显示（Amethyst 式发送即入库）。**二级及以上回复同样可见**：
+  回复一条回帖时，invalidate 的是 `{直接父帖, 线程 root}` 两个回帖列表——用户停留的线程页
+  watch 的是 root 的 `repliesProvider`，只刷直接父帖会让嵌套回复不可见（新回复自带 root
+  `e`-tag，本就属于 root 回帖列表）。
   **转发嵌套**（`repostedEventProvider`）：优先解析 kind-6 自带的 NIP-18 内嵌 JSON（即时、
   无网络），miss 时再用 `e`-tag relay hint 定向 `fetchFromUrls`，避免转发帖点进去看不到内容。
 - **通知聚合**（`notificationsProvider`）：`#p` 提及 + `#e` 互动按 `type:target` 聚合成 X 式

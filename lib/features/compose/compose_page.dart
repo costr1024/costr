@@ -629,7 +629,20 @@ class _ComposePageState extends ConsumerState<ComposePage>
               .read(eventStoreProvider.notifier)
               .cacheThreadEvent(signed);
           if (!mounted) return;
-          ref.invalidate(repliesProvider(widget.replyTo!.id));
+          // Invalidate the replies list of EVERY post this reply references:
+          // the direct parent AND the thread root (NIP-10 reply tags carry
+          // both `e` ids — same post for a first-level reply). The page
+          // under compose is usually the ROOT's thread view, which watches
+          // repliesProvider(rootId); invalidating only the direct parent
+          // left nested replies (replying to a reply) invisible until the
+          // user left and re-entered the thread.
+          final replyTargets = <String>{
+            widget.replyTo!.id,
+            widget.replyTo!.rootEventId,
+          };
+          for (final target in replyTargets) {
+            ref.invalidate(repliesProvider(target));
+          }
         }
         // Sent successfully → clear the editor text draft so it isn't
         // restored next time the user opens compose.
