@@ -4,7 +4,9 @@
 /// Attachments: up to 9 images OR 1 video (not mixed), plus optional files
 /// (pdf/zip/etc per Blossom server's supported types). Limits: image 10MB,
 /// video 100MB, file 100MB. Uploaded to Blossom servers with fallback retry;
-/// each becomes a NIP-92 imeta tag in the signed event.
+/// each becomes a NIP-92 imeta tag in the signed event. Keyboard-inserted
+/// GIFs/stickers (Gboard's picker → Android Commit Content API) upload
+/// through the same Blossom path as picked images.
 library;
 
 import 'dart:async';
@@ -436,6 +438,62 @@ class _ComposePageState extends ConsumerState<ComposePage>
     return null;
   }
 
+  /// Keyboard-inserted rich content (Amethyst-style): Gboard / Samsung
+  /// keyboard's GIF & sticker picker commits the image straight into the
+  /// focused editor via Android's Commit Content API — Flutter surfaces it
+  /// through [ContentInsertionConfiguration] (wired on the editor below).
+  /// Upload the bytes to Blossom and attach like a picked image, so a sticker
+  /// becomes a normal media attachment (NIP-92 imeta + URL in the content).
+  /// Android-only at the platform level; on iOS the callback simply never
+  /// fires (no equivalent keyboard API).
+  Future<void> _onKeyboardContentInserted(
+    KeyboardInsertedContent content,
+  ) async {
+    final identity = ref.read(identityProvider).value;
+    if (identity == null) return;
+    final mime = content.mimeType;
+    if (!mime.startsWith('image/')) return; // GIF / sticker images only
+    if (_hasVideo) {
+      _snack('已添加视频，不能与图片混合');
+      return;
+    }
+    final current = _attachments.where((a) => a.kind == 'image').length;
+    if (current >= _maxImages) {
+      _snack('最多 $_maxImages 张图片');
+      return;
+    }
+    if (!content.hasData) return;
+    final bytes = content.data!;
+    if (bytes.length > _maxImageBytes) {
+      _snack('图片超过 10MB');
+      return;
+    }
+    setState(() => _uploading = true);
+    final res = await blossomUpload(
+      identity,
+      bytes,
+      mimetype: mime,
+      note: 'costr keyboard image',
+    );
+    if (!mounted) return;
+    setState(() => _uploading = false);
+    if (res == null) {
+      _snack('表情图片上传失败');
+      return;
+    }
+    final att = _Attachment(
+      url: res.url,
+      sha256: res.sha256,
+      mime: mime,
+      name: mime == 'image/gif' ? 'sticker.gif' : 'sticker',
+      kind: 'image',
+    );
+    setState(() {
+      _attachments.add(att);
+      _appendToEditor(att);
+    });
+  }
+
   List<List<String>> _imetaTags() => [
     for (final a in _attachments)
       ['imeta', 'url ${a.url}', 'm ${a.mime}', 'x ${a.sha256}'],
@@ -625,9 +683,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
           // too, but asynchronously, and racing it left the reload empty),
           // then invalidate so the thread page under the compose page
           // re-runs its SQLite→relay load and shows the reply instantly.
-          await ref
-              .read(eventStoreProvider.notifier)
-              .cacheThreadEvent(signed);
+          await ref.read(eventStoreProvider.notifier).cacheThreadEvent(signed);
           if (!mounted) return;
           // Invalidate the replies list of EVERY post this reply references:
           // the direct parent AND the thread root (NIP-10 reply tags carry
@@ -725,6 +781,20 @@ class _ComposePageState extends ConsumerState<ComposePage>
                 decoration: InputDecoration(
                   hintText: _hint,
                   border: InputBorder.none,
+                ),
+                // Keyboard GIF/sticker insertion (Amethyst-style): advertising
+                // the accepted MIME types is what makes Gboard / Samsung
+                // keyboard offer "insert into app" from their GIF & sticker
+                // pickers; the committed image lands in
+                // [_onKeyboardContentInserted] → Blossom upload.
+                contentInsertionConfiguration: ContentInsertionConfiguration(
+                  allowedMimeTypes: const <String>[
+                    'image/gif',
+                    'image/webp',
+                    'image/png',
+                    'image/jpeg',
+                  ],
+                  onContentInserted: _onKeyboardContentInserted,
                 ),
                 onChanged: (_) => setState(() {}),
               ),
