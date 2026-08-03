@@ -16,15 +16,22 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
-/// Public mirror proxy prefix. Append the FULL original URL (including its
-/// own scheme) to route through an unblocked domain:
+/// Public mirror proxy prefix. The mirror expects the origin WITHOUT its
+/// scheme — `https://proxy.bostr.online/<origin-domain>/<path>` (per its own
+/// usage banner). Prepending the scheme'd URL (`/https://host/...`) makes the
+/// proxy parse `https:` as the origin domain → `400 Invalid origin domain` →
+/// broken image even though the origin loads fine direct:
 /// `proxiedUrl('https://cdn.example.com/x.png')`
-/// → `https://proxy.bostr.online/https://cdn.example.com/x.png`.
+/// → `https://proxy.bostr.online/cdn.example.com/x.png`.
+/// An `http://` origin is stripped the same way and fetched as https upstream
+/// — nearly all media hosts serve https; an http-only host is the rare miss.
 String proxiedUrl(String original) {
   if (original.isEmpty) return original;
   if (original.startsWith('https://proxy.bostr.online/')) return original;
-  return 'https://proxy.bostr.online/$original';
+  return 'https://proxy.bostr.online/${original.replaceFirst(_kScheme, '')}';
 }
+
+final RegExp _kScheme = RegExp(r'^https?://');
 
 /// Hard cap on a media fetch (connect + send + receive-headers). The default
 /// [HttpFileService] / [CachedNetworkImage] has NO timeout, so a host blocked
