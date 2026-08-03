@@ -151,6 +151,11 @@ lib/
   聚合会出现同一用户多条「关注你」），点关注通知跳转该 follower 主页；**repost**（kind-6）
   解析 NIP-18 内嵌 JSON 取**被转帖子的正文**做预览；**reaction**（kind-7）解析 NIP-30
   `:shortcode:` + `emoji` tag 渲染自定义表情图片，不再裸露 `:xxx:` 文本。
+  **点通知跳对帖**：`notificationReferencedId` 按 NIP-10 marker 优先级（reply＞无 marker＞root）
+  在「我的帖」里取被互动的帖——回复/点赞同时带 root+reply 两个 e-tag 且都是我的帖时，旧的首个
+  命中扫描会取到 root（tag 里排前面），导致点通知跳到 root 主贴；现取 reply marker 的帖。跳转目标
+  按类型分：**回复/提及**打开进来的那条回帖本身（`sourceEventId`，用户要看的是新回帖不是自己的帖），
+  **点赞/转发**打开被点赞/被转发的自己的帖子（`targetEventId`，kind-7/6 事件本身不是可展示的帖）。
 - **媒体加载**（头像/帖子图片/视频）：`CostrNetworkImage` 走带超时的 `flutter_cache_manager`
   FileService——**连接+响应 8s 硬超时**（默认无超时，被墙域名要等 OS TCP 30–60s 才报失败）+ 浏览器
   UA（部分图床/代理 403 非浏览器 UA，导致代理 URL 浏览器能开、app 开不了）。**代理媒体是本地可配置项**

@@ -35,6 +35,88 @@ Event _ev({
 }
 
 void main() {
+  group('notificationReferencedId — target the interacted post, not the root',
+      () {
+    const myRoot = 'my_root';
+    const myReply = 'my_reply';
+    final mine = {myRoot, myReply};
+
+    test('root+reply e-tags both mine → the reply-marked post wins', () {
+      // Reply to my_reply inside my thread rooted at my_root: the old
+      // first-match scan returned my_root (listed first) → tapping opened the
+      // root main post. The reply marker is the post actually replied to.
+      final reply = _ev(
+        kind: 1,
+        id: 'their_reply',
+        pubkey: 'pk_other',
+        createdAt: 1,
+        content: 'hello',
+        tags: const [
+          ['e', 'my_root', '', 'root'],
+          ['e', 'my_reply', '', 'reply'],
+          ['p', 'me'],
+        ],
+      );
+      expect(notificationReferencedId(reply, mine), myReply);
+    });
+
+    test('positional e-tag (no marker) beats root', () {
+      final reaction = _ev(
+        kind: 7,
+        id: 'rx',
+        pubkey: 'pk_other',
+        createdAt: 1,
+        content: '+',
+        tags: const [
+          ['e', 'my_root', '', 'root'],
+          ['e', 'my_reply'],
+          ['p', 'me'],
+        ],
+      );
+      expect(notificationReferencedId(reaction, mine), myReply);
+    });
+
+    test('root-only reference still resolves (direct reply to my root)', () {
+      final reply = _ev(
+        kind: 1,
+        id: 'r2',
+        pubkey: 'pk_other',
+        createdAt: 1,
+        tags: const [
+          ['e', 'my_root', '', 'root'],
+        ],
+      );
+      expect(notificationReferencedId(reply, mine), myRoot);
+    });
+
+    test('e-tags of other users\' posts are ignored', () {
+      final reply = _ev(
+        kind: 1,
+        id: 'r3',
+        pubkey: 'pk_other',
+        createdAt: 1,
+        tags: const [
+          ['e', 'someone_elses_root', '', 'root'],
+          ['e', 'my_reply', '', 'reply'],
+        ],
+      );
+      expect(notificationReferencedId(reply, mine), myReply);
+    });
+
+    test('mention-marked e-tags are never interactions', () {
+      final note = _ev(
+        kind: 1,
+        id: 'r4',
+        pubkey: 'pk_other',
+        createdAt: 1,
+        tags: const [
+          ['e', 'my_root', '', 'mention'],
+        ],
+      );
+      expect(notificationReferencedId(note, mine), isNull);
+    });
+  });
+
   group('notificationItemKey — follow dedup (bug 1)', () {
     test('two kind-3 revisions from the same follower share a key', () {
       const follower = 'pk_follower_a';

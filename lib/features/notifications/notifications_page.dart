@@ -48,13 +48,16 @@ class NotificationItem {
   final int time;
   final String? preview;
 
-  /// The event the notification points at: for replies/reactions/reposts the
-  /// user's own post that was interacted with; null for pure mentions.
+  /// The user's own post the notification's event interacts with (the reply's
+  /// parent, the reacted/reposted post); null for pure mentions. Reaction/
+  /// repost taps open this; reply/mention taps open [sourceEventId] instead.
   final String? targetEventId;
 
-  /// The id of the event that *triggered* the notification (the mentioner's
-  /// own post, the reply, etc.). Used as a navigation fallback for mentions,
-  /// which have no `targetEventId` — tapping a mention opens this post.
+  /// The id of the event that *triggered* the notification (the reply, the
+  /// mentioning note, the mentioner's post). Reply/mention taps open THIS —
+  /// the incoming post is the new content the user wants to read. For
+  /// reactions/reposts it's a kind-7/6 event (not displayable), used only as
+  /// a last-resort fallback when [targetEventId] is null.
   final String? sourceEventId;
   final String? eventContent;
 
@@ -171,14 +174,10 @@ final notificationsProvider =
           }
         }
 
-        // Check #e interaction (kind 1/7/6 referencing my post)
-        String? referencedId;
-        for (final t in e.tags) {
-          if (t.length >= 2 && t[0] == 'e' && myEventIds.contains(t[1])) {
-            referencedId = t[1];
-            break;
-          }
-        }
+        // Check #e interaction (kind 1/7/6 referencing my post) — NIP-10
+        // marker precedence so root+reply tags both mine resolve to the post
+        // actually interacted with, not the thread root.
+        final referencedId = notificationReferencedId(e, myEventIds);
 
         if (!mentionsMe && referencedId == null) return;
 
@@ -272,6 +271,37 @@ NotificationType _classify(Event e, bool mentionsMe, bool interactsMyPost) {
   if (mentionsMe && !interactsMyPost) return NotificationType.mention;
   if (interactsMyPost) return NotificationType.reply;
   return NotificationType.mention;
+}
+
+/// The id of the user's own post an incoming event interacts with, or null.
+///
+/// NIP-10 marker precedence (reply > positional > root) restricted to
+/// [myEventIds]: a reply/reaction that carries BOTH a root and a reply
+/// `e`-tag — both mine (e.g. I wrote the thread root AND the post being
+/// replied to) — must resolve to the post actually interacted with, NOT the
+/// thread root. The old first-match scan grabbed the root (tags list it
+/// first), so tapping the notification opened the root main post instead of
+/// the replied/liked post ("跳到 root 主贴" bug). `mention` markers are never
+/// interactions.
+@visibleForTesting
+String? notificationReferencedId(Event e, Set<String> myEventIds) {
+  String? replyRef;
+  String? positionalRef;
+  String? rootRef;
+  for (final t in e.tags) {
+    if (t.length < 2 || t[0] != 'e' || t[1] is! String) continue;
+    final id = t[1] as String;
+    if (!myEventIds.contains(id)) continue;
+    final marker = (t.length >= 4 && t[3] is String) ? (t[3] as String) : '';
+    if (marker == 'reply') {
+      replyRef ??= id;
+    } else if (marker.isEmpty) {
+      positionalRef ??= id;
+    } else if (marker == 'root') {
+      rootRef ??= id;
+    }
+  }
+  return replyRef ?? positionalRef ?? rootRef;
 }
 
 /// Aggregation key for an incoming event — two events that should collapse
@@ -646,11 +676,26 @@ class _NotificationTile extends ConsumerWidget {
           }
           return;
         }
-        // Replies/reactions/reposts point at the user's own post
-        // (targetEventId); pure mentions have no target, so fall back to the
-        // mentioner's own post (sourceEventId) — tapping a mention opens the
-        // post that mentioned you.
-        final target = item.targetEventId ?? item.sourceEventId;
+        // Navigation target depends on the type:
+        // - reply / mention / quote: open the INCOMING post itself (the reply,
+        //   the mentioning note) — that's the new content the user wants to
+        //   read ("跳转到我点击的那条回帖"). targetEventId is the user's OWN
+        //   post, which is wrong here.
+        // - reaction / repost: open the user's OWN post that was interacted
+        //   with ("被点赞/转发的帖子"). sourceEventId is a kind-7/6 event, not
+        //   a displayable post, so prefer targetEventId.
+        String? target;
+        switch (item.type) {
+          case NotificationType.reply:
+          case NotificationType.mention:
+          case NotificationType.quote:
+            target = item.sourceEventId ?? item.targetEventId;
+          case NotificationType.reaction:
+          case NotificationType.repost:
+            target = item.targetEventId ?? item.sourceEventId;
+          case NotificationType.follow:
+            target = null; // handled above
+        }
         if (target != null) {
           pushPostDetail(context, target);
         }
