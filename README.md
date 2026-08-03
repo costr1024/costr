@@ -133,6 +133,10 @@ lib/
   之外**并发**拉取**被回帖作者 outbox read 中继**的 `#e` 回帖，回帖按 **时间线 + 层级**
   （`threadReplies`：父子树深度优先、同层最旧在前、按深度缩进）展示而非扁平 createdAt 倒序。
   回帖流收尾恒吐一次快照（即便空），避免零回复时 `StreamProvider` 卡在 `AsyncLoading` 转圈圈。
+  **发送回复后立即可见**：回帖流是一次性加载（EOSE 即关），用户打完字时流早已关闭、且发布本地
+  回显走 `events` 流而非回帖流监听的 `rawEvents`，旧实现回复后必须退出重进主贴才能看到；现在
+  发送成功后先 awaited 落库（`cacheThreadEvent`）再 `invalidate` 父帖 `repliesProvider`，
+  回到线程页即从 SQLite→中继重查显示（Amethyst 式发送即入库）。
   **转发嵌套**（`repostedEventProvider`）：优先解析 kind-6 自带的 NIP-18 内嵌 JSON（即时、
   无网络），miss 时再用 `e`-tag relay hint 定向 `fetchFromUrls`，避免转发帖点进去看不到内容。
 - **通知聚合**（`notificationsProvider`）：`#p` 提及 + `#e` 互动按 `type:target` 聚合成 X 式
@@ -281,7 +285,8 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 个人页下拉刷新重拉资料；帖子详情回帖列表不再底部永久转圈；
 全球流开语言过滤不再卡顿（语言检测按事件缓存，不再每 200ms 全库正则扫描）；
 点赞/回复通知更容易打开原帖（缓存清理豁免自己的帖子 + 池内找不到兜底查自己的 NIP-65 写中继 +
-全部中继 EOSE 快速返回 + 「未找到」可重试）。
+全部中继 EOSE 快速返回 + 「未找到」可重试）；
+回复他人帖子发送成功后立即可见（不再需要退出重进主贴）。
 
 <details>
 <summary><b>已实现功能详情（点击展开）</b></summary>

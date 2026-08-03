@@ -612,6 +612,25 @@ class _ComposePageState extends ConsumerState<ComposePage>
       // userPostsProvider is non-autoDispose so it wouldn't re-run on its own.
       if (ok.ok) {
         ref.invalidate(userPostsProvider(identity.pubkeyHex));
+        if (widget.replyTo != null) {
+          // Same problem as the profile tabs, but for the parent post's
+          // thread view: repliesProvider is a ONE-SHOT load (relay REQ
+          // closed on EOSE + ~10s outbox cap) and its stream is already
+          // closed by the time the user finishes typing — plus the publish
+          // echo goes to pool.events, not the rawEvents stream it listens
+          // to. So WITHOUT action the reply never reaches the open thread
+          // page; the user only sees it after leaving + re-entering. Fix
+          // (Amethyst's send→local-DB pattern): persist the reply to SQLite
+          // FIRST (awaited — the EventStoreNotifier echo path persists it
+          // too, but asynchronously, and racing it left the reload empty),
+          // then invalidate so the thread page under the compose page
+          // re-runs its SQLite→relay load and shows the reply instantly.
+          await ref
+              .read(eventStoreProvider.notifier)
+              .cacheThreadEvent(signed);
+          if (!mounted) return;
+          ref.invalidate(repliesProvider(widget.replyTo!.id));
+        }
         // Sent successfully → clear the editor text draft so it isn't
         // restored next time the user opens compose.
         unawaited(_deleteDraft());
