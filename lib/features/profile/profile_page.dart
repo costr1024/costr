@@ -1900,7 +1900,12 @@ class _AddTagChip extends StatelessWidget {
   }
 }
 
-class _SearchBar extends StatelessWidget {
+/// A filter/search field with an Amethyst-style trailing X that one-tap
+/// clears the keyword AND the filtered results (it calls [onChanged] with ''
+/// so the parent resets its query — programmatic controller.clear() alone
+/// does NOT fire TextField.onChanged). Stateful so the X shows/hides the
+/// instant the text changes, independent of the parent's debounced rebuild.
+class _SearchBar extends StatefulWidget {
   const _SearchBar({
     required this.controller,
     required this.hint,
@@ -1911,14 +1916,49 @@ class _SearchBar extends StatelessWidget {
   final ValueChanged<String> onChanged;
 
   @override
+  State<_SearchBar> createState() => _SearchBarState();
+}
+
+class _SearchBarState extends State<_SearchBar> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_refresh);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_refresh);
+    super.dispose();
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {}); // re-evaluate suffixIcon visibility
+  }
+
+  void _clear() {
+    widget.controller.clear();
+    widget.onChanged(''); // tell the parent to clear its query/results too
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       child: TextField(
-        controller: controller,
+        controller: widget.controller,
         decoration: InputDecoration(
-          hintText: hint,
+          hintText: widget.hint,
           prefixIcon: const Icon(Icons.search, size: 20),
+          suffixIcon: widget.controller.text.isEmpty
+              ? null
+              : GestureDetector(
+                  onTap: _clear,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 10),
+                    child: Icon(Icons.close, size: 18),
+                  ),
+                ),
           isDense: true,
           border: const OutlineInputBorder(),
           contentPadding: const EdgeInsets.symmetric(
@@ -1926,7 +1966,7 @@ class _SearchBar extends StatelessWidget {
             vertical: 8,
           ),
         ),
-        onChanged: onChanged,
+        onChanged: widget.onChanged,
       ),
     );
   }
