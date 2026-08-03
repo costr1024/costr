@@ -1857,6 +1857,25 @@ List<String> repostRelayHints(Event repost, String repostedId) {
   return out.toList();
 }
 
+/// Distinct pubkeys from [repost]'s `p` tags, capped at [cap]. NIP-18
+/// reposts carry the reposted note's author in a `p` tag (Costr and Amethyst
+/// both emit it); some clients ALSO copy the original note's own `p` tags
+/// onto the repost, so the second candidate is a fallback — but never fan out
+/// unboundedly (each candidate costs a relay-list lookup + targeted fetch).
+@visibleForTesting
+List<String> repostAuthorCandidates(Event repost, {int cap = 2}) {
+  final out = <String>[];
+  final seen = <String>{};
+  for (final t in repost.tags) {
+    if (t.length < 2 || t[0] != 'p' || t[1] is! String) continue;
+    final pk = t[1] as String;
+    if (pk.isEmpty || !seen.add(pk)) continue;
+    out.add(pk);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
 /// The note a repost points at — the embedded content shown under "X 转发".
 ///
 /// Resolution order:
@@ -1870,9 +1889,13 @@ List<String> repostRelayHints(Event repost, String repostedId) {
 /// 3. **Relay-hint targeted fetchFromUrls** — the repost's `e`-tag t[2] points
 ///    at where the note lives (e.g. the nevent's relay hint). Recovers notes
 ///    that live only on the author's / replier's relays.
+/// 4. **Reposted-author outbox** (NIP-65) — the repost's `p` tag carries the
+///    reposted note's author; the note lives on that author's write relays, so
+///    a targeted fetch there recovers notes that aren't on the user's pool and
+///    whose repost carries no relay hint (the "经常显示转发内容不可用" case).
 ///
-/// Without (1) and (3), tapping a repost shows "转发内容不可用" whenever the
-/// reposted note isn't on the user's default pool — even though the repost
+/// Without (1) and (3)–(4), tapping a repost shows "转发内容不可用" whenever
+/// the reposted note isn't on the user's default pool — even though the repost
 /// literally embeds it. Keyed by the repost's own id (carries content+tags).
 final repostedEventProvider = FutureProvider.family<Event?, String>((
   ref,
@@ -1888,16 +1911,54 @@ final repostedEventProvider = FutureProvider.family<Event?, String>((
   if (repostedId == null) return null;
   final cached = await ref.read(eventByIdProvider(repostedId).future);
   if (cached != null) return cached;
+  final pool = ref.read(relayPoolProvider);
+  final store = ref.read(eventStoreProvider.notifier);
   // 3. Relay-hint targeted fetch.
   final hints = repostRelayHints(repost, repostedId);
-  if (hints.isEmpty) return null;
-  final pool = ref.read(relayPoolProvider);
-  final hits = await pool.fetchFromUrls(<String, dynamic>{
-    'ids': [repostedId],
-  }, hints);
-  if (hits.isNotEmpty) {
-    unawaited(ref.read(eventStoreProvider.notifier).cacheThreadEvent(hits.first));
-    return hits.first;
+  if (hints.isNotEmpty) {
+    final hits = await pool.fetchFromUrls(<String, dynamic>{
+      'ids': [repostedId],
+    }, hints);
+    for (final e in hits) {
+      if (e.id == repostedId) {
+        unawaited(store.cacheThreadEvent(e));
+        return e;
+      }
+    }
+  }
+  // 4. Reposted-author outbox (NIP-65). Each candidate costs one relay-list
+  //    lookup + one targeted fetch; both are independently capped (6s each)
+  //    so a hanging relay can't leave the embed on "加载转发内容…" forever —
+  //    worst case ~24s for 2 candidates, then the card settles on the retry-
+  //    able "不可用" state instead of spinning.
+  for (final pk in repostAuthorCandidates(repost)) {
+    RelayList? rl;
+    try {
+      rl = await ref
+          .read(userRelayListProvider(pk).future)
+          .timeout(const Duration(seconds: 6));
+    } catch (_) {
+      // Relay-list lookup hung or failed — try the next candidate.
+    }
+    final urls = <String>{
+      ...rl?.write ?? const <String>[],
+      ...rl?.read ?? const <String>[],
+    };
+    if (urls.isEmpty) continue;
+    final hits = await pool.fetchFromUrls(
+      <String, dynamic>{
+        'ids': [repostedId],
+      },
+      urls.toList(),
+      timeout: const Duration(seconds: 6),
+    );
+    for (final e in hits) {
+      if (e.id == repostedId) {
+        // Cache in SQLite so a repeat scroll-by is instant.
+        unawaited(store.cacheThreadEvent(e));
+        return e;
+      }
+    }
   }
   return null;
 });

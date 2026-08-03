@@ -141,7 +141,11 @@ lib/
   watch 的是 root 的 `repliesProvider`，只刷直接父帖会让嵌套回复不可见（新回复自带 root
   `e`-tag，本就属于 root 回帖列表）。
   **转发嵌套**（`repostedEventProvider`）：优先解析 kind-6 自带的 NIP-18 内嵌 JSON（即时、
-  无网络），miss 时再用 `e`-tag relay hint 定向 `fetchFromUrls`，避免转发帖点进去看不到内容。
+  无网络），miss 时依次兜底：缓存/默认池广播 → `e`-tag relay hint 定向 `fetchFromUrls` →
+  **被转者 NIP-65 outbox**（repost 的 `p` 标签取被转者，去其写中继按 id 定向拉——专治
+  「转发内容不可用」：被转帖不在用户已连中继、repost 又没带 relay hint 时仍能取回）。
+  取到即落 SQLite，重复刷到秒出；彻底取不到时卡片给「重试」（provider 缓存 null，不手动
+  invalidate 会永久「不可用」）。
 - **通知聚合**（`notificationsProvider`）：`#p` 提及 + `#e` 互动按 `type:target` 聚合成 X 式
   分组条目。**关注**按 **follower pubkey** 聚合（kind-3 每改一次都是新 event id，按 event id
   聚合会出现同一用户多条「关注你」），点关注通知跳转该 follower 主页；**repost**（kind-6）
@@ -301,7 +305,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 <summary><b>已实现功能详情（点击展开）</b></summary>
 
 - **身份**：粘贴 `nsec1` → BIP-340 `getPublicKey` 派生公钥 → OS 安全存储，下次自动登录。创建账号多步向导（备份钥匙→设资料→完成），强制备份提示。
-- **信息流**：**全球**（广播到默认中继，live）与**关注**（按 followee NIP-65 outbox 定向拉取，详见上方 SVG）切换。只显帖子（Amethyst 式事件类型门控：kind-7/3 不当帖显示）。repost 进信息流（kinds `[0,1,6,7]`，EventCard 渲染「↻ 转发」header + 嵌入被转帖）。
+- **信息流**：**全球**（广播到默认中继，live）与**关注**（按 followee NIP-65 outbox 定向拉取，详见上方 SVG）切换。只显帖子（Amethyst 式事件类型门控：kind-7/3 不当帖显示）。repost 进信息流（kinds `[0,1,6,7]`，EventCard 渲染「↻ 转发」header + 嵌入被转帖）。**回帖带上下文**：回复帖卡片在「回复 @用户」行下方渲染**被回复帖**（仅上一层，非完整链路）的预览框（作者名 + 正文截断纯文本、无 markdown/图），经 `eventByIdProvider` 三级查找取父帖——父帖不在当前 feed 窗口也能补全；NSFW 父帖遵守 autoReveal、转发类父帖显示占位。点按跳父帖线程。
 - **中继池**：多中继 fan-out，按 id 去重（`events` 流给全球流）；另开 `rawEvents`（不去重）给一次性定向拉取（kind-3、关注者 `#p`、NIP-50 搜索）。断线指数退避重连，重连后自动重发活跃订阅。`RelayClient.connect` 等 `channel.ready` 才标 connected（+10s 超时让被墙中继快速判离线）。
 - **事件存储**：内存单源，按 id 去重，时间倒序，上限 5000 淘汰最旧。`ingest` 经 `_scheduleFlush` 200ms 去抖批量刷新（避免突发百条 jank）。
 - **头像资料**：`metadataProvider` 是 StreamProvider——先 yield SQLite/内存缓存（即时），再异步拉 kind-0 刷新（按 `created_at` 不回退）。社交图谱资料预取（冷启动延迟 5s 对 follows+followers+self bulk REQ kind-0 落库）。

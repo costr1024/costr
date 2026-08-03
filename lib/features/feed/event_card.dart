@@ -313,7 +313,10 @@ class _RepostView extends ConsumerWidget {
 /// Fetches + renders the note a repost points at. Prefer the repost's own
 /// embedded content (NIP-18 JSON — instant, no relay fetch), then fall back
 /// to a cache + relay-hint-targeted fetch via [repostedEventProvider]. Shows a
-/// placeholder while loading or if the referenced event isn't a post.
+/// placeholder while loading; when the referenced event can't be resolved the
+/// placeholder carries a 重试 tap (the provider caches its null result, so
+/// without an explicit invalidate the card would stay "不可用" forever even
+/// after the note becomes reachable).
 class _RepostedEmbed extends ConsumerWidget {
   const _RepostedEmbed({required this.repost});
   final Event repost;
@@ -325,10 +328,30 @@ class _RepostedEmbed extends ConsumerWidget {
     final ev = async.value;
     if (ev == null) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Text(
-          async.isLoading ? '加载转发内容…' : '转发内容不可用',
-          style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.text3),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          children: [
+            Text(
+              async.isLoading ? '加载转发内容…' : '转发内容不可用',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: CostrColors.text3,
+              ),
+            ),
+            if (!async.isLoading) ...[
+              const SizedBox(width: 10),
+              GestureDetector(
+                onTap: () =>
+                    ref.invalidate(repostedEventProvider(repost.id)),
+                child: Text(
+                  '重试',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: CostrColors.brand,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
       );
     }
@@ -345,7 +368,13 @@ class _RepostedEmbed extends ConsumerWidget {
   }
 }
 
-/// "回复 @用户" context line above reply posts (X style).
+/// "回复 @用户" context line + a compact preview of the replied-to post's
+/// content above reply posts (X style) — ONE level up only (the direct
+/// parent), not the full ancestor chain. Without the preview a reply in the
+/// feed is unreadable ("回复 @某人" with no idea what was said); the parent
+/// is resolved via [eventByIdProvider]'s 3-tier lookup (SQLite → in-memory →
+/// relay REQ), so the preview fills in even when the parent isn't in the
+/// current feed window. Tapping anywhere opens the parent's thread.
 class _ReplyContext extends ConsumerWidget {
   const _ReplyContext({required this.event});
   final Event event;
@@ -355,13 +384,21 @@ class _ReplyContext extends ConsumerWidget {
     final parent = event.replyToId;
     if (parent == null) return const SizedBox.shrink();
 
-    // Find the parent event's author in the store.
-    String? parentPubkey;
-    final store = ref.read(eventStoreProvider);
-    for (final e in store) {
-      if (e.id == parent) {
-        parentPubkey = e.pubkey;
-        break;
+    // Resolve the parent event (instant when cached/in-store, bounded relay
+    // fetch otherwise). Watched so the box fills in the moment it lands.
+    final parentEvent = ref.watch(eventByIdProvider(parent)).value;
+
+    // Parent author for the header line: prefer the resolved event, fall back
+    // to an in-memory scan so "回复 @name" renders before the async lookup
+    // settles (the old behavior, kept as the fast path).
+    String? parentPubkey = parentEvent?.pubkey;
+    if (parentPubkey == null) {
+      final store = ref.read(eventStoreProvider);
+      for (final e in store) {
+        if (e.id == parent) {
+          parentPubkey = e.pubkey;
+          break;
+        }
       }
     }
     if (parentPubkey == null) {
@@ -387,20 +424,98 @@ class _ReplyContext extends ConsumerWidget {
       padding: const EdgeInsets.only(bottom: 4),
       child: InkWell(
         onTap: () => pushPostDetail(context, parent),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.reply, size: 14, color: CostrColors.text3),
-            const SizedBox(width: 4),
+            Row(
+              children: [
+                Icon(Icons.reply, size: 14, color: CostrColors.text3),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    '回复 @$name',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: CostrColors.text3,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (parentEvent != null) ...[
+              const SizedBox(height: 4),
+              _ReplyParentPreview(parent: parentEvent),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The replied-to post rendered as a light preview box: the parent author's
+/// name + the content truncated to a few lines (plain text — no markdown/
+/// images: this is a context hint, not the post itself; media-heavy or
+/// markdown formatting would bloat every reply card in the feed). Repost
+/// parents show a placeholder (their content is NIP-18 JSON); NSFW parents
+/// honor the autoReveal setting instead of leaking the text.
+class _ReplyParentPreview extends ConsumerWidget {
+  const _ReplyParentPreview({required this.parent});
+  final Event parent;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    String? previewText;
+    if (parent.isRepost) {
+      previewText = '🔁 转发的帖子';
+    } else {
+      final content = parent.content.trim();
+      if (content.isNotEmpty) {
+        final settings = ref.watch(nsfwSettingsProvider);
+        previewText = (parent.isNsfw && !settings.autoReveal)
+            ? '此帖可能包含敏感内容'
+            // Collapse whitespace so the first lines of the post fill the
+            // truncated preview instead of being eaten by blank lines.
+            : content.replaceAll(RegExp(r'\s+'), ' ');
+      }
+    }
+    final meta = ref.watch(metadataProvider(parent.pubkey)).value;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: CostrColors.bg2,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: CostrColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            displayLabelFor(parent.pubkey, meta),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: CostrColors.text3,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (previewText != null) ...[
+            const SizedBox(height: 2),
             Text(
-              '回复 @$name',
-              style: TextStyle(
-                fontSize: 13,
-                color: CostrColors.text3,
-                fontWeight: FontWeight.w600,
+              previewText,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: CostrColors.text2,
               ),
             ),
           ],
-        ),
+        ],
       ),
     );
   }

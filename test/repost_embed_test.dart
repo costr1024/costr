@@ -139,4 +139,46 @@ void main() {
       expect(repostRelayHints(repost, 'n1'), isEmpty);
     });
   });
+
+  group('repostAuthorCandidates', () {
+    test('collects the reposted author from the p tag', () {
+      final note = _note('n1', pubkey: 'a' * 64);
+      final repost = _repost(id: 'rp1', reposted: note);
+      expect(repostAuthorCandidates(repost), ['a' * 64]);
+    });
+
+    test('dedupes and caps at 2 (some clients copy the note\'s p tags)', () {
+      final repost = Event(
+        id: 'rp1',
+        pubkey: 'r' * 64,
+        createdAt: 2,
+        kind: 6,
+        tags: [
+          ['e', 'n1', '', ''],
+          ['p', 'a' * 64],
+          ['p', 'b' * 64],
+          ['p', 'a' * 64], // duplicate
+          ['p', 'c' * 64], // beyond the cap
+        ],
+        content: '',
+        sig: _sig,
+      );
+      expect(repostAuthorCandidates(repost), ['a' * 64, 'b' * 64]);
+    });
+
+    test('empty when the repost has no p tags', () {
+      final repost = Event(
+        id: 'rp1',
+        pubkey: 'r' * 64,
+        createdAt: 2,
+        kind: 6,
+        tags: [
+          ['e', 'n1', '', ''],
+        ],
+        content: '',
+        sig: _sig,
+      );
+      expect(repostAuthorCandidates(repost), isEmpty);
+    });
+  });
 }
