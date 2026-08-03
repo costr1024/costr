@@ -24,6 +24,26 @@ import '../../nostr/actions.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 import 'user_post_item.dart';
+import '../../widgets/immersive.dart';
+
+/// Pull-to-refresh for a profile: re-fetches the user's metadata (avatar,
+/// banner, name, bio — NIP-01 kind 0), status (NIP-38 kind 30315), follows
+/// and followers, AND posts. The profile tabs' [RefreshIndicator] used to
+/// only refresh posts, so pulling down left a stale avatar/banner (e.g.
+/// after changing the profile on another client, or after a cold start
+/// that loaded an older cached kind 0). Invalidating [metadataProvider]
+/// triggers a fresh kind-0 REQ (which now consults the indexer pool rather
+/// than short-circuiting on a stale cache).
+Future<void> refreshProfileData(WidgetRef ref, String pubkey) async {
+  ref.invalidate(metadataProvider(pubkey));
+  ref.invalidate(userStatusProvider(pubkey));
+  ref.invalidate(userFollowsProvider(pubkey));
+  ref.invalidate(userFollowersProvider(pubkey));
+  ref.invalidate(userPostsProvider(pubkey));
+  // Await the posts re-fetch so the spinner stays until it resolves (the
+  // other invalidates re-fire their own streams, which the header watches).
+  await ref.read(userPostsProvider(pubkey).future);
+}
 
 class ProfilePage extends ConsumerWidget {
   const ProfilePage({super.key, this.pubkey});
@@ -35,8 +55,8 @@ class ProfilePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final idAsync = ref.watch(identityProvider);
     final isOwn = pubkey == null;
-    return Scaffold(
-      appBar: isOwn
+    return ImmersiveScaffold(
+      topBar: isOwn
           ? AppBar(
               title: const Text('我的'),
               leading: IconButton(
@@ -89,8 +109,9 @@ class _ProfileBody extends ConsumerWidget {
     final meta = ref.watch(metadataProvider(pubkey)).value;
     final theme = Theme.of(context);
 
-    return NestedScrollView(
-      headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
+    return ImmersiveScrollDetector(
+      child: NestedScrollView(
+        headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
         return <Widget>[
           SliverToBoxAdapter(
             child: _Header(
@@ -127,6 +148,7 @@ class _ProfileBody extends ConsumerWidget {
           _FollowersTab(pubkey: pubkey, isSelf: isSelf),
           _BookmarksTab(pubkey: pubkey),
         ],
+      ),
       ),
     );
   }
@@ -784,7 +806,7 @@ class _PostsTabState extends ConsumerState<_PostsTab> {
     // "bottom overflowed by N pixels" when the bio is long). Slivers tolerate
     // any bounded height; a Column with a fixed-height child does not.
     return RefreshIndicator(
-      onRefresh: () => ref.refresh(userPostsProvider(widget.pubkey).future),
+      onRefresh: () => refreshProfileData(ref, widget.pubkey),
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
@@ -864,7 +886,7 @@ class _RepliesTabState extends ConsumerState<_RepliesTab> {
   Widget build(BuildContext context) {
     final async = ref.watch(userPostsProvider(widget.pubkey));
     return RefreshIndicator(
-      onRefresh: () => ref.refresh(userPostsProvider(widget.pubkey).future),
+      onRefresh: () => refreshProfileData(ref, widget.pubkey),
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
@@ -1470,7 +1492,11 @@ class _BookmarksTabState extends ConsumerState<_BookmarksTab> {
     final theme = Theme.of(context);
     final async = ref.watch(bookmarksProvider(widget.pubkey));
     return RefreshIndicator(
-      onRefresh: () => ref.refresh(bookmarksProvider(widget.pubkey).future),
+      onRefresh: () async {
+        await refreshProfileData(ref, widget.pubkey);
+        ref.invalidate(bookmarksProvider(widget.pubkey));
+        await ref.read(bookmarksProvider(widget.pubkey).future);
+      },
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: <Widget>[

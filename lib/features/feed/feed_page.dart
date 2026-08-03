@@ -15,6 +15,7 @@ import '../../nostr/outbox_router.dart';
 import '../../nostr/relay_client.dart';
 import '../../nostr/relay_pool.dart';
 import '../../widgets/costr_logo.dart';
+import '../../widgets/immersive.dart';
 import 'event_card.dart';
 
 class FeedPage extends ConsumerStatefulWidget {
@@ -245,8 +246,8 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     );
     final pending = _barrierId == null ? 0 : events.length - visible.length;
 
-    return Scaffold(
-      appBar: AppBar(
+    return ImmersiveScaffold(
+      topBar: AppBar(
         title: const CostrWordmark(logoSize: 26, fontSize: 19),
         actions: [
           if (mode == FeedMode.following) const _FollowingFilterButton(),
@@ -286,60 +287,63 @@ class _FeedPageState extends ConsumerState<FeedPage> {
             ),
           if (followingLoading || _loadingMore) const LinearProgressIndicator(),
           Expanded(
-            child: RefreshIndicator(
-              onRefresh: _refresh,
-              child: events.isEmpty
-                  ? ListView(
-                      children: [_EmptyState(followingEmpty: followingEmpty)],
-                    )
-                  : Stack(
-                      children: <Widget>[
-                        NotificationListener<ScrollNotification>(
-                          onNotification: (ScrollNotification n) {
-                            if (n is ScrollUpdateNotification) {
-                              final atTop = n.metrics.pixels <= 0;
-                              if (!atTop && _barrierId == null) {
-                                _freeze();
-                              } else if (atTop && _barrierId != null) {
-                                _release();
-                              }
-                              // Trigger load-more on scroll-update near the
-                              // bottom too (not only on scroll-end) — a fling
-                              // that overshoots the end may not fire a clean
-                              // ScrollEnd within the threshold, leaving the
-                              // user stuck at the bottom with "no older posts".
-                              if (n.metrics.pixels >=
-                                  n.metrics.maxScrollExtent -
-                                      _loadMoreThreshold) {
-                                _loadMore();
-                              }
-                            }
-                            if (n is ScrollEndNotification &&
-                                n.metrics.pixels >=
+            child: ImmersiveScrollDetector(
+              child: RefreshIndicator(
+                onRefresh: _refresh,
+                child: events.isEmpty
+                    ? ListView(
+                        children: [
+                          _EmptyState(followingEmpty: followingEmpty),
+                        ],
+                      )
+                    : Stack(
+                        children: <Widget>[
+                          NotificationListener<ScrollNotification>(
+                            onNotification: (ScrollNotification n) {
+                              if (n is ScrollUpdateNotification) {
+                                final atTop = n.metrics.pixels <= 0;
+                                if (!atTop && _barrierId == null) {
+                                  _freeze();
+                                } else if (atTop && _barrierId != null) {
+                                  _release();
+                                }
+                                // Trigger load-more on scroll-update near the
+                                // bottom too (not only on scroll-end) — a fling
+                                // that overshoots the end may not fire a clean
+                                // ScrollEnd within the threshold, leaving the
+                                // user stuck at the bottom with "no older posts".
+                                if (n.metrics.pixels >=
                                     n.metrics.maxScrollExtent -
                                         _loadMoreThreshold) {
-                              _loadMore();
-                            }
-                            return false;
-                          },
-                          child: ListView.builder(
-                            controller: _controller,
-                            // Per-mode scroll position: switching 全球↔关注
-                            // restores each mode's own saved offset instead of
-                            // carrying the other's (so 关注 stays at the top
-                            // after you scrolled 全球 back 2h). PageStorage keeps
-                            // the offset per key across rebuilds.
-                            key: PageStorageKey<FeedMode>(mode),
-                            // +1 item: a trailing load-more indicator so the
-                            // user gets feedback (and a slightly taller build
-                            // window to nudge the scroll metrics).
-                            addAutomaticKeepAlives: false,
-                            itemCount: visible.length + 1,
-                            itemBuilder: (BuildContext context, int i) {
-                              if (i < visible.length) {
-                                return EventCard(event: visible[i]);
+                                  _loadMore();
+                                }
                               }
-                              // Trailing indicator: spinner while loading
+                              if (n is ScrollEndNotification &&
+                                  n.metrics.pixels >=
+                                      n.metrics.maxScrollExtent -
+                                          _loadMoreThreshold) {
+                                _loadMore();
+                              }
+                              return false;
+                            },
+                            child: ListView.builder(
+                              controller: _controller,
+                              // Per-mode scroll position: switching 全球↔关注
+                              // restores each mode's own saved offset instead of
+                              // carrying the other's (so 关注 stays at the top
+                              // after you scrolled 全球 back 2h). PageStorage keeps
+                              // the offset per key across rebuilds.
+                              key: PageStorageKey<FeedMode>(mode),
+                              // +1 item: a trailing load-more indicator so the
+                              // user gets feedback (and a slightly taller build
+                              // window to nudge the scroll metrics).
+                              addAutomaticKeepAlives: false,
+                              itemCount: visible.length + 1,
+                              itemBuilder: (BuildContext context, int i) {
+                                if (i < visible.length) {
+                                  return EventCard(event: visible[i]);
+                                }
+                                // Trailing indicator: spinner while loading
                               // more, else a quiet hint. The mere presence of
                               // this row also keeps the list scrollable past
                               // the last real post so the scroll-update trigger
@@ -378,6 +382,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                       ],
                     ),
             ),
+          ),
           ),
         ],
       ),

@@ -20,6 +20,7 @@ import '../../services/local_cache.dart' as cache;
 import '../../utils/nav.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/immersive.dart';
 import '../../widgets/mention_linkifier.dart';
 
 // --- Notification data model ---
@@ -331,7 +332,12 @@ String? notificationPreview(Event e) {
 /// - Anything else (unicode "🔥", legacy "+") → `(content, null)`.
 ({String emoji, String? url})? reactionEmojiFor(Event e) {
   if (e.kind != 7) return null;
-  if (e.content.isEmpty) return (emoji: '+', url: null);
+  // NIP-25: empty content OR literal "+" = the default "like" → render 👍
+  // (a real glyph) rather than a bare "+" that users mistook for a stray
+  // UI element. Matches Amethyst's default-reaction rendering.
+  if (e.content.isEmpty || e.content == '+') {
+    return (emoji: '👍', url: null);
+  }
   final match = RegExp(r'^:([a-zA-Z0-9_+-]+):$').firstMatch(e.content);
   String? shortcode = match?.group(1);
   String? url;
@@ -480,8 +486,8 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
               )
               .toList()
         : allItems;
-    return Scaffold(
-      appBar: AppBar(
+    return ImmersiveScaffold(
+      topBar: AppBar(
         title: const Text('通知'),
         actions: [
           // Mark all currently-shown notifications as read. First login can
@@ -530,33 +536,38 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
             ),
           ),
           Expanded(
-            child: async.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (_, _) => const Center(child: Text('通知加载失败')),
-              data: (_) {
-                // Read/unread is per-item, marked read on tap (DESIGN §5.2
-                // updated): no whole-page auto-markRead — unread styling stays
-                // stable until the user actually opens an item. The bottom-nav
-                // badge counts items not yet marked read. The done_all action
-                // above is the explicit bulk-clear path.
-                if (filtered.isEmpty) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text(
-                        '还没有通知。\n有人 @你、回复、喜欢你的帖子时会出现在这里。',
-                        textAlign: TextAlign.center,
+            child: ImmersiveScrollDetector(
+              child: async.when(
+                loading: () =>
+                    const Center(child: CircularProgressIndicator()),
+                error: (_, _) => const Center(child: Text('通知加载失败')),
+                data: (_) {
+                  // Read/unread is per-item, marked read on tap (DESIGN §5.2
+                  // updated): no whole-page auto-markRead — unread styling stays
+                  // stable until the user actually opens an item. The bottom-nav
+                  // badge counts items not yet marked read. The done_all action
+                  // above is the explicit bulk-clear path.
+                  if (filtered.isEmpty) {
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Text(
+                          '还没有通知。\n有人 @你、回复、喜欢你的帖子时会出现在这里。',
+                          textAlign: TextAlign.center,
+                        ),
                       ),
+                    );
+                  }
+                  return ListView.builder(
+                    itemCount: filtered.length,
+                    itemBuilder: (_, i) => _NotificationTile(
+                      item: filtered[i],
+                      myPubkey: myPubkey,
                     ),
                   );
-                }
-                return ListView.builder(
-                  itemCount: filtered.length,
-                  itemBuilder: (_, i) =>
-                      _NotificationTile(item: filtered[i], myPubkey: myPubkey),
-                );
               },
             ),
+          ),
           ),
         ],
       ),

@@ -497,12 +497,24 @@ class LocalCache extends _$LocalCache {
 
   // --- Drafts (outbox: events that failed to publish, for retry) ---
 
-  /// Save a draft event (failed to publish) for later retry.
-  Future<void> saveDraft(String rawJson) async {
-    await customStatement(
-      'INSERT INTO drafts(raw_json, created_at, attempts) VALUES (?, ?, 0)',
-      [rawJson, DateTime.now().millisecondsSinceEpoch ~/ 1000],
-    );
+  /// Save a draft event (failed to publish) for later retry. Returns the
+  /// SQLite rowid so callers can delete THIS exact draft when the user
+  /// retries successfully (the retry signs a fresh event, so it can't be
+  /// matched by id — without the rowid the stale draft would linger and
+  /// `retryDrafts` would republish it on the next cold start → duplicate).
+  Future<int> saveDraft(String rawJson) async {
+    // Transaction guarantees the INSERT and the last_insert_rowid() read run
+    // on the same connection (drift may pool connections), so the rowid is
+    // the one we just inserted, not 0 / a sibling insert's.
+    return transaction(() async {
+      await customStatement(
+        'INSERT INTO drafts(raw_json, created_at, attempts) VALUES (?, ?, 0)',
+        [rawJson, DateTime.now().millisecondsSinceEpoch ~/ 1000],
+      );
+      final row = await customSelect('SELECT last_insert_rowid() AS id')
+          .getSingle();
+      return row.read<int>('id');
+    });
   }
 
   /// Load all pending drafts (oldest first). Returns raw JSON strings.
@@ -584,13 +596,26 @@ class LocalCache extends _$LocalCache {
 
   // --- Cleanup ---
 
-  Future<int> cleanupOldEvents({int ttlDays = 30}) async {
+  /// Delete cached events older than [ttlDays]. When [ownPubkey] is given,
+  /// the user's OWN posts are exempt: they are notification targets (a
+  /// kind-7 reaction notification deep-links to the reacted post), and once
+  /// TTL-evicted the only remaining source is the relays — which often prune
+  /// old events too, making "X 赞了你" open to "未找到该帖子". Keeping own
+  /// posts locally makes notification targets resolve instantly forever.
+  Future<int> cleanupOldEvents({int ttlDays = 30, String? ownPubkey}) async {
     final cutoff =
         DateTime.now().millisecondsSinceEpoch ~/ 1000 - ttlDays * 86400;
-    await customStatement(
-      'DELETE FROM events WHERE created_at < ? AND kind != 5',
-      [cutoff],
-    );
+    if (ownPubkey != null) {
+      await customStatement(
+        'DELETE FROM events WHERE created_at < ? AND kind != 5 AND pubkey != ?',
+        [cutoff, ownPubkey],
+      );
+    } else {
+      await customStatement(
+        'DELETE FROM events WHERE created_at < ? AND kind != 5',
+        [cutoff],
+      );
+    }
     await customStatement(
       'DELETE FROM event_tags WHERE event_id NOT IN (SELECT id FROM events)',
       [],

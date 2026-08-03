@@ -1,3 +1,4 @@
+import 'package:costr/models/event.dart';
 import 'package:costr/utils/language.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -30,6 +31,34 @@ void main() {
       expect(detectLanguage('12345'), isNull);
       expect(detectLanguage('🎉🎉'), isNull);
       expect(detectLanguage('привет'), isNull); // Cyrillic
+    });
+  });
+
+  group('Event.language (memoized)', () {
+    Event note(String content) => Event(
+      id: 'id-${content.hashCode}',
+      pubkey: 'pk',
+      createdAt: 0,
+      kind: 1,
+      tags: const [],
+      content: content,
+      sig: '',
+    );
+
+    test('matches detectLanguage across all outcomes', () {
+      expect(note('今天天气真好').language, 'zh');
+      expect(note('Hello world').language, 'en');
+      expect(note('日本語のテストです').language, 'ja');
+      expect(note('한국어입니다').language, 'ko');
+      expect(note('12345').language, isNull);
+    });
+
+    test('repeated reads are stable (cached after first)', () {
+      final e = note('こんにちは');
+      final first = e.language;
+      // Read again — must come from the memo, same value.
+      expect(e.language, first);
+      expect(e.language, 'ja');
     });
   });
 }

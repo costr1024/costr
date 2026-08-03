@@ -78,6 +78,10 @@
   .actions .a svg{width:18px;height:18px}
   .more-btn{margin-left:auto;color:var(--tx3);cursor:pointer;padding:2px 6px;border-radius:6px;font-size:18px;line-height:1}
   .more-btn:active{background:var(--bg2)}
+  /* 代理媒体按钮：仅在「设置→代理媒体」开启且本帖含图/视频时显示，点按切换该帖媒体走代理域名 */
+  .proxy-chip{margin-left:8px;padding:1px 6px;border:1px solid var(--brand-50,#9ac8ff);border-radius:4px;color:var(--brand);font-size:11px;font-weight:600;cursor:pointer;user-select:none}
+  .proxy-chip.on{background:var(--brand);border-color:var(--brand);color:#fff}
+  .proxy-chip:active{opacity:.8}
   /* 打闪 zap 底部页 */
   .sheet{position:absolute;left:0;right:0;bottom:0;background:#fff;border-radius:18px 18px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,.12);padding:8px 16px 24px;z-index:40;max-height:80%;overflow:auto}
   .sheet .sheet-head{display:flex;align-items:center;gap:8px;padding:8px 8px 4px}
@@ -513,6 +517,8 @@
         <div class="set-row" style="cursor:pointer" onclick="alert('账号与身份（占位）')"><div class="l"><b>账号与身份</b><span>你的身份钥匙、登录与登出</span></div><span style="color:var(--tx3)">›</span></div>
         <div class="set-row" style="cursor:pointer" onclick="alert('服务器节点（占位）')"><div class="l"><b>服务器节点</b><span>Costr 连接的服务器，一般不用改</span></div><span style="color:var(--tx3)">›</span></div>
         <div class="set-row"><div class="l"><b>在关注信息流显示自己的帖子</b><span>关注自己后，你发的帖子也会出现在「关注」信息流</span></div><div class="switch on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="set-row"><div class="l"><b>代理媒体</b><span>开启后含图片/视频的帖子显示「代理媒体」按钮，点按用 proxy.bostr.online 加载被墙的图视频（仅本机，不同步）</span></div><div class="switch" onclick="this.classList.toggle('on')"></div></div>
+        <div class="set-row"><div class="l"><b>沉浸式浏览</b><span>向下滚动隐藏顶栏/底栏/发帖键，向上滚动或回到顶部恢复。仅本机，不同步</span></div><div class="switch" onclick="this.classList.toggle('on')"></div></div>
       </div>
       <div class="set-group"><div class="h">关于</div>
         <div class="set-row" style="cursor:pointer" onclick="go('about')"><div class="l"><b>关于 Costr</b><span>是什么、设计理念</span></div><span style="color:var(--tx3)">›</span></div>
@@ -841,7 +847,7 @@ function postCard(p,extra=''){
   return `<div class="post" onclick="openDetail(${p.i})">
     ${ava(p.u)}
     <div class="body">
-      <div class="who"><b>${n}</b> <span class="h">@${h}</span><span class="dot">·</span><span class="t">${p.t}</span><span class="more-btn" onclick="event.stopPropagation();openPostMenu(this,${p.i})">⋮</span></div>
+      <div class="who"><b>${n}</b> <span class="h">@${h}</span><span class="dot">·</span><span class="t">${p.t}</span>${p.img?'<span class="proxy-chip" title="用 proxy.bostr.online 加载本帖被墙的图片视频" onclick="event.stopPropagation();this.classList.toggle(\'on\')">代理媒体</span>':''}<span class="more-btn" onclick="event.stopPropagation();openPostMenu(this,${p.i})">⋮</span></div>
       <div class="txt">${p.text}</div>
       ${p.img?'<div class="media"></div>':''}
       <div id="act-${p.i}">${actionsHTML(p)}</div>

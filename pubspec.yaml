@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.3.0-beta+4
+version: 0.5.0-beta+5
 
 environment:
   sdk: ^3.12.2
@@ -53,6 +53,9 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   # Avatar image loading with disk cache + placeholder/error fallback (NIP-01 kind 0 picture).
   cached_network_image: ^3.4.1
+  # Disk cache backend (timed/UA-customized FileService for post media) — direct
+  # dep because we inject a custom CacheManager into cached_network_image.
+  flutter_cache_manager: ^3.4.2
   # Markdown rendering of post content (GitHub-flavored).
   flutter_markdown: ^0.7.7+1
   # markdown core (ExtensionSet) — direct import per lint; transitive via flutter_markdown.

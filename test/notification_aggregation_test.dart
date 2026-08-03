@@ -247,17 +247,26 @@ void main() {
       expect(r.url, isNull);
     });
 
-    test('empty content → default "+" like', () {
-      final e = _ev(
+    test('empty content OR literal "+" → default 👍 like', () {
+      final empty = _ev(
         kind: 7,
         id: 'r4',
         pubkey: 'pk',
         createdAt: 1,
         content: '',
       );
-      final r = reactionEmojiFor(e)!;
-      expect(r.emoji, '+');
-      expect(r.url, isNull);
+      expect(reactionEmojiFor(empty)!.emoji, '👍');
+      expect(reactionEmojiFor(empty)!.url, isNull);
+
+      // Legacy NIP-25 "+" content also normalizes to 👍 (not a bare "+").
+      final plus = _ev(
+        kind: 7,
+        id: 'r4b',
+        pubkey: 'pk',
+        createdAt: 1,
+        content: '+',
+      );
+      expect(reactionEmojiFor(plus)!.emoji, '👍');
     });
 
     test('non-kind-7 event → null', () {

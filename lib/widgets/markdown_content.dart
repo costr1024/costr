@@ -86,20 +86,15 @@ class MarkdownContent extends ConsumerStatefulWidget {
     required this.event,
     this.initiallyExpanded = false,
     this.proxyMedia = false,
-    this.onMediaFailed,
   });
 
   final Event event;
   final bool initiallyExpanded;
 
   /// When true, all images in this post load through the proxy mirror
-  /// ([proxiedUrl]) — flipped on by the post's "代理媒体" affordance. Manual
+  /// ([proxiedUrl]) — flipped on by the post's "代理媒体" toggle. Manual
   /// only: the proxy is opt-in per post so the mirror isn't overwhelmed.
   final bool proxyMedia;
-
-  /// Fired (true) when an image fails to load, so the post can surface its
-  /// "代理媒体" affordance. One fire per failure.
-  final ValueChanged<bool>? onMediaFailed;
 
   @override
   ConsumerState<MarkdownContent> createState() => _MarkdownContentState();
@@ -201,7 +196,6 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
             height: 22,
             fit: BoxFit.cover,
             errorWidget: (BuildContext _) => Text(':${c.alt ?? ''}:'),
-            onError: widget.onMediaFailed,
           ),
         );
       }
@@ -243,13 +237,11 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
         children.add(_ImageGrid(
           urls: seg.urls,
           proxyMedia: widget.proxyMedia,
-          onMediaFailed: widget.onMediaFailed,
         ));
       } else if (seg is SingleVideoSeg) {
         children.add(NetworkVideo(
           url: seg.url,
           forceProxy: widget.proxyMedia,
-          onError: widget.onMediaFailed,
         ));
       }
     }
@@ -273,7 +265,6 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       children.add(_ImageGrid(
         urls: extraImages,
         proxyMedia: widget.proxyMedia,
-        onMediaFailed: widget.onMediaFailed,
       ));
     }
     for (final v in extraVideos) {
@@ -283,7 +274,6 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
         width: v.width,
         height: v.height,
         forceProxy: widget.proxyMedia,
-        onError: widget.onMediaFailed,
       ));
     }
     final extraFiles = extra.where((m) => !m.isImage && !m.isVideo).toList();
@@ -350,11 +340,23 @@ class _CollapseBox extends StatelessWidget {
     final surface = Theme.of(context).colorScheme.surface;
     return Stack(
       children: [
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: _kCollapsedMaxHeight),
+        // Fixed-height window showing the TOP of the child, clipped.
+        //
+        // Deliberately NOT a SingleChildScrollView: with the default
+        // `primary: true` (controller is null), a nested ScrollView inside
+        // the feed's PrimaryScrollController scope inherits the FEED's
+        // scroll position — so when the feed is scrolled down, the
+        // collapsed post showed its content scrolled to the BOTTOM (the
+        // latter half) instead of the beginning. OverflowBox renders the
+        // child at its natural (taller) height, top-aligned, clipped to the
+        // window — no ScrollController entanglement, the beginning always
+        // shows.
+        SizedBox(
+          height: _kCollapsedMaxHeight,
           child: ClipRect(
-            child: SingleChildScrollView(
-              physics: const NeverScrollableScrollPhysics(),
+            child: OverflowBox(
+              alignment: Alignment.topCenter,
+              maxHeight: double.infinity,
               child: child,
             ),
           ),
@@ -463,6 +465,22 @@ class _FileChip extends StatelessWidget {
 /// Tokenize content into text / contiguous image-group / single-video
 /// segments, so consecutive images render as a 九宫格 grid and text-broken
 /// runs form separate groups. Public for unit testing.
+/// True if [event] carries ANY renderable image or video — markdown
+/// `![](url)`, a bare image/video URL in the content, or a NIP-92 imeta
+/// `["image",url]` / `["video",url]` tag. Used by the post's name bar to
+/// decide whether to surface the per-post "代理媒体" toggle (the toggle is
+/// only meaningful when there's media to proxy; text-only posts hide it).
+bool postHasMedia(Event event) {
+  // imeta image/video attachments.
+  if (event.mediaAttachments.any((m) => m.isImage || m.isVideo)) return true;
+  // Markdown images / bare image-video URLs in the content body.
+  final segs = tokenizeContent(event.content);
+  for (final s in segs) {
+    if (s is ImageGroupSeg || s is SingleVideoSeg) return true;
+  }
+  return false;
+}
+
 List<ContentSeg> tokenizeContent(String content) {
   final out = <ContentSeg>[];
   final group = <String>[];
@@ -533,11 +551,9 @@ class _ImageGrid extends StatelessWidget {
   const _ImageGrid({
     required this.urls,
     required this.proxyMedia,
-    required this.onMediaFailed,
   });
   final List<String> urls;
   final bool proxyMedia;
-  final ValueChanged<bool>? onMediaFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -545,7 +561,6 @@ class _ImageGrid extends StatelessWidget {
       return _SingleImage(
         url: urls.first,
         proxyMedia: proxyMedia,
-        onMediaFailed: onMediaFailed,
       );
     }
     return GridView.count(
@@ -562,7 +577,6 @@ class _ImageGrid extends StatelessWidget {
             urls: urls,
             index: i,
             proxyMedia: proxyMedia,
-            onMediaFailed: onMediaFailed,
           ),
       ],
     );
@@ -575,13 +589,11 @@ class _GridThumb extends StatelessWidget {
     required this.urls,
     required this.index,
     required this.proxyMedia,
-    required this.onMediaFailed,
   });
   final String url;
   final List<String> urls;
   final int index;
   final bool proxyMedia;
-  final ValueChanged<bool>? onMediaFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -595,7 +607,6 @@ class _GridThumb extends StatelessWidget {
           fit: BoxFit.cover,
           placeholder: (BuildContext _) => const _Placeholder(),
           errorWidget: (BuildContext _) => const _ErrorBox(),
-          onError: onMediaFailed,
         ),
       ),
     );
@@ -606,11 +617,9 @@ class _SingleImage extends StatelessWidget {
   const _SingleImage({
     required this.url,
     required this.proxyMedia,
-    required this.onMediaFailed,
   });
   final String url;
   final bool proxyMedia;
-  final ValueChanged<bool>? onMediaFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -627,7 +636,6 @@ class _SingleImage extends StatelessWidget {
               const _Placeholder(aspect: 16 / 9),
           errorWidget: (BuildContext _) =>
               const _ErrorBox(aspect: 16 / 9),
-          onError: onMediaFailed,
         ),
       ),
     );

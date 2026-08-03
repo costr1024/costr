@@ -441,5 +441,44 @@ void main() {
       expect(a.sent.where((m) => m[0] == 'EVENT').length, 1); // no retry
       await pool.dispose();
     });
+
+    test('failed publish does NOT echo (no phantom); success echoes', () async {
+      // Echo must happen ONLY on success. A failed publish used to echo
+      // unconditionally → a phantom post in the feed; on retry (new event
+      // id) the user saw two identical posts. The fix moves the echo to
+      // the success path.
+      final a = _FakeRelay('wss://a');
+      final pool = RelayPool([a]);
+      await pool.connect();
+      final echoed = <String>[];
+      pool.events.listen((e) => echoed.add(e.id));
+
+      // All-failed publish → no echo.
+      final evFail = _event('fail1');
+      final okFail = await pool.publishAndWait(
+        evFail,
+        retryDelays: const [Duration(milliseconds: 10)],
+        perRoundTimeout: const Duration(milliseconds: 20),
+      );
+      expect(okFail.ok, isFalse);
+      expect(echoed, isEmpty, reason: 'failed publish must not echo a phantom');
+
+      // Successful publish → echoes the event id.
+      final evOk = _event('ok1');
+      final fut = pool.publishAndWait(
+        evOk,
+        retryDelays: const [Duration(milliseconds: 50)],
+        perRoundTimeout: const Duration(milliseconds: 200),
+      );
+      await Future<void>.delayed(Duration.zero);
+      a.emitOk(RelayOk(evOk.id, true, '', url: 'wss://a'));
+      final okResult = await fut;
+      expect(okResult.ok, isTrue, reason: 'success path must be reached');
+      // The echo is delivered on a microtask (broadcast controller is async);
+      // pump once so the listener drains before we assert.
+      await Future<void>.delayed(Duration.zero);
+      expect(echoed, contains(evOk.id));
+      await pool.dispose();
+    });
   });
 }

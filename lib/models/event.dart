@@ -14,9 +14,15 @@ import 'package:bip340/bip340.dart' as bip340;
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
-@immutable
+import '../utils/language.dart';
+
+/// Note: NOT `@immutable` despite being logically immutable — [language]
+/// memoizes its detection result in a private field (safe: the inputs never
+/// change, so the cached value never goes stale). This turns the feed's
+/// language filter from "up to 4 regex scans per event per 200ms store
+/// flush" (UI-thread jank) into one detection per event instance.
 class Event {
-  const Event({
+  Event({
     required this.id,
     required this.pubkey,
     required this.createdAt,
@@ -152,6 +158,22 @@ class Event {
   /// True if the event has a `["t", "nsfw"]` tag (convention for NSFW content).
   bool get isNsfw => hashtags.contains('nsfw');
 
+  /// Detected content language ('zh'/'en'/'ja'/'ko'/null), memoized —
+  /// [detectLanguage] runs AT MOST ONCE per event instance. Events are
+  /// deduped by id and shared across provider rebuilds, so the feed's
+  /// language filter pays the regex cost once per event instead of on every
+  /// 200ms store flush (measured ~12ms/pass over a full 5000-event store on
+  /// a desktop CPU — several× that on a phone, enough to jank scrolling).
+  String? _language;
+  bool _languageComputed = false;
+  String? get language {
+    if (!_languageComputed) {
+      _language = detectLanguage(content);
+      _languageComputed = true;
+    }
+    return _language;
+  }
+
   /// The event id this kind-1 note directly replies to (NIP-10), or null if it
   /// is a top-level post. Marker precedence: "reply" > legacy positional (empty
   /// marker, last one wins) > "root" (reply-to-root). "mention" tags are not
@@ -206,8 +228,9 @@ class Event {
     // URL/path/protocol), and be followed by letters/digits/underscore (incl.
     // Unicode, so #中文 works). Markdown headings `# Heading` (with space)
     // don't match — there's no word char immediately after `#`.
-    final inline = RegExp(r'(?<![\w/:.])#([\p{L}\p{N}_]+)', unicode: true);
-    for (final m in inline.allMatches(content)) {
+    // Top-level (not per-call) so the Unicode regex is compiled ONCE — this
+    // getter runs on every visible EventCard build via [isNsfw].
+    for (final m in _kInlineHashtag.allMatches(content)) {
       final v = m.group(1)!.toLowerCase();
       if (v.isNotEmpty && seen.add(v)) out.add(v);
     }
@@ -340,6 +363,13 @@ class Event {
   @override
   String toString() => 'Event(kind=$kind, id=$id, content=$_preview)';
 }
+
+/// Inline `#hashtag` pattern for [Event.hashtags]. Top-level so the Unicode
+/// regex compiles once per process, not once per getter call.
+final RegExp _kInlineHashtag = RegExp(
+  r'(?<![\w/:.])#([\p{L}\p{N}_]+)',
+  unicode: true,
+);
 
 /// A media attachment (image or video) from a NIP-92 imeta tag, or inferred
 /// from a URL's extension when the mimetype is absent.

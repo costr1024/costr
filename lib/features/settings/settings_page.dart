@@ -47,6 +47,25 @@ class SettingsPage extends ConsumerWidget {
             subtitle: '已屏蔽的用户、词、标签',
             onTap: () => context.push('/settings/mute'),
           ),
+          _LocalSwitchTile(
+            title: '代理媒体',
+            subtitleOn: '已开启：含图片/视频的帖子显示「代理媒体」按钮，点按走 proxy.bostr.online',
+            subtitleOff: '关闭：不显示「代理媒体」按钮。仅本机设置，不同步中继',
+            enabled: ref.watch(proxyMediaEnabledProvider),
+            onChanged: (v) =>
+                ref.read(proxyMediaEnabledProvider.notifier).set(v),
+          ),
+          // Immersive browse (LOCAL-only, never synced). When ON, the top
+          // app bar + bottom nav + FAB hide on scroll-down and return on
+          // scroll-up (Amethyst pattern) for full-screen browsing.
+          _LocalSwitchTile(
+            title: '沉浸式浏览',
+            subtitleOn: '已开启：向下滚动隐藏顶栏/底栏/发帖键，向上滚动恢复。仅本机，不同步',
+            subtitleOff: '关闭：顶栏底栏常驻。仅本机设置，不同步中继',
+            enabled: ref.watch(immersiveBrowseProvider),
+            onChanged: (v) =>
+                ref.read(immersiveBrowseProvider.notifier).set(v),
+          ),
           const _SectionHeader('关于'),
           _Row(
             title: '关于 Costr',
@@ -477,6 +496,55 @@ class _Row extends StatelessWidget {
             Icon(Icons.chevron_right, color: CostrColors.text3),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A LOCAL-only toggle row (never published to a relay). Styled like [_Row]
+/// but with a [Switch] in place of the chevron. Used for client preferences
+/// (代理媒体, 沉浸式浏览) that are no part of the Nostr identity.
+class _LocalSwitchTile extends ConsumerWidget {
+  const _LocalSwitchTile({
+    required this.title,
+    required this.subtitleOn,
+    required this.subtitleOff,
+    required this.enabled,
+    required this.onChanged,
+  });
+  final String title;
+  final String subtitleOn;
+  final String subtitleOff;
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: CostrColors.border)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontSize: 15, color: CostrColors.text),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  enabled ? subtitleOn : subtitleOff,
+                  style: const TextStyle(fontSize: 12, color: CostrColors.text2),
+                ),
+              ],
+            ),
+          ),
+          Switch(value: enabled, onChanged: onChanged),
+        ],
       ),
     );
   }

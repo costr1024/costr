@@ -15,7 +15,6 @@ class NetworkVideo extends StatefulWidget {
     this.width,
     this.height,
     this.forceProxy = false,
-    this.onError,
   });
 
   final String url;
@@ -23,12 +22,8 @@ class NetworkVideo extends StatefulWidget {
   final int? height;
 
   /// When true, load through the proxy mirror ([proxiedUrl]) — flipped on by
-  /// the post's "代理媒体" affordance. Manual only.
+  /// the post's "代理媒体" toggle. Manual only.
   final bool forceProxy;
-
-  /// Fired when the video fails to initialize, so the post can surface its
-  /// "代理媒体" affordance.
-  final ValueChanged<bool>? onError;
 
   @override
   State<NetworkVideo> createState() => _NetworkVideoState();
@@ -71,7 +66,6 @@ class _NetworkVideoState extends State<NetworkVideo> {
         .catchError((Object _) {
           if (mounted) {
             setState(() => _error = true);
-            widget.onError?.call(true);
           }
         });
   }

@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.3.0-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.3-beta/app-release.apk)（≈68 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.5.0-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.5-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -24,7 +24,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta）。
 
 ---
 
@@ -140,9 +140,17 @@ lib/
   聚合会出现同一用户多条「关注你」），点关注通知跳转该 follower 主页；**repost**（kind-6）
   解析 NIP-18 内嵌 JSON 取**被转帖子的正文**做预览；**reaction**（kind-7）解析 NIP-30
   `:shortcode:` + `emoji` tag 渲染自定义表情图片，不再裸露 `:xxx:` 文本。
-- **媒体加载**（头像/帖子图片/视频）：`CostrNetworkImage` **手工代理**——原 URL 加载失败时**不**自动回落
-  （避免公共代理被打爆），改为在帖子昵称栏显示「代理媒体」小按钮，用户点按后仅该帖的图/视频改走
-  `https://proxy.bostr.online/<原 URL>` 重载；媒体查看器全屏页同样有「使用代理加载」点按重试。
+- **媒体加载**（头像/帖子图片/视频）：`CostrNetworkImage` 走带超时的 `flutter_cache_manager`
+  FileService——**连接+响应 8s 硬超时**（默认无超时，被墙域名要等 OS TCP 30–60s 才报失败）+ 浏览器
+  UA（部分图床/代理 403 非浏览器 UA，导致代理 URL 浏览器能开、app 开不了）。**代理媒体是本地可配置项**
+  （设置 → 代理媒体开关，**不同步中继**）：开启后凡含图/视频链接的帖子在昵称右侧常显「代理媒体」按钮
+  （无媒体不显示），点按切换该帖图/视频走 `https://proxy.bostr.online/<原 URL>`；关闭则永不显示。
+  媒体查看器全屏页有「使用代理加载」点按重试。
+- **沉浸式浏览**（`ImmersiveScaffold` + `ImmersiveScrollDetector` + 全局 `appBarsVisibleProvider`）：
+  **本地可配置项**（设置 → 沉浸式浏览，**不同步中继**），默认关。开启后向下滚动 40px 隐藏顶部 AppBar +
+  底部导航栏 + 发帖 FAB（220ms 动画），向上滚或回到顶部立即恢复；切 tab 自动回显。关闭时各页
+  `Scaffold(appBar:, body:)` 与改造前逐字节一致（零回归）——顶栏折叠只在开关开启时走 `AnimatedContainer`/
+  `AnimatedSlide` 分支。
 - **关注 / 取消关注**（`followUser`/`unfollowUser`）：**乐观更新**——签名后立即更新本地 kind-3 缓存 +
   `followingStateProvider`，`publishAndWait` 落到后台，按钮不再卡 5–20s 等中继 ACK；失败时 invalidate 重拉对账。
 - **关注集分组**（`_buildFollowGroups`）：按 kind-30000 的 **`d` tag**（稳定标识）分组，组名取该 d 下
@@ -220,7 +228,7 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 ```bash
 flutter pub get          # 安装/刷新依赖
 flutter run -d linux     # 桌面运行（或 android / macos / windows）
-flutter test             # 全套测试（277 个）
+flutter test             # 全套测试（286 个）
 flutter analyze          # 静态分析（须 0 警告）
 dart format lib/ test/   # 格式化
 flutter build linux      # 桌面构建验证
@@ -253,7 +261,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 277 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 291 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -262,15 +270,18 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ## 当前状态
 
-**v0.3.0-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
+**v0.5.0-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
 
-**v0.3-beta 相对 v0.2 的主要修复**（详见 [v0.3-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.3-beta)）：
-通知去重 / 转发与表情 reaction 渲染 / 关注通知跳主页 / 屏蔽账号不再通知；
-线程上下级定向加载 + 线程化排序；资料 outbox 三级查找；失败媒体手工「代理媒体」按钮；
-关注乐观更新 + 关注集 d-tag 分组（修中文↔UUID 闪烁）；搜索框 + 全部/帖子/用户筛选；
-收藏 SQLite 缓存优先；首页加载更老帖 + 全球/关注滚动独立 + 动作栏回复/转发计数。
+**v0.5-beta 相对 v0.3 的主要修复/新增**（详见 [v0.5-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.5-beta)）：
+沉浸式浏览（向下滚动隐藏顶/底栏，向上恢复，本地开关默认关）；
+发帖失败重试不再产生重复帖；首次冷启动不再回退旧头像；空 content kind-7 归一为 👍；
+长帖折叠始终显示开头；媒体 8s 超时 + 浏览器 UA（修代理 URL 浏览器能开、app 打不开）；
+个人页下拉刷新重拉资料；帖子详情回帖列表不再底部永久转圈；
+全球流开语言过滤不再卡顿（语言检测按事件缓存，不再每 200ms 全库正则扫描）；
+点赞/回复通知更容易打开原帖（缓存清理豁免自己的帖子 + 池内找不到兜底查自己的 NIP-65 写中继 +
+全部中继 EOSE 快速返回 + 「未找到」可重试）。
 
 <details>
 <summary><b>已实现功能详情（点击展开）</b></summary>
@@ -307,7 +318,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 209 个测试
+flutter test             # 291 个测试
 flutter build linux      # 桌面构建
 ```
 

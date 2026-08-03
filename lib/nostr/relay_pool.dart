@@ -344,10 +344,12 @@ class RelayPool {
     final delays = retryDelays;
     final perRound = perRoundTimeout;
 
-    // Echo locally so the author sees the post instantly (relays only ack
-    // OK; they don't echo the EVENT back on publish).
-    if (!_merged.isClosed) _merged.add(event);
-
+    // NOTE: the optimistic local echo used to happen here (before any relay
+    // accepted). It now happens ONLY on the success path (just before
+    // `return accepted.first` below). Echoing a publish that ultimately
+    // failed left a phantom post in the feed; when the user retried (a new
+    // event id, since each sign uses a fresh created_at), the retry echoed
+    // separately → two identical posts visible. See compose retry path.
     var targets = _connections.where((c) => c.isConnected).toList();
     if (targets.isEmpty) {
       return RelayOk(expected, false, 'no connected relay');
@@ -375,6 +377,11 @@ class RelayPool {
         if (transient.isNotEmpty) {
           _backgroundRetryPublish(event, transient, delays, perRound);
         }
+        // Echo locally ONLY now that at least one relay accepted — so the
+        // author sees the post instantly (relays only ack OK, they don't
+        // echo EVENT back on publish) WITHOUT leaving a phantom for
+        // publishes that failed on every relay.
+        if (!_merged.isClosed) _merged.add(event);
         return accepted.first;
       }
       // All failed this round. Keep only transiently-failed relays for the

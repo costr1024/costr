@@ -69,6 +69,30 @@ class _ComposePageState extends ConsumerState<ComposePage>
   Timer? _draftDebounce;
   bool _loadingDraft = false;
 
+  /// Rowids of outbox drafts saved during FAILED publish attempts in THIS
+  /// session. A retry signs a FRESH event (new `created_at` → new id), so
+  /// when the retry succeeds the prior failed drafts can't be matched by
+  /// id and would otherwise linger in the `drafts` table until
+  /// `retryDrafts` republishes them on the next cold start → a real
+  /// duplicate on the network. On success we delete every rowid tracked
+  /// here.
+  final List<int> _pendingDraftRowids = [];
+
+  /// Delete every outbox draft saved by a failed attempt earlier in this
+  /// session. Called when a retry finally succeeds (the just-published
+  /// event supersedes the stale failed drafts).
+  Future<void> _clearPendingOutboxDrafts() async {
+    if (_pendingDraftRowids.isEmpty) return;
+    final rowids = List<int>.of(_pendingDraftRowids);
+    _pendingDraftRowids.clear();
+    final db = await ref.read(localCacheProvider.future);
+    for (final rid in rowids) {
+      try {
+        await db.deleteDraft(rid);
+      } catch (_) {}
+    }
+  }
+
   String get _draftKey {
     if (widget.replyTo != null) {
       return 'compose_draft:reply:${widget.replyTo!.id}';
@@ -570,12 +594,16 @@ class _ComposePageState extends ConsumerState<ComposePage>
           : identity.signEvent(kind: 1, content: text, tags: extraTags);
       final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;
-      // If EVERY relay failed (after the pool's per-relay 1s/2s/3s foreground
-      // retry), the post isn't published anywhere → save to drafts so the
-      // next cold start retries it (retryDrafts). Don't drop the user's post.
       if (!ok.ok) {
+        // Every relay failed (after the pool's per-relay 1s/2s/3s foreground
+        // retry) → save the signed event to the outbox so a later cold
+        // start can retry. Track the rowid: a manual retry signs a FRESH
+        // event (new id), so on success we can only delete this stale
+        // draft by rowid — otherwise `retryDrafts` would republish it on
+        // the next cold start → a real duplicate on the network.
         final db = await ref.read(localCacheProvider.future);
-        await db.saveDraft(jsonEncode(signed.toWireObject()));
+        final rowid = await db.saveDraft(jsonEncode(signed.toWireObject()));
+        _pendingDraftRowids.add(rowid);
         if (!mounted) return;
       }
       _snack(ok.ok ? '已发布' : '发布失败：${ok.reason}（已存草稿，稍后重试）');
@@ -584,9 +612,13 @@ class _ComposePageState extends ConsumerState<ComposePage>
       // userPostsProvider is non-autoDispose so it wouldn't re-run on its own.
       if (ok.ok) {
         ref.invalidate(userPostsProvider(identity.pubkeyHex));
-        // Sent successfully → clear the editor draft so it isn't restored
-        // next time the user opens compose.
+        // Sent successfully → clear the editor text draft so it isn't
+        // restored next time the user opens compose.
         unawaited(_deleteDraft());
+        // Drop outbox drafts saved by earlier FAILED attempts in this
+        // session — the successful send (a fresh event id) supersedes them;
+        // without this they'd be republished by retryDrafts → duplicates.
+        unawaited(_clearPendingOutboxDrafts());
       }
       if (ok.ok && context.mounted) context.pop();
     } catch (e) {

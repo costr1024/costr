@@ -264,44 +264,63 @@ class _AppShellState extends ConsumerState<AppShell> {
         size.height - _navBarHeight - pad.bottom - _fabSize - _fabMargin,
       ),
     );
+    // Immersive browse: hide the bottom nav + FAB when the user scrolls down
+    // (gated by the local immersive toggle). Only the bottom nav + FAB live
+    // here; each page's top app bar is handled by ImmersiveScaffold.
+    final hideBars = ref.watch(immersiveBrowseProvider) &&
+        !ref.watch(appBarsVisibleProvider);
+    const animDuration = Duration(milliseconds: 220);
     return Stack(
       children: <Widget>[
         Scaffold(
           body: shell,
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: shell.currentIndex,
-            onDestinationSelected: (int index) {
-              shell.goBranch(
-                index,
-                initialLocation: index == shell.currentIndex,
-              );
-            },
-            destinations: <NavigationDestination>[
-              const NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                selectedIcon: Icon(Icons.home),
-                label: '首页',
-              ),
-              const NavigationDestination(
-                icon: Icon(Icons.search),
-                selectedIcon: Icon(Icons.search),
-                label: '搜索',
-              ),
-              NavigationDestination(
-                // Red count badge when there are unread notifications; a plain
-                // icon when 0 (no clutter — DESIGN §2 "简约 / 不打扰").
-                icon: unread > 0
-                    ? Badge(
-                        label: Text(unread > 99 ? '99+' : '$unread'),
-                        child: const Icon(Icons.notifications_outlined),
-                      )
-                    : const Icon(Icons.notifications_outlined),
-                selectedIcon: unread > 0
-                    ? Badge(
-                        label: Text(unread > 99 ? '99+' : '$unread'),
-                        child: const Icon(Icons.notifications),
-                      )
-                    : const Icon(Icons.notifications),
+          bottomNavigationBar: AnimatedContainer(
+            // Collapse the nav bar to 0 height when hidden — the body extends
+            // to the bottom edge. ClipRect hides the (still-laid-out) bar
+            // content during the shrink.
+            duration: animDuration,
+            curve: Curves.easeOut,
+            height: hideBars ? 0 : _navBarHeight,
+            child: ClipRect(
+              child: NavigationBar(
+                selectedIndex: shell.currentIndex,
+                onDestinationSelected: (int index) {
+                  // Switching tabs restores the chrome so the new page isn't
+                  // stuck with the previous page's hidden state.
+                  ref
+                      .read(appBarsVisibleProvider.notifier)
+                      .setVisible(true);
+                  shell.goBranch(
+                    index,
+                    initialLocation: index == shell.currentIndex,
+                  );
+                },
+                destinations: <NavigationDestination>[
+                  const NavigationDestination(
+                    icon: Icon(Icons.home_outlined),
+                    selectedIcon: Icon(Icons.home),
+                    label: '首页',
+                  ),
+                  const NavigationDestination(
+                    icon: Icon(Icons.search),
+                    selectedIcon: Icon(Icons.search),
+                    label: '搜索',
+                  ),
+                  NavigationDestination(
+                    // Red count badge when there are unread notifications; a plain
+                    // icon when 0 (no clutter — DESIGN §2 "简约 / 不打扰").
+                    icon: unread > 0
+                        ? Badge(
+                            label: Text(unread > 99 ? '99+' : '$unread'),
+                            child: const Icon(Icons.notifications_outlined),
+                          )
+                        : const Icon(Icons.notifications_outlined),
+                    selectedIcon: unread > 0
+                        ? Badge(
+                            label: Text(unread > 99 ? '99+' : '$unread'),
+                            child: const Icon(Icons.notifications),
+                          )
+                        : const Icon(Icons.notifications),
                 label: '通知',
               ),
               const NavigationDestination(
@@ -310,12 +329,28 @@ class _AppShellState extends ConsumerState<AppShell> {
                 label: '我的',
               ),
             ],
-          ),
-        ),
+          ), // NavigationBar
+          ), // ClipRect
+        ), // AnimatedContainer
+        ), // Scaffold
         // Draggable compose FAB. Tap = open compose; drag = reposition
         // (persisted). Lets the user move it off any sheet/menu/popup that
         // would otherwise be occluded by a fixed bottom-right button.
-        Positioned(left: pos.dx, top: pos.dy, child: _buildFab(context)),
+        // In immersive mode it shrinks out with the chrome on scroll-down.
+        Positioned(
+          left: pos.dx,
+          top: pos.dy,
+          child: AnimatedScale(
+            scale: hideBars ? 0 : 1,
+            duration: animDuration,
+            curve: Curves.easeOut,
+            child: AnimatedOpacity(
+              opacity: hideBars ? 0 : 1,
+              duration: animDuration,
+              child: _buildFab(context),
+            ),
+          ),
+        ),
         if (_showOnboarding) OnboardingOverlay(onDone: _finishOnboarding),
       ],
     );

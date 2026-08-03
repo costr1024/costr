@@ -14,6 +14,7 @@ library;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
 /// Public mirror proxy prefix. Append the FULL original URL (including its
 /// own scheme) to route through an unblocked domain:
@@ -24,6 +25,59 @@ String proxiedUrl(String original) {
   if (original.startsWith('https://proxy.bostr.online/')) return original;
   return 'https://proxy.bostr.online/$original';
 }
+
+/// Hard cap on a media fetch (connect + send + receive-headers). The default
+/// [HttpFileService] / [CachedNetworkImage] has NO timeout, so a host blocked
+/// at the network layer (e.g. behind the GFW) hangs on the OS TCP timer
+/// (~30–60s) before the error callback fires — making the "代理媒体"
+/// affordance take a minute to appear, and the user wait ages for any
+/// failure feedback. 8s is long enough for a slow-but-working origin yet
+/// short enough to surface failures fast.
+const Duration _kMediaTimeout = Duration(seconds: 8);
+
+/// [FileService] that wraps the default [HttpFileService] with:
+/// - a hard [_kMediaTimeout] on each GET (connect+send+headers), so blocked
+///   hosts fail fast instead of hanging;
+/// - a browser-like User-Agent (some media hosts/proxies 403 non-browser
+///   UAs — the bare Dart/`http` default UA caused proxy.bostr.online loads
+///   to fail in-app while the same URL worked in the phone browser).
+///
+/// The response BODY stream isn't timeout-bounded here (the cache manager
+/// drains it after [get] returns); a server that sends headers then stalls
+/// the body is rare and the connect/send timeout covers the dominant
+/// GFW-block case.
+class _TimedHttpFileService extends HttpFileService {
+  @override
+  Future<FileServiceResponse> get(
+    String url, {
+    Map<String, String>? headers,
+  }) {
+    final h = headers ?? const <String, String>{};
+    if (!h.containsKey('User-Agent')) {
+      headers = {
+        ...h,
+        'User-Agent': 'Costr/0.3 (Nostr client; +https://github.com/costr1024/costr)',
+      };
+    }
+    return super.get(url, headers: headers).timeout(_kMediaTimeout);
+  }
+}
+
+/// Singleton [CacheManager] backed by [_TimedHttpFileService] so EVERY
+/// CostrNetworkImage load (avatars, post images/videos) gets the timeout +
+/// UA fix while keeping disk caching (cross-session, 30-day, 200-object
+/// LRU). A singleton is required — flutter_cache_manager opens a SQLite DB
+/// per CacheManager instance, so creating one per image leaks file handles.
+CacheManager? _proxyMediaCacheManager;
+CacheManager get proxyMediaCacheManager =>
+    _proxyMediaCacheManager ??= CacheManager(
+      Config(
+        'costr_media_lib',
+        stalePeriod: const Duration(days: 30),
+        maxNrOfCacheObjects: 200,
+        fileService: _TimedHttpFileService(),
+      ),
+    );
 
 /// True if [error] looks like a transient network/blocking failure that's
 /// worth retrying through the proxy; false for a definitive "not found"
@@ -59,7 +113,6 @@ class CostrNetworkImage extends StatefulWidget {
     this.errorWidget,
     this.memCacheHeight,
     this.borderRadius,
-    this.onError,
   });
 
   final String url;
@@ -72,56 +125,28 @@ class CostrNetworkImage extends StatefulWidget {
   final int? memCacheHeight;
   final double? borderRadius;
 
-  /// Fired when the load fails (origin or proxy attempt). The post uses this
-  /// to decide whether to show its "代理媒体" affordance.
-  final ValueChanged<bool>? onError;
-
   @override
   State<CostrNetworkImage> createState() => _CostrNetworkImageState();
 }
 
 class _CostrNetworkImageState extends State<CostrNetworkImage> {
-  // Whether this attempt has already reported a failure (avoid duplicate
-  // onError fires for a single load attempt).
-  bool _reportedFailure = false;
-
-  @override
-  void didUpdateWidget(covariant CostrNetworkImage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // A new URL or a forceProxy flip starts a fresh attempt → re-enable
-    // failure reporting so the post can re-track.
-    if (widget.url != oldWidget.url ||
-        widget.forceProxy != oldWidget.forceProxy) {
-      _reportedFailure = false;
-    }
-  }
-
-  void _fail() {
-    if (_reportedFailure) return;
-    _reportedFailure = true;
-    widget.onError?.call(true);
-  }
-
   @override
   Widget build(BuildContext context) {
     final effectiveUrl =
         widget.forceProxy ? proxiedUrl(widget.url) : widget.url;
     Widget img = CachedNetworkImage(
       imageUrl: effectiveUrl,
+      cacheManager: proxyMediaCacheManager,
       width: widget.width,
       height: widget.height,
       fit: widget.fit,
       memCacheHeight: widget.memCacheHeight,
       placeholder: (c, _) =>
           widget.placeholder?.call(c) ?? const SizedBox.shrink(),
-      errorWidget: (c, _, e) {
-        // Report the failure to the post (once) so it can surface the
-        // "代理媒体" affordance. No automatic proxy swap here.
-        _fail();
-        return widget.errorWidget?.call(c) ??
-            widget.placeholder?.call(c) ??
-            const SizedBox.shrink();
-      },
+      errorWidget: (c, _, e) =>
+          widget.errorWidget?.call(c) ??
+          widget.placeholder?.call(c) ??
+          const SizedBox.shrink(),
       fadeInDuration: Duration.zero,
       fadeOutDuration: Duration.zero,
     );

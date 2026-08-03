@@ -31,27 +31,16 @@ class EventCard extends ConsumerStatefulWidget {
 class _EventCardState extends ConsumerState<EventCard> {
   Event get event => widget.event;
 
-  /// Per-post manual proxy toggle. Flipped on by the "代理媒体" chip —
-  /// rebuilds this post's media through the proxy mirror. Manual only so the
-  /// public proxy isn't overwhelmed by auto-retrying every failed image.
+  /// Per-post manual proxy toggle. Flipped by the "代理媒体" button in the
+  /// name bar (only shown when [proxyMediaEnabledProvider] is ON and the post
+  /// actually has media). Rebuilds this post's media through the proxy
+  /// mirror. Manual per-post so the public proxy only serves what the user
+  /// explicitly asked it to.
   bool _proxyMedia = false;
 
-  /// Count of currently-failed media loads in this post. Drives whether the
-  /// "代理媒体" chip is shown (only when there's something to retry AND the
-  /// user hasn't already opted in this post).
-  int _failedMedia = 0;
-
-  void _onMediaFailed(bool failed) {
-    if (!failed) return;
+  void _toggleProxy() {
     if (!mounted) return;
-    setState(() => _failedMedia += 1);
-  }
-
-  void _enableProxy() {
-    setState(() {
-      _proxyMedia = true;
-      _failedMedia = 0; // reset; images rebuild with proxy URL and re-report.
-    });
+    setState(() => _proxyMedia = !_proxyMedia);
   }
 
   @override
@@ -104,14 +93,20 @@ class _EventCardState extends ConsumerState<EventCard> {
                           _relativeTime(event.createdAt),
                           style: theme.textTheme.labelSmall,
                         ),
-                        // Per-post manual proxy affordance: shown ONLY when a
-                        // media load in this post has failed AND the user
-                        // hasn't already opted in. Tapping flips [_proxyMedia]
-                        // on → this post's images/videos reload through the
-                        // proxy mirror. Manual so the proxy isn't overwhelmed.
-                        if (_failedMedia > 0 && !_proxyMedia) ...[
+                        // Per-post "代理媒体" toggle. Shown ONLY when the
+                        // user has enabled the proxy-media feature (a LOCAL
+                        // setting, never synced to relays) AND this post
+                        // actually contains image/video links — text-only
+                        // posts hide it. Tapping routes THIS post's media
+                        // through proxy.bostr.online. Hidden entirely when
+                        // the feature is off.
+                        if (ref.watch(proxyMediaEnabledProvider) &&
+                            postHasMedia(event)) ...[
                           const SizedBox(width: 6),
-                          _ProxyMediaChip(onTap: _enableProxy),
+                          _ProxyMediaButton(
+                            active: _proxyMedia,
+                            onTap: _toggleProxy,
+                          ),
                         ],
                         _PostMenu(event: event),
                       ],
@@ -133,7 +128,6 @@ class _EventCardState extends ConsumerState<EventCard> {
                     _NsfwAwareContent(
                       event: event,
                       proxyMedia: _proxyMedia,
-                      onMediaFailed: _onMediaFailed,
                     ),
                     if (event.hashtags.isNotEmpty) ...[
                       const SizedBox(height: 8),
@@ -176,25 +170,32 @@ class _EventCardState extends ConsumerState<EventCard> {
 /// Per-post "代理媒体" affordance. Compact (two CJK glyphs + label) so it fits
 /// in the name bar beside the nickname + time without overflow. Tapping opts
 /// this post's failed media into loading through the proxy mirror.
-class _ProxyMediaChip extends StatelessWidget {
-  const _ProxyMediaChip({required this.onTap});
+class _ProxyMediaButton extends StatelessWidget {
+  const _ProxyMediaButton({required this.active, required this.onTap});
+  final bool active;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    // Active state = media is currently loading through the proxy mirror
+    // (filled brand chip). Inactive = origin only (outlined chip). Compact
+    // so it sits inline with the nickname + time without overflowing.
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
-          color: CostrColors.bg2,
+          color: active ? CostrColors.brand : Colors.transparent,
           borderRadius: BorderRadius.circular(4),
+          border: active
+              ? null
+              : Border.all(color: CostrColors.brand.withValues(alpha: 0.5)),
         ),
         child: Text(
           '代理媒体',
           style: TextStyle(
             fontSize: 11,
-            color: CostrColors.brand,
+            color: active ? Colors.white : CostrColors.brand,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -411,11 +412,9 @@ class _NsfwAwareContent extends ConsumerStatefulWidget {
   const _NsfwAwareContent({
     required this.event,
     this.proxyMedia = false,
-    this.onMediaFailed,
   });
   final Event event;
   final bool proxyMedia;
-  final ValueChanged<bool>? onMediaFailed;
 
   @override
   ConsumerState<_NsfwAwareContent> createState() => _NsfwAwareContentState();
@@ -431,7 +430,6 @@ class _NsfwAwareContentState extends ConsumerState<_NsfwAwareContent> {
       return MarkdownContent(
         event: widget.event,
         proxyMedia: widget.proxyMedia,
-        onMediaFailed: widget.onMediaFailed,
       );
     }
     // NSFW warning overlay.
@@ -457,7 +455,6 @@ class _NsfwAwareContentState extends ConsumerState<_NsfwAwareContent> {
                   child: MarkdownContent(
                     event: widget.event,
                     proxyMedia: widget.proxyMedia,
-                    onMediaFailed: widget.onMediaFailed,
                   ),
                 ),
               ),

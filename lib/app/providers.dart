@@ -27,7 +27,6 @@ import '../nostr/relay_pool.dart';
 import '../services/local_cache.dart' as cache;
 import '../services/blossom_upload.dart';
 import '../services/secure_storage_service.dart';
-import '../utils/language.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -432,12 +431,14 @@ final bootstrapProvider = FutureProvider<void>((ref) async {
       }
     });
   }
-  // Cache cleanup 30s after startup (avoids startup jank).
+  // Cache cleanup 30s after startup (avoids startup jank). Own posts are
+  // exempt from the TTL (see cleanupOldEvents): they're notification targets.
   Timer(const Duration(seconds: 30), () async {
     final cache = ref.read(localCacheProvider).value;
     if (cache == null) return;
     try {
-      await cache.cleanupOldEvents(ttlDays: 30);
+      final me = ref.read(identityProvider).value?.pubkeyHex;
+      await cache.cleanupOldEvents(ttlDays: 30, ownPubkey: me);
       await cache.enforceSizeCap();
       await cache.vacuum();
     } catch (_) {}
@@ -828,6 +829,88 @@ class FeedModeNotifier extends Notifier<FeedMode> {
 final feedModeProvider = NotifierProvider<FeedModeNotifier, FeedMode>(
   FeedModeNotifier.new,
 );
+
+// --- Proxy media (LOCAL-only toggle; never published to a relay) ---------
+
+/// Whether the per-post "代理媒体" affordance is shown at all. This is a
+/// client-side fetch preference (how Costr retrieves media), NOT part of the
+/// user's Nostr identity, so it lives in the LOCAL SQLite config table and is
+/// never signed/published.
+///
+/// When ON: every post that contains image/video links shows a compact
+/// "代理媒体" toggle to the right of the nickname; tapping it routes THAT
+/// post's media through `proxy.bostr.online` (forceProxy). When OFF: the
+/// toggle never appears — media loads from origin only, and failures show
+/// the error placeholder fast (the timed FileService caps fetches at 8s).
+final savedProxyMediaProvider = FutureProvider<bool>((ref) async {
+  final cache = await ref.read(localCacheProvider.future);
+  return (await cache.readConfig('proxy_media')) == 'true';
+});
+
+class ProxyMediaNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    // Default OFF until the persisted value loads; rebuilds to the saved
+    // choice once [savedProxyMediaProvider] resolves.
+    return ref.watch(savedProxyMediaProvider).value ?? false;
+  }
+
+  Future<void> set(bool v) async {
+    if (v == state) return;
+    state = v;
+    final cache = await ref.read(localCacheProvider.future);
+    await cache.writeConfig('proxy_media', v ? 'true' : 'false');
+  }
+}
+
+final proxyMediaEnabledProvider =
+    NotifierProvider<ProxyMediaNotifier, bool>(ProxyMediaNotifier.new);
+
+// --- Immersive browse (LOCAL-only toggle; never published to a relay) ------
+
+/// Whether the immersive-browsing feature is on (hide the top app bar + bottom
+/// nav + FAB when the user scrolls DOWN, restore on scroll UP — Amethyst
+/// pattern). LOCAL client preference, NOT part of the Nostr identity → stored
+/// in the SQLite config table, never signed/published. Default OFF so the
+/// chrome stays put until the user opts in.
+final savedImmersiveBrowseProvider = FutureProvider<bool>((ref) async {
+  final cache = await ref.read(localCacheProvider.future);
+  return (await cache.readConfig('immersive_browse')) == 'true';
+});
+
+class ImmersiveBrowseNotifier extends Notifier<bool> {
+  @override
+  bool build() => ref.watch(savedImmersiveBrowseProvider).value ?? false;
+
+  Future<void> set(bool v) async {
+    if (v == state) return;
+    state = v;
+    final cache = await ref.read(localCacheProvider.future);
+    await cache.writeConfig('immersive_browse', v ? 'true' : 'false');
+  }
+}
+
+final immersiveBrowseProvider =
+    NotifierProvider<ImmersiveBrowseNotifier, bool>(ImmersiveBrowseNotifier.new);
+
+/// Global "are the app bars currently visible" state. Scrolled surfaces
+/// ([ImmersiveScrollDetector]) drive this DOWN when the user scrolls toward
+/// the bottom and UP back to true. Only consulted when
+/// [immersiveBrowseProvider] is on; when the toggle is off the bars never
+/// hide (each consumer ANDs with the toggle), so default-true is a safe
+/// no-op.
+class AppBarsVisibleNotifier extends Notifier<bool> {
+  @override
+  bool build() => true;
+
+  void setVisible(bool v) {
+    if (v == state) return;
+    state = v;
+  }
+}
+
+final appBarsVisibleProvider =
+    NotifierProvider<AppBarsVisibleNotifier, bool>(AppBarsVisibleNotifier.new);
 
 // --- Text scale (global font size) -----------------------------------------
 
@@ -1617,7 +1700,10 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
       LanguageFilter.ja => 'ja',
       LanguageFilter.all => '',
     };
-    events = events.where((e) => detectLanguage(e.content) == want);
+    // [Event.language] is memoized per event instance — the store dedupes by
+    // id and reuses instances across rebuilds, so each event's content is
+    // regex-scanned once, not on every 200ms store flush.
+    events = events.where((e) => e.language == want);
   }
   if (tag != null) {
     events = events.where((e) => e.hashtags.contains(tag));
@@ -1643,7 +1729,10 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
 });
 
 /// Find an event by id: hit SQLite first (O(1) PK), then in-memory store,
-/// else fetch via REQ {ids:[id]}.
+/// else fetch via REQ {ids:[id]} on the main pool, else a NIP-65 outbox
+/// fallback on the user's own write relays (the most common miss is a
+/// notification target — one of the user's OWN posts — that the connected
+/// relays no longer serve).
 final eventByIdProvider = FutureProvider.family<Event?, String>((
   ref,
   id,
@@ -1661,25 +1750,74 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
   for (final e in store) {
     if (e.id == id) return e;
   }
-  // 3. Relay REQ.
+  // 3. Relay REQ broadcast to the main pool. Capped at 8s; resolves early
+  //    (null) once EVERY relay has answered EOSE with nothing, so a fast
+  //    all-miss doesn't make the detail page sit out the full timeout.
   final pool = ref.watch(relayPoolProvider);
   final completer = Completer<Event?>();
-  late StreamSubscription<Event> sub;
-  sub = pool.rawEvents.listen((e) {
+  final relayCount = pool.states.length;
+  var eoses = 0;
+  final sub = pool.rawEvents.listen((e) {
     if (e.id == id && !completer.isCompleted) completer.complete(e);
   });
   final subId = nextSubId('note');
+  final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (relayCount > 0 && eoses >= relayCount && !completer.isCompleted) {
+      completer.complete(null);
+    }
+  });
   pool.request(subId, <String, dynamic>{
     'ids': [id],
   }, closeOnEose: true);
   ref.onDispose(() {
     sub.cancel();
+    eoseSub.cancel();
     pool.closeSubscription(subId);
   });
-  return completer.future.timeout(
-    const Duration(seconds: 5),
-    onTimeout: () => null,
-  );
+  Event? hit;
+  try {
+    hit = await completer.future.timeout(
+      const Duration(seconds: 8),
+      onTimeout: () => null,
+    );
+  } finally {
+    // Free the listeners + relay sub as soon as the lookup settles — the
+    // FutureProvider itself stays cached, and a per-opened-post rawEvents
+    // listener left attached would accumulate over a session.
+    await sub.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+  }
+  if (hit != null) return hit;
+  // 4. NIP-65 outbox fallback: ask the user's OWN write relays. Reaction/
+  //    reply/repost notifications always target the user's own posts, and
+  //    those can outlive the connected relay set (relay list edited after
+  //    posting, relays pruning old events, or the post made from another
+  //    client whose write relays aren't connected here). Harmless one-shot
+  //    for non-own ids too (the write relays simply answer EOSE).
+  final me = ref.read(identityProvider).value?.pubkeyHex;
+  if (me != null) {
+    final rl = await ref.read(userRelayListProvider(me).future);
+    final urls = rl?.write ?? const <String>[];
+    if (urls.isNotEmpty) {
+      final fetched = await pool.fetchFromUrls(
+        <String, dynamic>{
+          'ids': [id],
+        },
+        urls,
+        timeout: const Duration(seconds: 5),
+      );
+      for (final e in fetched) {
+        if (e.id == id) {
+          // Cache in store + SQLite so a repeat open is instant.
+          unawaited(ref.read(eventStoreProvider.notifier).ingest(e));
+          return e;
+        }
+      }
+    }
+  }
+  return null;
 });
 
 /// Parse the note a repost embeds, from the repost's OWN content. NIP-18:
@@ -2783,7 +2921,13 @@ final reactionsProvider =
         if (e.kind != 7) continue;
         for (final t in e.tags) {
           if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
-            final key = e.content.isEmpty ? '+' : e.content;
+            // NIP-25: empty content OR literal "+" = the default "like".
+            // Normalize to 👍 so the chip shows a real glyph instead of a bare
+            // "+" (which users mistook for an unknown UI control). Clients that
+            // send emoji content (🔥 / :shortcode:) keep their own key.
+            final raw = e.content;
+            final key =
+                (raw.isEmpty || raw == '+') ? '👍' : raw;
             final prev = tallies[key];
             // For NIP-30 custom-emoji reactions (content `:shortcode:`), surface
             // the image URL from the kind-7 `["emoji", shortcode, url]` tag so the
@@ -2916,7 +3060,14 @@ final repliesProvider = StreamProvider.family<List<Event>, String>((
   ref,
   eventId,
 ) async* {
-  // 1. SQLite cache (instant).
+  // 1. SQLite cache (instant). ALWAYS yield — even an empty list — so the
+  // provider resolves to AsyncData immediately. Without this, a first-visit
+  // post whose replies are still in flight (and whose outbox phase hangs,
+  // see outboxPhase timeout below) would leave the provider in AsyncLoading
+  // forever → a perpetual spinner under the reply list even when there are
+  // zero replies. An empty initial yield shows "暂无回复" for a split second
+  // until live replies stream in — a brief flash, far better than an
+  // eternal spinner.
   final cache = ref.read(localCacheProvider).value;
   final merged = <String, Event>{}; // id -> event
   if (cache != null) {
@@ -2927,7 +3078,7 @@ final repliesProvider = StreamProvider.family<List<Event>, String>((
       }
     } catch (_) {}
   }
-  if (merged.isNotEmpty) yield _snapshotSorted(merged);
+  yield _snapshotSorted(merged);
 
   // 2. Relay refresh — stream fresh replies, 250ms debounced.
   final pool = ref.watch(relayPoolProvider);
@@ -3001,7 +3152,13 @@ final repliesProvider = StreamProvider.family<List<Event>, String>((
     }
   }
 
-  final outboxFuture = outboxPhase();
+  // Bound the outbox phase so a hanging userRelayListProvider (or a stuck
+  // fetchFromUrls) can't keep the stream open forever — without this the
+  // final-snapshot close never fires and the provider stays AsyncLoading for
+  // the whole session (perpetual spinner). 10s matches fetchFromUrls' own
+  // cap; the default-pool phase is independently bounded by the 10s `done`
+  // timer, so the stream resolves within ~10–12s worst case.
+  final outboxFuture = outboxPhase().timeout(const Duration(seconds: 10));
   Future.wait<void>([done.future, outboxFuture]).whenComplete(() {
     flush?.cancel();
     // Always emit a final snapshot before closing. Without this, a stream
@@ -3729,6 +3886,26 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
       if (e.createdAt < cachedCreatedAt) return; // don't regress to older.
       cachedCreatedAt = e.createdAt;
       anyHit = true;
+      // Persist the newer kind-0 to SQLite so the NEXT cold start reads it
+      // instantly (tier-1) instead of regressing to the stale cache. This
+      // matters for metadata that arrives via the INDEXER pool: the
+      // EventStoreNotifier only listens to the default pool, so without this
+      // an indexer-only kind-0 would never land in SQLite and the avatar
+      // would revert to the old cache on every cold start.
+      final db = cache;
+      if (db != null) {
+        unawaited(db.writeEvent(
+          id: e.id,
+          pubkey: e.pubkey,
+          kind: 0,
+          createdAt: e.createdAt,
+          content: e.content,
+          sig: e.sig,
+          raw: jsonEncode(e.toWireObject()),
+          tagsJson: jsonEncode(e.tags),
+          tags: e.tags,
+        ));
+      }
       ctrl.add(Metadata.fromJson(json));
     } catch (_) {
       // Malformed metadata content — ignore, keep waiting for EOSE.
@@ -3811,12 +3988,19 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
     'limit': 1,
   }, closeOnEose: true);
   defEose = defaultPool.eoseStream.where((s) => s == defId).listen((_) {
-    // Default pool done. If we already have metadata, stop; else keep
-    // waiting for the indexer (the comprehensive source) to EOSE.
-    if (anyHit || cached != null) closeAll();
+    // Default pool done. Only stop early if it found NEWER metadata
+    // (anyHit). Do NOT short-circuit on a stale SQLite cache (`cached !=
+    // null`) — that would tear down the indexer REQ before the
+    // comprehensive aggregator can return the user's *latest* kind-0 (it
+    // often has metadata the default pool lacks). The old short-circuit
+    // left the avatar stuck on the stale cache for the whole first cold
+    // start of a new app version (the global-feed subscription only
+    // persisted the newer kind-0 in the background, so it took a second
+    // cold start to appear).
+    if (anyHit) closeAll();
   });
   defTimer = Timer(const Duration(seconds: 8), () {
-    if (anyHit || cached != null) closeAll();
+    if (anyHit) closeAll();
   });
 
   // Indexer phase (concurrent). Its EOSE ends the lookup — it's the

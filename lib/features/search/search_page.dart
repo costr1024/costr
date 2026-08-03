@@ -14,6 +14,7 @@ import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/immersive.dart';
 import '../feed/event_card.dart';
 
 enum _SearchTab { all, posts, users }
@@ -40,8 +41,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
+    return ImmersiveScaffold(
+      topBar: AppBar(
         titleSpacing: 0,
         title: Padding(
           padding: const EdgeInsets.only(right: 12),
@@ -85,7 +86,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               onSelectionChanged: (s) => setState(() => _tab = s.first),
             ),
           ),
-          Expanded(child: _buildBody()),
+          Expanded(child: ImmersiveScrollDetector(child: _buildBody())),
         ],
       ),
     );

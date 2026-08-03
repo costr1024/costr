@@ -32,7 +32,19 @@ class PostDetailPage extends ConsumerWidget {
         error: (Object e, _) => Center(child: Text('加载失败：$e')),
         data: (Event? focused) {
           if (focused == null) {
-            return const Center(child: Text('未找到该帖子（可能未在中继上）'));
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('未找到该帖子（可能未在中继上）'),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: () => ref.invalidate(eventByIdProvider(id)),
+                    child: const Text('重试'),
+                  ),
+                ],
+              ),
+            );
           }
           // chain is root-first ending in focused; null while still loading.
           final chain = chainAv.value ?? const <Event>[];
