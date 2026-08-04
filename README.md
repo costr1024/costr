@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.6-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.6.1-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6.1-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta）。
 
 ---
 
@@ -311,7 +311,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 点回复/点赞通知跳到具体回帖/被点赞帖而非 root 主贴；自己的帖发帖后立即进关注信息流；
 个人主页加载完整帖子/回帖历史（修复只显示几条、刷新刷不出更多）。
 
-**v0.6-beta 后续修复**（主干，下个版本发布）：
+**v0.6.1-beta 相对 v0.6-beta 的修复**（详见 [v0.6.1-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.6.1-beta)）：
 覆盖升级不再卡死（启动时探测继承的本地缓存库，损坏/卡住自动隔离重建 + keystore 读取限时 +
 启动看门狗与「重置本地缓存并重试」兜底）；点赞通知正确跳到被点赞的帖子
 （此前点赞较旧的帖子会误跳到点赞事件本身）；回帖通知打开线程页自动滚动并高亮定位到那条回帖
