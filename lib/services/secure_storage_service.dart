@@ -11,6 +11,7 @@
 /// single-user host where OS keystore auto-unlock is not set up.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -115,8 +116,21 @@ class SecureStorageService {
   Future<String?> readNsec() async {
     if (_secureOk) {
       try {
-        final v = await _secure.read(key: _nsecKey);
+        // Bounded: on some Android devices the Keystore read HANGS after an
+        // overlay upgrade (entry carried over, keystore in a bad state) —
+        // identity is the first thing bootstrap awaits, so an unbounded
+        // read here freezes the app on the splash screen. Time out and fall
+        // back to the file store instead of hanging forever.
+        final v = await _secure
+            .read(key: _nsecKey)
+            .timeout(const Duration(seconds: 8));
         return v;
+      } on TimeoutException {
+        debugPrint(
+          '[costr] secureStorage.read timed out (keystore hung), '
+          'using file fallback',
+        );
+        _secureOk = false;
       } catch (e, s) {
         debugPrint(
           '[costr] secureStorage.read failed, using file fallback: $e',

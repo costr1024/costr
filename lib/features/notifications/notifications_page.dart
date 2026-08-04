@@ -182,7 +182,18 @@ final notificationsProvider =
         if (!mentionsMe && referencedId == null) return;
 
         final type = _classify(e, mentionsMe, referencedId != null);
-        final itemKey = notificationItemKey(type, e, referencedId);
+        // Navigation + aggregation target. For reactions/reposts this is the
+        // post interacted with: prefer the gated referencedId, but when it
+        // misses (liked/reposted own post is OLDER than the recent-200 own
+        // posts held in memory) fall back to the un-gated primary e-tag —
+        // otherwise targetEventId stayed null and the tap fell back to the
+        // kind-7/6 event itself ("点赞通知跳到点赞事件本身" bug).
+        final targetId =
+            (type == NotificationType.reaction ||
+                type == NotificationType.repost)
+            ? (referencedId ?? primaryETagTarget(e))
+            : referencedId;
+        final itemKey = notificationItemKey(type, e, targetId);
 
         // Aggregate: if an item with the same type+target exists, add this pubkey.
         final existing = items.where((i) => i.id == itemKey).firstOrNull;
@@ -218,7 +229,7 @@ final notificationsProvider =
               extraCount: 0,
               time: e.createdAt,
               preview: preview,
-              targetEventId: referencedId,
+              targetEventId: targetId,
               sourceEventId: e.id,
               eventContent: e.content,
               reactionEmoji: emoji,
@@ -273,25 +284,17 @@ NotificationType _classify(Event e, bool mentionsMe, bool interactsMyPost) {
   return NotificationType.mention;
 }
 
-/// The id of the user's own post an incoming event interacts with, or null.
-///
-/// NIP-10 marker precedence (reply > positional > root) restricted to
-/// [myEventIds]: a reply/reaction that carries BOTH a root and a reply
-/// `e`-tag — both mine (e.g. I wrote the thread root AND the post being
-/// replied to) — must resolve to the post actually interacted with, NOT the
-/// thread root. The old first-match scan grabbed the root (tags list it
-/// first), so tapping the notification opened the root main post instead of
-/// the replied/liked post ("跳到 root 主贴" bug). `mention` markers are never
-/// interactions.
-@visibleForTesting
-String? notificationReferencedId(Event e, Set<String> myEventIds) {
+/// NIP-10 marker precedence (reply > positional > root) over [e]'s `e` tags.
+/// When [onlyIds] is given, only ids in that set are considered (gated);
+/// otherwise every `e` tag is a candidate (un-gated).
+String? _primaryETagTarget(Event e, {Set<String>? onlyIds}) {
   String? replyRef;
   String? positionalRef;
   String? rootRef;
   for (final t in e.tags) {
     if (t.length < 2 || t[0] != 'e' || t[1] is! String) continue;
     final id = t[1] as String;
-    if (!myEventIds.contains(id)) continue;
+    if (onlyIds != null && !onlyIds.contains(id)) continue;
     final marker = (t.length >= 4 && t[3] is String) ? (t[3] as String) : '';
     if (marker == 'reply') {
       replyRef ??= id;
@@ -304,9 +307,32 @@ String? notificationReferencedId(Event e, Set<String> myEventIds) {
   return replyRef ?? positionalRef ?? rootRef;
 }
 
+/// The id of the user's own post an incoming event interacts with, or null.
+///
+/// NIP-10 marker precedence (reply > positional > root) restricted to
+/// [myEventIds]: a reply/reaction that carries BOTH a root and a reply
+/// `e`-tag — both mine (e.g. I wrote the thread root AND the post being
+/// replied to) — must resolve to the post actually interacted with, NOT the
+/// thread root. The old first-match scan grabbed the root (tags list it
+/// first), so tapping the notification opened the root main post instead of
+/// the replied/liked post ("跳到 root 主贴" bug). `mention` markers are never
+/// interactions.
+@visibleForTesting
+String? notificationReferencedId(Event e, Set<String> myEventIds) =>
+    _primaryETagTarget(e, onlyIds: myEventIds);
+
+/// The post an event references via `e` tags (NIP-10 precedence), NOT gated
+/// on [myEventIds]. Used as the navigation/aggregation target for reactions
+/// and reposts when the gated [notificationReferencedId] misses: `myEventIds`
+/// only holds the recent-200 own posts currently in memory, so a like on an
+/// OLDER own post resolved to null there and the tap fell back to the kind-7
+/// reaction event itself ("点赞通知跳到点赞事件本身" bug). The reaction's
+/// `e` tag still names the liked post — use it directly.
+@visibleForTesting
+String? primaryETagTarget(Event e) => _primaryETagTarget(e);
+
 /// Aggregation key for an incoming event — two events that should collapse
 /// into one notification item return the same key.
-///
 /// For most types this is `type:target` so multiple people interacting with
 /// the same post roll up into one grouped item. Follow is special: a contact
 /// list (kind 3) is re-published on every follow/unfollow change with a
@@ -320,6 +346,31 @@ String notificationItemKey(
 ) {
   if (type == NotificationType.follow) return 'follow:${e.pubkey}';
   return '${type.name}:${referencedId ?? e.id}';
+}
+
+/// The event id the detail page should open when [item] is tapped, or null
+/// (follow items navigate to a profile instead).
+///
+/// - reply / mention / quote: open the INCOMING post itself (the reply, the
+///   mentioning note) — that's the new content the user wants to read
+///   ("跳转到我点击的那条回帖"). [NotificationItem.targetEventId] is the
+///   user's OWN post, which is wrong here.
+/// - reaction / repost: open the user's OWN post that was interacted with
+///   ("被点赞/转发的帖子"). [NotificationItem.sourceEventId] is a kind-7/6
+///   event, not a displayable post, so prefer targetEventId.
+@visibleForTesting
+String? notificationNavTarget(NotificationItem item) {
+  switch (item.type) {
+    case NotificationType.reply:
+    case NotificationType.mention:
+    case NotificationType.quote:
+      return item.sourceEventId ?? item.targetEventId;
+    case NotificationType.reaction:
+    case NotificationType.repost:
+      return item.targetEventId ?? item.sourceEventId;
+    case NotificationType.follow:
+      return null;
+  }
 }
 
 /// The 2-line preview text shown under the notification head, or null.
@@ -678,26 +729,8 @@ class _NotificationTile extends ConsumerWidget {
           }
           return;
         }
-        // Navigation target depends on the type:
-        // - reply / mention / quote: open the INCOMING post itself (the reply,
-        //   the mentioning note) — that's the new content the user wants to
-        //   read ("跳转到我点击的那条回帖"). targetEventId is the user's OWN
-        //   post, which is wrong here.
-        // - reaction / repost: open the user's OWN post that was interacted
-        //   with ("被点赞/转发的帖子"). sourceEventId is a kind-7/6 event, not
-        //   a displayable post, so prefer targetEventId.
-        String? target;
-        switch (item.type) {
-          case NotificationType.reply:
-          case NotificationType.mention:
-          case NotificationType.quote:
-            target = item.sourceEventId ?? item.targetEventId;
-          case NotificationType.reaction:
-          case NotificationType.repost:
-            target = item.targetEventId ?? item.sourceEventId;
-          case NotificationType.follow:
-            target = null; // handled above
-        }
+        // Navigation target per type — see [notificationNavTarget].
+        final target = notificationNavTarget(item);
         if (target != null) {
           pushPostDetail(context, target);
         }

@@ -133,17 +133,39 @@ class _Splash extends StatelessWidget {
   }
 }
 
-class _ErrorView extends StatelessWidget {
+class _ErrorView extends ConsumerWidget {
   const _ErrorView(this.message);
   final String message;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text('启动失败：$message'),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('启动失败：$message', textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              FilledButton(
+                onPressed: () => ref.invalidate(bootstrapProvider),
+                child: const Text('重试'),
+              ),
+              const SizedBox(height: 10),
+              // Escape hatch for the overlay-upgrade wedge: delete the local
+              // cache files (login key is in the OS keystore, NOT this DB, so
+              // nothing is lost except cached posts) and bootstrap again.
+              OutlinedButton(
+                onPressed: () async {
+                  await resetLocalCacheFiles();
+                  ref.invalidate(localCacheProvider);
+                  ref.invalidate(bootstrapProvider);
+                },
+                child: const Text('重置本地缓存并重试'),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -7,6 +7,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -76,10 +77,69 @@ const List<String> indexerRelays = <String>[
 
 // --- Local cache (drift/SQLite) — provider ---
 
+/// Open (and validate) the local cache at [dbPath], quarantining a broken
+/// file instead of letting it wedge startup.
+///
+/// Why the probe: the DB file SURVIVES an overlay upgrade (覆盖升级). A file
+/// carried over from an older build can fail to open — corrupt page, broken
+/// FTS index, stale WAL — and because drift opens lazily on the first query,
+/// that failure surfaces at startup: the first query hangs or throws and the
+/// app sits on the splash screen forever ("覆盖升级后打开就卡死，卸载重装才好"
+/// bug — uninstall "fixed" it only because it deleted this file). Guard the
+/// first query with a timeout; on ANY failure rename the broken file aside
+/// (kept on disk for diagnosis) and open a fresh cache — the same outcome as
+/// uninstall+reinstall, without losing the login or waiting on a hang.
+@visibleForTesting
+Future<cache.LocalCache> openLocalCache(String dbPath) async {
+  var db = cache.LocalCache.open(dbPath);
+  try {
+    await db
+        .customSelect('SELECT 1 AS ok')
+        .getSingle()
+        .timeout(const Duration(seconds: 10));
+    return db;
+  } catch (_) {
+    try {
+      await db.close().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // The background isolate may itself be wedged — leak it; the file is
+      // about to be renamed out from under it anyway.
+    }
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    for (final suffix in const ['', '-wal', '-shm']) {
+      final f = File('$dbPath$suffix');
+      if (await f.exists()) {
+        try {
+          await f.rename('$dbPath.corrupt-$stamp$suffix');
+        } catch (_) {
+          try {
+            await f.delete();
+          } catch (_) {}
+        }
+      }
+    }
+    return cache.LocalCache.open(dbPath);
+  }
+}
+
+/// Delete the local SQLite cache files (costr.db + WAL/SHM sidecars). The
+/// startup error screen's 「重置本地缓存」 escape hatch when an inherited DB
+/// wedges bootstrap even past the [openLocalCache] probe.
+Future<void> resetLocalCacheFiles() async {
+  try {
+    final dir = await getApplicationDocumentsDirectory();
+    final dbPath = p.join(dir.path, 'costr.db');
+    for (final suffix in const ['', '-wal', '-shm']) {
+      final f = File('$dbPath$suffix');
+      if (await f.exists()) await f.delete();
+    }
+  } catch (_) {}
+}
+
 final localCacheProvider = FutureProvider<cache.LocalCache>((ref) async {
   final dir = await getApplicationDocumentsDirectory();
   final dbPath = p.join(dir.path, 'costr.db');
-  final db = cache.LocalCache.open(dbPath);
+  final db = await openLocalCache(dbPath);
   ref.onDispose(db.close);
   return db;
 });
@@ -397,6 +457,19 @@ final Map<String, _CachedRelayList> _relayListCache = {};
 /// waits on this before resolving redirects, avoiding a cold-start race.
 /// Also triggers cache cleanup 30s after startup (Jumble pattern).
 final bootstrapProvider = FutureProvider<void>((ref) async {
+  try {
+    await _runBootstrap(ref).timeout(const Duration(seconds: 30));
+  } on TimeoutException {
+    // Watchdog: identity read (keystore) and relay connect are individually
+    // timeout-guarded, but if startup still wedges for ANY reason the app
+    // must not sit on the splash spinner forever — surface an error state
+    // with retry / 「重置本地缓存」 escape hatches instead (the permanent-
+    // splash half of the overlay-upgrade freeze report).
+    throw StateError('启动超时：本地缓存或中继连接卡住。请先重试；若仍失败，点「重置本地缓存并重试」。');
+  }
+});
+
+Future<void> _runBootstrap(Ref ref) async {
   await ref.watch(identityProvider.future);
   final pool = ref.read(relayPoolProvider);
   await pool.connect();
@@ -443,7 +516,7 @@ final bootstrapProvider = FutureProvider<void>((ref) async {
       await cache.vacuum();
     } catch (_) {}
   });
-});
+}
 
 /// Sign + publish the NIP-65 relay list (kind 10002) for [identity] to
 /// [pool]. Fire-and-forget; safe to call on every cold start (replaceable).

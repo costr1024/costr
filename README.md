@@ -19,6 +19,9 @@
 > **覆盖安装即可**：versionCode 递增、签名密钥不变，Android 允许直接升级安装，
 > 登录 / 关注 / 屏蔽列表 / 收藏 / 本地缓存全部保留，无需卸载旧版。
 > （仅当签名密钥变更导致 INSTALL_FAILED_VERIFICATION_FAILURE 时才需先卸载。）
+> 注：0.6-beta 曾有覆盖升级后启动卡死的个例（旧版本遗留的本地缓存库在个别设备上
+> 打开即卡住）；主干已修复——启动时探测继承的缓存库，损坏/超时自动隔离重建，并加
+> keystore 读取限时与启动看门狗，覆盖升级不再卡死（见「当前状态 → v0.6-beta 后续修复」）。
 >
 > release 包曾缺 `INTERNET` 权限（仅 debug 变体声明），导致 release 连不上中继——
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
@@ -252,7 +255,7 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 ```bash
 flutter pub get          # 安装/刷新依赖
 flutter run -d linux     # 桌面运行（或 android / macos / windows）
-flutter test             # 全套测试（323 个）
+flutter test             # 全套测试（334 个）
 flutter analyze          # 静态分析（须 0 警告）
 dart format lib/ test/   # 格式化
 flutter build linux      # 桌面构建验证
@@ -285,7 +288,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 323 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 334 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -307,6 +310,12 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 主页 5 个过滤/搜索框 X 一键清空；发帖/回帖发送快返（首个中继 OK 即成功，不再等最慢中继）；
 点回复/点赞通知跳到具体回帖/被点赞帖而非 root 主贴；自己的帖发帖后立即进关注信息流；
 个人主页加载完整帖子/回帖历史（修复只显示几条、刷新刷不出更多）。
+
+**v0.6-beta 后续修复**（主干，下个版本发布）：
+覆盖升级不再卡死（启动时探测继承的本地缓存库，损坏/卡住自动隔离重建 + keystore 读取限时 +
+启动看门狗与「重置本地缓存并重试」兜底）；点赞通知正确跳到被点赞的帖子
+（此前点赞较旧的帖子会误跳到点赞事件本身）；回帖通知打开线程页自动滚动并高亮定位到那条回帖
+（此前停留在链路顶端，只看到 root 主贴）。
 
 **v0.5.5-beta 相对 v0.5-beta 的修复**（详见 [v0.5.5-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.5.5-beta)）：
 回复他人帖子发送成功后立即可见（不再需要退出重进主贴——发送即落库 + 刷新父帖回帖列表）；
@@ -358,7 +367,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 323 个测试
+flutter test             # 334 个测试
 flutter build linux      # 桌面构建
 ```
 
