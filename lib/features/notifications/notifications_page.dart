@@ -826,23 +826,21 @@ class _NotificationTile extends ConsumerWidget {
               ),
             ),
             const SizedBox(width: 12),
-            // Avatars (up to 3, overlapping). Transform.translate shifts each
-            // avatar left so they overlap visually; Padding disallows negative
-            // values (asserts padding.isNonNegative), so we must not use a
-            // negative EdgeInsets here.
-            // Fixed 88-wide strip (= 3 avatars of 32 overlapped by 8: 32+24+24)
-            // so the text column starts at the SAME x whether the row shows 1,
-            // 2 or 3 avatars — previously a 3-avatar row's layout width (96)
-            // pushed its text block ~2 avatars right of single-avatar rows
-            // (通知排版错位 screenshot). Transform.translate doesn't affect
+            // Avatars (up to 3, overlapping 50% like X's stacks). Cumulative
+            // -16 offset per index lays them out at x 0/16/32 (visual width
+            // 64); Padding disallows negative values, so we translate instead.
+            // Fixed 64-wide strip so the text column starts at the SAME x
+            // whether the row shows 1, 2 or 3 avatars — previously a 3-avatar
+            // row's layout width pushed its text ~2 avatars right of single
+            // rows (通知排版错位 screenshot). Transform.translate doesn't affect
             // layout, so we pin the strip width here.
             SizedBox(
-              width: 88,
+              width: 64,
               child: Row(
                 children: [
                   for (var i = 0; i < item.pubkeys.length && i < 3; i++)
                     Transform.translate(
-                      offset: Offset(i == 0 ? 0 : -8.0, 0),
+                      offset: Offset(-16.0 * i, 0),
                       child: Avatar(pubkey: item.pubkeys[i], radius: 16),
                     ),
                 ],
