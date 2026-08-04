@@ -397,14 +397,14 @@ String? notificationNavTarget(NotificationItem item) {
 ///   must not also appear as preview text (it would show the literal
 ///   ":shortcode:" token).
 String? notificationPreview(Event e) {
-  if (e.kind == 1 && e.content.isNotEmpty) return e.content;
+  if (e.kind == 1 && e.content.isNotEmpty) return flattenPreview(e.content);
   if (e.kind == 6) {
     if (e.content.isEmpty) return null;
     try {
       final obj = jsonDecode(e.content);
       if (obj is Map) {
         final c = obj['content'];
-        if (c is String && c.isNotEmpty) return c;
+        if (c is String && c.isNotEmpty) return flattenPreview(c);
       }
     } catch (_) {
       // Embedded repost payload wasn't valid JSON — no preview.
@@ -412,6 +412,13 @@ String? notificationPreview(Event e) {
   }
   return null;
 }
+
+/// Collapse every whitespace run (incl. newlines) in a preview to single
+/// spaces. Post bodies nearly always carry newlines ("#Costr\nv0.6-beta发布…")
+/// and rendering them verbatim in the 2-line preview wastes a whole line on
+/// "#Costr" alone (通知排版截图) — flattened, both lines show real content.
+@visibleForTesting
+String flattenPreview(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
 
 /// Kind-7 reaction payload: `(emoji, url?)`. `url` is set for a NIP-30
 /// custom-emoji reaction (rendered as an inline image); null for unicode
@@ -720,7 +727,7 @@ class _InteractPreview extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ev = ref.watch(eventByIdProvider(targetId)).value;
-    final content = ev?.content.trim() ?? '';
+    final content = flattenPreview(ev?.content ?? '');
     if (content.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 4),
@@ -823,14 +830,23 @@ class _NotificationTile extends ConsumerWidget {
             // avatar left so they overlap visually; Padding disallows negative
             // values (asserts padding.isNonNegative), so we must not use a
             // negative EdgeInsets here.
-            Row(
-              children: [
-                for (var i = 0; i < item.pubkeys.length && i < 3; i++)
-                  Transform.translate(
-                    offset: Offset(i == 0 ? 0 : -8.0, 0),
-                    child: Avatar(pubkey: item.pubkeys[i], radius: 16),
-                  ),
-              ],
+            // Fixed 88-wide strip (= 3 avatars of 32 overlapped by 8: 32+24+24)
+            // so the text column starts at the SAME x whether the row shows 1,
+            // 2 or 3 avatars — previously a 3-avatar row's layout width (96)
+            // pushed its text block ~2 avatars right of single-avatar rows
+            // (通知排版错位 screenshot). Transform.translate doesn't affect
+            // layout, so we pin the strip width here.
+            SizedBox(
+              width: 88,
+              child: Row(
+                children: [
+                  for (var i = 0; i < item.pubkeys.length && i < 3; i++)
+                    Transform.translate(
+                      offset: Offset(i == 0 ? 0 : -8.0, 0),
+                      child: Avatar(pubkey: item.pubkeys[i], radius: 16),
+                    ),
+                ],
+              ),
             ),
             const SizedBox(width: 16),
             // Description + preview + time.

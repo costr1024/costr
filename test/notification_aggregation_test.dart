@@ -382,4 +382,25 @@ void main() {
       expect(r.emoji, 'fire');
     });
   });
+
+  group('flattenPreview — no lone first line from raw newlines', () {
+    test('collapses newlines + repeated whitespace to single spaces', () {
+      expect(
+        flattenPreview('#Costr\nv0.6-beta发布，更新内…'),
+        '#Costr v0.6-beta发布，更新内…',
+      );
+      expect(flattenPreview('a\n\nb\t  c'), 'a b c');
+    });
+
+    test('notificationPreview flattens kind-1 and kind-6 content', () {
+      final reply = _ev(
+        kind: 1,
+        id: 'x',
+        pubkey: 'pk',
+        createdAt: 1,
+        content: '第一行\n第二行',
+      );
+      expect(notificationPreview(reply), '第一行 第二行');
+    });
+  });
 }
