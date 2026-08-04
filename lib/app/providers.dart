@@ -105,6 +105,21 @@ Future<cache.LocalCache> openLocalCache(String dbPath) async {
       // The background isolate may itself be wedged — leak it; the file is
       // about to be renamed out from under it anyway.
     }
+    // Keep at most ONE quarantined backup: delete any stale `*.corrupt-*`
+    // files left by earlier failures so repeated corruption can't pile them
+    // up forever (only the freshest is kept for diagnosis). Normal launches
+    // never reach here, so in practice there is no accumulation at all.
+    final dbFile = File(dbPath);
+    final base = p.basename(dbPath);
+    try {
+      await for (final ent in dbFile.parent.list()) {
+        if (p.basename(ent.path).startsWith('$base.corrupt-')) {
+          try {
+            await ent.delete();
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
     final stamp = DateTime.now().millisecondsSinceEpoch;
     for (final suffix in const ['', '-wal', '-shm']) {
       final f = File('$dbPath$suffix');

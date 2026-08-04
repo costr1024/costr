@@ -61,4 +61,31 @@ void main() {
         .toList();
     expect(corrupt, isNotEmpty);
   });
+
+  test('repeated corruption keeps at most ONE quarantined backup', () async {
+    final dir = await Directory.systemTemp.createTemp('costr_cache_repeat');
+    addTearDown(() => dir.delete(recursive: true));
+    final dbPath = '${dir.path}/costr.db';
+
+    // Round 1: corrupt file inherited → quarantined, fresh cache opened.
+    await File(dbPath).writeAsString('garbage one');
+    final db1 = await openLocalCache(dbPath);
+    await db1.close();
+    var corrupt = dir
+        .listSync()
+        .where((f) => f.path.contains('.corrupt-'))
+        .toList();
+    expect(corrupt, hasLength(1));
+
+    // Round 2: the fresh DB breaks again — the stale round-1 backup must be
+    // pruned, not joined by a second one (no unbounded pile-up).
+    await File(dbPath).writeAsString('garbage two');
+    final db2 = await openLocalCache(dbPath);
+    addTearDown(db2.close);
+    corrupt = dir
+        .listSync()
+        .where((f) => f.path.contains('.corrupt-'))
+        .toList();
+    expect(corrupt, hasLength(1), reason: 'stale backups must be pruned');
+  });
 }
