@@ -16,6 +16,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
+import '../../nostr/relay_pool.dart';
 import '../../services/local_cache.dart' as cache;
 import '../../utils/nav.dart';
 import '../../utils/nip19.dart';
@@ -150,6 +151,13 @@ final notificationsProvider =
       // global dedup and the listener would never fire (the "no
       // notifications" bug). Dedup locally by event id instead.
       final seen = <String>{};
+      // Follow gate: only the NEWEST kind-3 revision per author gets judged —
+      // a contact-list revision by a LONG-TIME follower (they followed
+      // someone new and re-published kind 3, still listing me) must not
+      // surface as a fresh "X 开始关注你" ("重复关注通知" bug). Relays answer
+      // the #p REQ newest-first, so the first-seen revision per author is
+      // their latest.
+      final followEvaluated = <String>{};
 
       void emit() {
         dirty = false;
@@ -195,55 +203,77 @@ final notificationsProvider =
             : referencedId;
         final itemKey = notificationItemKey(type, e, targetId);
 
-        // Aggregate: if an item with the same type+target exists, add this pubkey.
-        final existing = items.where((i) => i.id == itemKey).firstOrNull;
-        if (existing != null) {
-          if (!existing.pubkeys.contains(e.pubkey)) {
-            final updated = NotificationItem(
-              type: existing.type,
-              pubkeys: [...existing.pubkeys, e.pubkey].take(5).toList(),
-              extraCount: existing.extraCount + 1,
-              time: e.createdAt,
-              preview: existing.preview,
-              targetEventId: existing.targetEventId,
-              sourceEventId: existing.sourceEventId,
-              eventContent: existing.eventContent,
-              reactionEmoji: existing.reactionEmoji,
-              reactionEmojiUrl: existing.reactionEmojiUrl,
-              id: existing.id,
-              unread: true,
-            );
-            final idx = items.indexOf(existing);
-            items[idx] = updated;
-          }
-        } else {
-          final preview = notificationPreview(e);
-          final emojiPair = reactionEmojiFor(e);
-          final emoji = emojiPair?.emoji;
-          final emojiUrl = emojiPair?.url;
+        void addOrUpdate() {
+          // Aggregate: if an item with the same type+target exists, add pubkey.
+          final existing = items.where((i) => i.id == itemKey).firstOrNull;
+          if (existing != null) {
+            if (!existing.pubkeys.contains(e.pubkey)) {
+              final updated = NotificationItem(
+                type: existing.type,
+                pubkeys: [...existing.pubkeys, e.pubkey].take(5).toList(),
+                extraCount: existing.extraCount + 1,
+                time: e.createdAt,
+                preview: existing.preview,
+                targetEventId: existing.targetEventId,
+                sourceEventId: existing.sourceEventId,
+                eventContent: existing.eventContent,
+                reactionEmoji: existing.reactionEmoji,
+                reactionEmojiUrl: existing.reactionEmojiUrl,
+                id: existing.id,
+                unread: true,
+              );
+              final idx = items.indexOf(existing);
+              items[idx] = updated;
+            }
+          } else {
+            final preview = notificationPreview(e);
+            final emojiPair = reactionEmojiFor(e);
+            final emoji = emojiPair?.emoji;
+            final emojiUrl = emojiPair?.url;
 
-          items.add(
-            NotificationItem(
-              type: type,
-              pubkeys: [e.pubkey],
-              extraCount: 0,
-              time: e.createdAt,
-              preview: preview,
-              targetEventId: targetId,
-              sourceEventId: e.id,
-              eventContent: e.content,
-              reactionEmoji: emoji,
-              reactionEmojiUrl: emojiUrl,
-              id: itemKey,
-              unread: true,
-            ),
-          );
+            items.add(
+              NotificationItem(
+                type: type,
+                pubkeys: [e.pubkey],
+                extraCount: 0,
+                time: e.createdAt,
+                preview: preview,
+                targetEventId: targetId,
+                sourceEventId: e.id,
+                eventContent: e.content,
+                reactionEmoji: emoji,
+                reactionEmojiUrl: emojiUrl,
+                id: itemKey,
+                unread: true,
+              ),
+            );
+          }
+          dirty = true;
+          flush ??= Timer(const Duration(milliseconds: 300), () {
+            flush = null;
+            if (dirty) emit();
+          });
         }
-        dirty = true;
-        flush ??= Timer(const Duration(milliseconds: 300), () {
-          flush = null;
-          if (dirty) emit();
-        });
+
+        if (type == NotificationType.follow) {
+          // Follow gate (async): a contact-list REVISION by an existing
+          // follower (previous revision already listed me) is not a new
+          // follow — skip it. Only the newest revision per author is judged;
+          // older revisions of the same author never spawn their own item.
+          if (!followEvaluated.add(e.pubkey)) return;
+          unawaited(
+            previousContactListContainsMe(
+              pool,
+              e.pubkey,
+              e.createdAt,
+              myPubkey,
+            ).then((already) {
+              if (!already) addOrUpdate();
+            }),
+          );
+          return;
+        }
+        addOrUpdate();
       });
 
       // Subscribe: #p for mentions + #e for interactions on my posts.
@@ -342,6 +372,68 @@ String? notificationReferencedId(Event e, Set<String> myEventIds) =>
 /// `e` tag still names the liked post — use it directly.
 @visibleForTesting
 String? primaryETagTarget(Event e) => _primaryETagTarget(e);
+
+/// True when [contactList] (a kind-3 event) carries a `p` tag for
+/// [pubkeyHex].
+@visibleForTesting
+bool contactListContains(Event contactList, String pubkeyHex) {
+  for (final t in contactList.tags) {
+    if (t.length >= 2 && t[0] == 'p' && t[1] == pubkeyHex) return true;
+  }
+  return false;
+}
+
+/// Whether [author]'s newest contact list OLDER than [untilCreatedAt] already
+/// lists [me] — i.e. the incoming kind-3 is a contact-list REVISION by an
+/// existing follower, NOT a new follow ("重复关注通知" bug: long-time
+/// followers re-publish kind 3 whenever they follow anyone, and the #p
+/// subscription surfaced every revision as "开始关注你").
+///
+/// One-shot REQ {kinds:[3], authors:[author], until: until-1, limit:1}:
+/// first hit wins; resolves false once every relay EOSEs empty (author has
+/// no older list → genuinely new follow) or on the 6s cap (unknown → err on
+/// the side of showing the notification).
+@visibleForTesting
+Future<bool> previousContactListContainsMe(
+  RelayPool pool,
+  String author,
+  int untilCreatedAt,
+  String me,
+) async {
+  final completer = Completer<Event?>();
+  final relayCount = pool.states.length;
+  var eoses = 0;
+  final sub = pool.rawEvents.listen((e) {
+    if (e.kind != 3 || e.pubkey != author) return;
+    if (e.createdAt >= untilCreatedAt) return; // the incoming revision itself
+    if (!completer.isCompleted) completer.complete(e);
+  });
+  final subId = nextSubId('notif-prev');
+  final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (relayCount > 0 && eoses >= relayCount && !completer.isCompleted) {
+      completer.complete(null);
+    }
+  });
+  pool.request(subId, <String, dynamic>{
+    'kinds': [3],
+    'authors': [author],
+    'until': untilCreatedAt - 1,
+    'limit': 1,
+  }, closeOnEose: true);
+  Event? prev;
+  try {
+    prev = await completer.future.timeout(
+      const Duration(seconds: 6),
+      onTimeout: () => null,
+    );
+  } finally {
+    await sub.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+  }
+  return prev != null && contactListContains(prev, me);
+}
 
 /// Aggregation key for an incoming event — two events that should collapse
 /// into one notification item return the same key.
@@ -803,56 +895,63 @@ class _NotificationTile extends ConsumerWidget {
             bottom: BorderSide(color: CostrColors.of(context).border),
           ),
         ),
-        child: Row(
+        // Feed-style layout (user: "参考帖子信息流的头像和帖子内容排版"):
+        // row 1 = icon + avatar stack + head line (avatar sits level with
+        // the names, like the feed), then preview + time flow BELOW at the
+        // avatar's left edge — the old layout kept preview/time beside the
+        // avatar, leaving a tall empty strip under it on multi-line rows
+        // ("头像下面还有很多空间").
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Icon + unread dot.
-            SizedBox(
-              width: 40,
-              child: Column(
-                children: [
-                  Icon(icon, size: 22, color: iconColor),
-                  const SizedBox(height: 6),
-                  if (unread)
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: CostrColors.of(context).brand,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            // Avatars (up to 3, overlapping 50% like X's stacks). Cumulative
-            // -16 offset per index lays them out at x 0/16/32 (visual width
-            // 64); Padding disallows negative values, so we translate instead.
-            // Fixed 64-wide strip so the text column starts at the SAME x
-            // whether the row shows 1, 2 or 3 avatars — previously a 3-avatar
-            // row's layout width pushed its text ~2 avatars right of single
-            // rows (通知排版错位 screenshot). Transform.translate doesn't affect
-            // layout, so we pin the strip width here.
-            SizedBox(
-              width: 64,
-              child: Row(
-                children: [
-                  for (var i = 0; i < item.pubkeys.length && i < 3; i++)
-                    Transform.translate(
-                      offset: Offset(-16.0 * i, 0),
-                      child: Avatar(pubkey: item.pubkeys[i], radius: 16),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            // Description + preview + time.
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  RichText(
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Icon + unread dot.
+                SizedBox(
+                  width: 40,
+                  child: Column(
+                    children: [
+                      Icon(icon, size: 22, color: iconColor),
+                      const SizedBox(height: 6),
+                      if (unread)
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: CostrColors.of(context).brand,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Avatars (up to 3, overlapping 50% like X's stacks). Cumulative
+                // -16 offset per index lays them out at x 0/16/32 (visual width
+                // 64); Padding disallows negative values, so we translate
+                // instead. Fixed 64-wide strip so the text column starts at
+                // the SAME x whether the row shows 1, 2 or 3 avatars —
+                // previously a 3-avatar row's layout width pushed its text ~2
+                // avatars right of single rows (通知排版错位 screenshot).
+                // Transform.translate doesn't affect layout, so we pin the
+                // strip width here.
+                SizedBox(
+                  width: 64,
+                  child: Row(
+                    children: [
+                      for (var i = 0; i < item.pubkeys.length && i < 3; i++)
+                        Transform.translate(
+                          offset: Offset(-16.0 * i, 0),
+                          child: Avatar(pubkey: item.pubkeys[i], radius: 16),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                // Head line: who + verb (+ reaction emoji inline).
+                Expanded(
+                  child: RichText(
                     text: TextSpan(
                       style: theme.textTheme.bodyMedium,
                       children: [
@@ -897,40 +996,49 @@ class _NotificationTile extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  if (item.preview != null) ...[
-                    const SizedBox(height: 4),
-                    Text.rich(
-                      linkifyMentions(
-                        item.preview!,
-                        ref,
-                        baseStyle: TextStyle(
-                          fontSize: 14,
-                          color: CostrColors.of(context).text2,
-                        ),
-                        mentionStyle: TextStyle(
-                          fontSize: 14,
-                          color: CostrColors.of(context).brand,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+            // Preview + time below, at the avatar's left edge (icon column
+            // 40 + gap 12) so the space under the avatar carries content.
+            if (item.preview != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 52, top: 4),
+                child: Text.rich(
+                  linkifyMentions(
+                    item.preview!,
+                    ref,
+                    baseStyle: TextStyle(
+                      fontSize: 14,
+                      color: CostrColors.of(context).text2,
                     ),
-                  ] else if ((item.type == NotificationType.reaction ||
-                          item.type == NotificationType.repost) &&
-                      item.targetEventId != null)
-                    // No inline preview (a reaction's own content is just the
-                    // emoji) — show the liked/reposted post's content instead.
-                    _InteractPreview(targetId: item.targetEventId!),
-                  const SizedBox(height: 4),
-                  Text(
-                    _relativeTime(item.time),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: CostrColors.of(context).text3,
+                    mentionStyle: TextStyle(
+                      fontSize: 14,
+                      color: CostrColors.of(context).brand,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              )
+            else if ((item.type == NotificationType.reaction ||
+                    item.type == NotificationType.repost) &&
+                item.targetEventId != null)
+              // No inline preview (a reaction's own content is just the
+              // emoji) — show the liked/reposted post's content instead.
+              Padding(
+                padding: const EdgeInsets.only(left: 52, top: 4),
+                child: _InteractPreview(targetId: item.targetEventId!),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(left: 52, top: 4),
+              child: Text(
+                _relativeTime(item.time),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: CostrColors.of(context).text3,
+                ),
               ),
             ),
           ],

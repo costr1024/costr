@@ -35,87 +35,89 @@ Event _ev({
 }
 
 void main() {
-  group('notificationReferencedId — target the interacted post, not the root',
-      () {
-    const myRoot = 'my_root';
-    const myReply = 'my_reply';
-    final mine = {myRoot, myReply};
+  group(
+    'notificationReferencedId — target the interacted post, not the root',
+    () {
+      const myRoot = 'my_root';
+      const myReply = 'my_reply';
+      final mine = {myRoot, myReply};
 
-    test('root+reply e-tags both mine → the reply-marked post wins', () {
-      // Reply to my_reply inside my thread rooted at my_root: the old
-      // first-match scan returned my_root (listed first) → tapping opened the
-      // root main post. The reply marker is the post actually replied to.
-      final reply = _ev(
-        kind: 1,
-        id: 'their_reply',
-        pubkey: 'pk_other',
-        createdAt: 1,
-        content: 'hello',
-        tags: const [
-          ['e', 'my_root', '', 'root'],
-          ['e', 'my_reply', '', 'reply'],
-          ['p', 'me'],
-        ],
-      );
-      expect(notificationReferencedId(reply, mine), myReply);
-    });
+      test('root+reply e-tags both mine → the reply-marked post wins', () {
+        // Reply to my_reply inside my thread rooted at my_root: the old
+        // first-match scan returned my_root (listed first) → tapping opened the
+        // root main post. The reply marker is the post actually replied to.
+        final reply = _ev(
+          kind: 1,
+          id: 'their_reply',
+          pubkey: 'pk_other',
+          createdAt: 1,
+          content: 'hello',
+          tags: const [
+            ['e', 'my_root', '', 'root'],
+            ['e', 'my_reply', '', 'reply'],
+            ['p', 'me'],
+          ],
+        );
+        expect(notificationReferencedId(reply, mine), myReply);
+      });
 
-    test('positional e-tag (no marker) beats root', () {
-      final reaction = _ev(
-        kind: 7,
-        id: 'rx',
-        pubkey: 'pk_other',
-        createdAt: 1,
-        content: '+',
-        tags: const [
-          ['e', 'my_root', '', 'root'],
-          ['e', 'my_reply'],
-          ['p', 'me'],
-        ],
-      );
-      expect(notificationReferencedId(reaction, mine), myReply);
-    });
+      test('positional e-tag (no marker) beats root', () {
+        final reaction = _ev(
+          kind: 7,
+          id: 'rx',
+          pubkey: 'pk_other',
+          createdAt: 1,
+          content: '+',
+          tags: const [
+            ['e', 'my_root', '', 'root'],
+            ['e', 'my_reply'],
+            ['p', 'me'],
+          ],
+        );
+        expect(notificationReferencedId(reaction, mine), myReply);
+      });
 
-    test('root-only reference still resolves (direct reply to my root)', () {
-      final reply = _ev(
-        kind: 1,
-        id: 'r2',
-        pubkey: 'pk_other',
-        createdAt: 1,
-        tags: const [
-          ['e', 'my_root', '', 'root'],
-        ],
-      );
-      expect(notificationReferencedId(reply, mine), myRoot);
-    });
+      test('root-only reference still resolves (direct reply to my root)', () {
+        final reply = _ev(
+          kind: 1,
+          id: 'r2',
+          pubkey: 'pk_other',
+          createdAt: 1,
+          tags: const [
+            ['e', 'my_root', '', 'root'],
+          ],
+        );
+        expect(notificationReferencedId(reply, mine), myRoot);
+      });
 
-    test('e-tags of other users\' posts are ignored', () {
-      final reply = _ev(
-        kind: 1,
-        id: 'r3',
-        pubkey: 'pk_other',
-        createdAt: 1,
-        tags: const [
-          ['e', 'someone_elses_root', '', 'root'],
-          ['e', 'my_reply', '', 'reply'],
-        ],
-      );
-      expect(notificationReferencedId(reply, mine), myReply);
-    });
+      test('e-tags of other users\' posts are ignored', () {
+        final reply = _ev(
+          kind: 1,
+          id: 'r3',
+          pubkey: 'pk_other',
+          createdAt: 1,
+          tags: const [
+            ['e', 'someone_elses_root', '', 'root'],
+            ['e', 'my_reply', '', 'reply'],
+          ],
+        );
+        expect(notificationReferencedId(reply, mine), myReply);
+      });
 
-    test('mention-marked e-tags are never interactions', () {
-      final note = _ev(
-        kind: 1,
-        id: 'r4',
-        pubkey: 'pk_other',
-        createdAt: 1,
-        tags: const [
-          ['e', 'my_root', '', 'mention'],
-        ],
-      );
-      expect(notificationReferencedId(note, mine), isNull);
-    });
-  });
+      test('mention-marked e-tags are never interactions', () {
+        final note = _ev(
+          kind: 1,
+          id: 'r4',
+          pubkey: 'pk_other',
+          createdAt: 1,
+          tags: const [
+            ['e', 'my_root', '', 'mention'],
+          ],
+        );
+        expect(notificationReferencedId(note, mine), isNull);
+      });
+    },
+  );
 
   group('notificationItemKey — follow dedup (bug 1)', () {
     test('two kind-3 revisions from the same follower share a key', () {
@@ -143,16 +145,8 @@ void main() {
           ['p', 'a_third'],
         ],
       );
-      final k1 = notificationItemKey(
-        NotificationType.follow,
-        v1,
-        null,
-      );
-      final k2 = notificationItemKey(
-        NotificationType.follow,
-        v2,
-        null,
-      );
+      final k1 = notificationItemKey(NotificationType.follow, v1, null);
+      final k2 = notificationItemKey(NotificationType.follow, v2, null);
       expect(k1, k2, reason: 'same follower → same notification item');
       expect(k1, 'follow:$follower');
     });
@@ -179,34 +173,37 @@ void main() {
   });
 
   group('notificationPreview — repost shows the reposted post (bug 2)', () {
-    test('kind-6 repost: preview is the reposted post\'s OWN text, not JSON', () {
-      // Per NIP-18 / our actions.repost(), kind-6 content is the stringified
-      // JSON of the reposted event. The user wants to see WHICH of their
-      // posts was reposted, so the preview must surface the embedded post's
-      // content — not the raw JSON, and not nothing.
-      final repostedContent = '这是我被转发的那条帖子的正文';
-      final embedded = jsonEncode({
-        'id': 'my_post',
-        'pubkey': 'me',
-        'created_at': 1234,
-        'kind': 1,
-        'content': repostedContent,
-        'tags': [],
-        'sig': 'sig',
-      });
-      final repost = _ev(
-        kind: 6,
-        id: 'rp1',
-        pubkey: 'pk_reposter',
-        createdAt: 1,
-        content: embedded,
-        tags: const [
-          ['e', 'my_post'],
-          ['p', 'me'],
-        ],
-      );
-      expect(notificationPreview(repost), repostedContent);
-    });
+    test(
+      'kind-6 repost: preview is the reposted post\'s OWN text, not JSON',
+      () {
+        // Per NIP-18 / our actions.repost(), kind-6 content is the stringified
+        // JSON of the reposted event. The user wants to see WHICH of their
+        // posts was reposted, so the preview must surface the embedded post's
+        // content — not the raw JSON, and not nothing.
+        final repostedContent = '这是我被转发的那条帖子的正文';
+        final embedded = jsonEncode({
+          'id': 'my_post',
+          'pubkey': 'me',
+          'created_at': 1234,
+          'kind': 1,
+          'content': repostedContent,
+          'tags': [],
+          'sig': 'sig',
+        });
+        final repost = _ev(
+          kind: 6,
+          id: 'rp1',
+          pubkey: 'pk_reposter',
+          createdAt: 1,
+          content: embedded,
+          tags: const [
+            ['e', 'my_post'],
+            ['p', 'me'],
+          ],
+        );
+        expect(notificationPreview(repost), repostedContent);
+      },
+    );
 
     test('kind-6 repost with empty content → no preview', () {
       final repost = _ev(
@@ -303,18 +300,21 @@ void main() {
       expect(r.url, 'https://example.com/fire.png');
     });
 
-    test('bare shortcode (no emoji tag) → shortcode without colons, null url', () {
-      final e = _ev(
-        kind: 7,
-        id: 'r2',
-        pubkey: 'pk',
-        createdAt: 1,
-        content: ':fire:',
-      );
-      final r = reactionEmojiFor(e)!;
-      expect(r.emoji, 'fire');
-      expect(r.url, isNull);
-    });
+    test(
+      'bare shortcode (no emoji tag) → shortcode without colons, null url',
+      () {
+        final e = _ev(
+          kind: 7,
+          id: 'r2',
+          pubkey: 'pk',
+          createdAt: 1,
+          content: ':fire:',
+        );
+        final r = reactionEmojiFor(e)!;
+        expect(r.emoji, 'fire');
+        expect(r.url, isNull);
+      },
+    );
 
     test('unicode emoji content → raw content, null url', () {
       final e = _ev(
@@ -401,6 +401,53 @@ void main() {
         content: '第一行\n第二行',
       );
       expect(notificationPreview(reply), '第一行 第二行');
+    });
+  });
+
+  group('repostedEventId — Amethyst pubkey in the marker slot', () {
+    // Real-world Amethyst repost wire shape: the `e` tag's 4th field is the
+    // reposted note's AUTHOR PUBKEY, not a NIP-10 marker. The old parser
+    // matched no branch → null → "转发内容不可用" even though the repost's
+    // content carries the full NIP-18 embedded note.
+    test('unrecognized marker resolves as a positional reference', () {
+      final repost = _ev(
+        kind: 6,
+        id: 'rp_am',
+        pubkey: 'pk_reposter',
+        createdAt: 1,
+        tags: const [
+          ['e', 'orig_id', 'wss://relay.ditto.pub/', 'author_pubkey_hex'],
+          ['p', 'author_pubkey_hex'],
+        ],
+      );
+      expect(repost.repostedEventId, 'orig_id');
+    });
+
+    test('root marker still wins over positional', () {
+      final repost = _ev(
+        kind: 6,
+        id: 'rp_rt',
+        pubkey: 'pk',
+        createdAt: 1,
+        tags: const [
+          ['e', 'pos_id'],
+          ['e', 'root_id', '', 'root'],
+        ],
+      );
+      expect(repost.repostedEventId, 'root_id');
+    });
+
+    test('mention marker is never a repost target', () {
+      final repost = _ev(
+        kind: 6,
+        id: 'rp_m',
+        pubkey: 'pk',
+        createdAt: 1,
+        tags: const [
+          ['e', 'orig_id', '', 'mention'],
+        ],
+      );
+      expect(repost.repostedEventId, isNull);
     });
   });
 }

@@ -140,6 +140,13 @@ class Event {
         root ??= id;
       } else if (marker == 'reply') {
         return id;
+      } else {
+        // Unrecognized marker → positional reference. Amethyst (which emits
+        // many reposts on this network) puts the reposted note's AUTHOR
+        // PUBKEY in the marker slot (`["e", <id>, <relay>, <pubkey>]`); the
+        // `e` tag still names the reposted note, so it must resolve — same
+        // rule as the notification-center interaction fix.
+        positional ??= id;
       }
     }
     return root ?? positional;
@@ -311,7 +318,9 @@ class Event {
         final url = tag[1] as String;
         if (url.isEmpty || !seen.add(url)) continue;
         String? mimeType;
-        if (tag.length >= 3 && tag[2] is String && (tag[2] as String).isNotEmpty) {
+        if (tag.length >= 3 &&
+            tag[2] is String &&
+            (tag[2] as String).isNotEmpty) {
           mimeType = tag[2] as String;
         }
         out.add(MediaAttachment(url: url, mimeType: mimeType));

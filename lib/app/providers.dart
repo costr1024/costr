@@ -951,8 +951,9 @@ class ProxyMediaNotifier extends Notifier<bool> {
   }
 }
 
-final proxyMediaEnabledProvider =
-    NotifierProvider<ProxyMediaNotifier, bool>(ProxyMediaNotifier.new);
+final proxyMediaEnabledProvider = NotifierProvider<ProxyMediaNotifier, bool>(
+  ProxyMediaNotifier.new,
+);
 
 // --- Immersive browse (LOCAL-only toggle; never published to a relay) ------
 
@@ -978,8 +979,9 @@ class ImmersiveBrowseNotifier extends Notifier<bool> {
   }
 }
 
-final immersiveBrowseProvider =
-    NotifierProvider<ImmersiveBrowseNotifier, bool>(ImmersiveBrowseNotifier.new);
+final immersiveBrowseProvider = NotifierProvider<ImmersiveBrowseNotifier, bool>(
+  ImmersiveBrowseNotifier.new,
+);
 
 /// Global "are the app bars currently visible" state. Scrolled surfaces
 /// ([ImmersiveScrollDetector]) drive this DOWN when the user scrolls toward
@@ -997,8 +999,9 @@ class AppBarsVisibleNotifier extends Notifier<bool> {
   }
 }
 
-final appBarsVisibleProvider =
-    NotifierProvider<AppBarsVisibleNotifier, bool>(AppBarsVisibleNotifier.new);
+final appBarsVisibleProvider = NotifierProvider<AppBarsVisibleNotifier, bool>(
+  AppBarsVisibleNotifier.new,
+);
 
 // --- Text scale (global font size) -----------------------------------------
 
@@ -1925,12 +1928,47 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
   return null;
 });
 
+/// Quote-card resolution for NIP-27 references: [eventByIdProvider]'s 3-tier
+/// lookup first, then — on miss — a one-shot fetch on the relay hints carried
+/// inside the `nostr:nevent1…` entity itself. Quoted notes often live ONLY on
+/// the author's own relays (e.g. nostr.data.haus) which are not in the default
+/// pool, so the broadcast always misses and the card sat on "加载引用…" /
+/// "引用内容不可用"; Amethyst fetches the nevent's relay hint, we do the same.
+/// Key = `id` or `id\x1frelay1\x1frelay2` (hints baked into the family key so
+/// the widget stays a plain ConsumerWidget).
+final quotedEventProvider = FutureProvider.family<Event?, String>((
+  ref,
+  key,
+) async {
+  final parts = key.split('\x1f');
+  final id = parts.first;
+  final hints = parts.skip(1).where((r) => r.isNotEmpty).toList();
+  final base = await ref.watch(eventByIdProvider(id).future);
+  if (base != null) return base;
+  if (hints.isEmpty) return null;
+  final pool = ref.read(relayPoolProvider);
+  final hits = await pool.fetchFromUrls(
+    <String, dynamic>{
+      'ids': [id],
+    },
+    hints,
+    timeout: const Duration(seconds: 6),
+  );
+  for (final e in hits) {
+    if (e.id == id) {
+      // Cache in SQLite so a repeat scroll-by is instant.
+      unawaited(ref.read(eventStoreProvider.notifier).cacheThreadEvent(e));
+      return e;
+    }
+  }
+  return null;
+});
+
 /// Parse the note a repost embeds, from the repost's OWN content. NIP-18:
 /// a kind-6 repost's content is the stringified-JSON of the reposted event,
 /// so a compliant repost carries the full embedded note — no relay fetch
 /// needed. Returns null when [repost] isn't a repost, has no embedded JSON,
 /// or the embedded event isn't post-like (a repost should only embed a post).
-@visibleForTesting
 Event? parseEmbeddedRepost(Event repost) {
   if (!repost.isRepost || repost.content.isEmpty) return null;
   try {
@@ -2122,8 +2160,7 @@ final threadAncestorsProvider = FutureProvider.family<List<Event>, String>((
     }
     if (missing.isNotEmpty) {
       final tier2 = await Future.wait(<Future<Event?>>[
-        for (final c in missing)
-          _fetchEventByIdFromUrls(pool, c.id, c.relays),
+        for (final c in missing) _fetchEventByIdFromUrls(pool, c.id, c.relays),
       ]);
       for (final r in tier2) {
         if (r == null || !seen.add(r.id)) continue;
@@ -2175,8 +2212,9 @@ List<_AncestorCandidate> _candidateAncestors(Event e) {
     if (marker == 'mention') continue;
     final id = t[1] as String;
     if (id == e.id) continue;
-    final relay =
-        (t.length >= 3 && t[2] is String) ? (t[2] as String).trim() : '';
+    final relay = (t.length >= 3 && t[2] is String)
+        ? (t[2] as String).trim()
+        : '';
     final list = byId.putIfAbsent(id, () => <String>[]);
     if (relay.isNotEmpty &&
         (relay.startsWith('ws://') || relay.startsWith('wss://'))) {
@@ -2528,9 +2566,11 @@ final kind30000VersionProvider =
 class FollowGroup {
   const FollowGroup(this.name, this.pubkeys, {this.source});
   final String name;
+
   /// Members of this group that are ALSO in the user's kind-3 follows (what
   /// the people rows render — only people you actually follow show up).
   final List<String> pubkeys;
+
   /// The backing NIP-51 kind-30000 event (null for 默认分组). Carries the
   /// stable `d` identifier + event id needed for rename/delete.
   final Event? source;
@@ -2987,30 +3027,28 @@ final searchPostsProvider = StreamProvider.family<List<Event>, String>((
 /// load-more page are counted; relays aren't queried for a total. Matches
 /// Amethyst's "what I've seen" approach. The count populates reliably once
 /// the user has opened the post's thread; on the feed it stays ~0 until then.
-final postCountsProvider = Provider.family<({int replies, int reposts}), String>((
-  ref,
-  eventId,
-) {
-  final all = ref.watch(eventStoreProvider);
-  var replies = 0;
-  var reposts = 0;
-  for (final e in all) {
-    if (e.kind != 1 && e.kind != 6) continue;
-    // Skip the post itself (a kind-1 with a self-referential e tag, rare).
-    if (e.id == eventId) continue;
-    for (final t in e.tags) {
-      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
-        if (e.kind == 1) {
-          replies++;
-        } else {
-          reposts++;
+final postCountsProvider =
+    Provider.family<({int replies, int reposts}), String>((ref, eventId) {
+      final all = ref.watch(eventStoreProvider);
+      var replies = 0;
+      var reposts = 0;
+      for (final e in all) {
+        if (e.kind != 1 && e.kind != 6) continue;
+        // Skip the post itself (a kind-1 with a self-referential e tag, rare).
+        if (e.id == eventId) continue;
+        for (final t in e.tags) {
+          if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
+            if (e.kind == 1) {
+              replies++;
+            } else {
+              reposts++;
+            }
+            break;
+          }
         }
-        break;
       }
-    }
-  }
-  return (replies: replies, reposts: reposts);
-});
+      return (replies: replies, reposts: reposts);
+    });
 
 /// Global user search (NIP-50 `search` filter, kind 0 metadata) via the
 /// dedicated search pool. Streams results in (250ms debounce) instead of a
@@ -3121,8 +3159,7 @@ final reactionsProvider =
             // "+" (which users mistook for an unknown UI control). Clients that
             // send emoji content (🔥 / :shortcode:) keep their own key.
             final raw = e.content;
-            final key =
-                (raw.isEmpty || raw == '+') ? '👍' : raw;
+            final key = (raw.isEmpty || raw == '+') ? '👍' : raw;
             final prev = tallies[key];
             // For NIP-30 custom-emoji reactions (content `:shortcode:`), surface
             // the image URL from the kind-7 `["emoji", shortcode, url]` tag so the
@@ -3214,10 +3251,8 @@ List<ThreadedReply> threadReplies(List<Event> replies, String rootId) {
     }
   }
   // Roots = direct replies to the focused post + reparented orphans, oldest-first.
-  final roots = <Event>[
-    ...(children[rootId] ?? const <Event>[]),
-    ...orphans,
-  ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  final roots = <Event>[...(children[rootId] ?? const <Event>[]), ...orphans]
+    ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   final out = <ThreadedReply>[];
   final seen = <String>{};
   void walk(Event e, int depth) {
@@ -3237,9 +3272,8 @@ List<ThreadedReply> threadReplies(List<Event> replies, String rootId) {
   // Fallback: replies unreachable from the roots (pure cycles, or subtrees
   // whose chain never touches the root) would otherwise be silently dropped.
   // Emit them at depth 0, oldest-first, walking their own subtrees.
-  final unreached =
-      replies.where((e) => !seen.contains(e.id)).toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  final unreached = replies.where((e) => !seen.contains(e.id)).toList()
+    ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   for (final e in unreached) {
     walk(e, 0);
   }
@@ -3332,7 +3366,10 @@ final repliesProvider = StreamProvider.family<List<Event>, String>((
       final outbox = rl?.read ?? const <String>[];
       if (outbox.isEmpty) return;
       await pool.fetchFromUrls(
-        <String, dynamic>{'kinds': [1], '#e': [eventId]},
+        <String, dynamic>{
+          'kinds': [1],
+          '#e': [eventId],
+        },
         outbox,
         onEvent: (e) {
           if (!isReplyToEvent(e, eventId) || merged.containsKey(e.id)) return;
@@ -3627,11 +3664,7 @@ Future<RelayOk> bookmarkEvent(
       pool.closeSubscription(subId);
     }
     if (!certain) {
-      return const RelayOk(
-        '',
-        false,
-        '无法确认现有书签列表（中继未及时响应），已取消以防清空。请重试。',
-      );
+      return const RelayOk('', false, '无法确认现有书签列表（中继未及时响应），已取消以防清空。请重试。');
     }
   }
   final signed = NostrActions(
@@ -3764,6 +3797,7 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
         if (seen.add(e.id)) out.add(e);
       }
     }
+
     addAll(entriesOf(k10003));
     for (final e in k30003.values) {
       addAll(entriesOf(e));
@@ -3874,8 +3908,10 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
 /// and unions them with the public tags → a [MuteSet] the feed filter + mute
 /// UI consume. Yields the SQLite-cached list instantly, then refreshes from
 /// relays. Family by pubkey; only the owner gets private entries.
-final muteListProvider =
-    StreamProvider.family<MuteSet, String>((ref, pubkey) async* {
+final muteListProvider = StreamProvider.family<MuteSet, String>((
+  ref,
+  pubkey,
+) async* {
   final identity = await ref.watch(identityProvider.future);
   final isSelf = identity != null && identity.pubkeyHex == pubkey;
   MuteSet muteSetOf(Event? e) => identity != null
@@ -4089,17 +4125,19 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
       // would revert to the old cache on every cold start.
       final db = cache;
       if (db != null) {
-        unawaited(db.writeEvent(
-          id: e.id,
-          pubkey: e.pubkey,
-          kind: 0,
-          createdAt: e.createdAt,
-          content: e.content,
-          sig: e.sig,
-          raw: jsonEncode(e.toWireObject()),
-          tagsJson: jsonEncode(e.tags),
-          tags: e.tags,
-        ));
+        unawaited(
+          db.writeEvent(
+            id: e.id,
+            pubkey: e.pubkey,
+            kind: 0,
+            createdAt: e.createdAt,
+            content: e.content,
+            sig: e.sig,
+            raw: jsonEncode(e.toWireObject()),
+            tagsJson: jsonEncode(e.tags),
+            tags: e.tags,
+          ),
+        );
       }
       ctrl.add(Metadata.fromJson(json));
     } catch (_) {

@@ -296,7 +296,13 @@ class _RepostView extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 6),
-            if (repostedId == null)
+            // "不可用" ONLY when there is truly nothing to show: no resolvable
+            // `e` tag AND no NIP-18 embedded JSON in the content. Amethyst
+            // reposts carry the full original note in content, so they render
+            // even when the `e` tag's marker slot holds a pubkey (which made
+            // repostedEventId null and short-circuited to "不可用" — the
+            // "转发内容不可用" bug on Amethyst reposts).
+            if (repostedId == null && parseEmbeddedRepost(event) == null)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 child: Text(

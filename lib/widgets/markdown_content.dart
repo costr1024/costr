@@ -135,9 +135,17 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     // from the content (rendered as embedded quote cards below instead).
     final referencedIds = <String>[];
     final seenRef = <String>{};
+    // NIP-19 relay hints per referenced id — where the quoted note actually
+    // lives; [quotedEventProvider] falls back to them when the default-pool
+    // broadcast misses (quotes often live only on the author's own relays).
+    final relayHintsById = <String, List<String>>{};
     for (final m in _eventEntityRegex.allMatches(linkified)) {
-      final id = entityToEventIdHex(m.group(1)!) ?? '';
-      if (id.isNotEmpty && seenRef.add(id)) referencedIds.add(id);
+      final entity = m.group(1)!;
+      final id = entityToEventIdHex(entity) ?? '';
+      if (id.isEmpty || !seenRef.add(id)) continue;
+      referencedIds.add(id);
+      final relays = neventDecode(entity)?.relays;
+      if (relays != null && relays.isNotEmpty) relayHintsById[id] = relays;
     }
     for (final t in event.tags) {
       if (t.length >= 4 &&
@@ -234,15 +242,9 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
           ),
         );
       } else if (seg is ImageGroupSeg) {
-        children.add(_ImageGrid(
-          urls: seg.urls,
-          proxyMedia: widget.proxyMedia,
-        ));
+        children.add(_ImageGrid(urls: seg.urls, proxyMedia: widget.proxyMedia));
       } else if (seg is SingleVideoSeg) {
-        children.add(NetworkVideo(
-          url: seg.url,
-          forceProxy: widget.proxyMedia,
-        ));
+        children.add(NetworkVideo(url: seg.url, forceProxy: widget.proxyMedia));
       }
     }
 
@@ -262,19 +264,20 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     final extraVideos = extra.where((m) => m.isVideo).toList();
     if (extraImages.isNotEmpty) {
       children.add(const SizedBox(height: 8));
-      children.add(_ImageGrid(
-        urls: extraImages,
-        proxyMedia: widget.proxyMedia,
-      ));
+      children.add(
+        _ImageGrid(urls: extraImages, proxyMedia: widget.proxyMedia),
+      );
     }
     for (final v in extraVideos) {
       children.add(const SizedBox(height: 8));
-      children.add(NetworkVideo(
-        url: v.url,
-        width: v.width,
-        height: v.height,
-        forceProxy: widget.proxyMedia,
-      ));
+      children.add(
+        NetworkVideo(
+          url: v.url,
+          width: v.width,
+          height: v.height,
+          forceProxy: widget.proxyMedia,
+        ),
+      );
     }
     final extraFiles = extra.where((m) => !m.isImage && !m.isVideo).toList();
     if (extraFiles.isNotEmpty) {
@@ -293,7 +296,9 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
 
     // 4. Append embedded quote cards for referenced events (NIP-27).
     for (final id in referencedIds) {
-      children.add(_EventEmbed(id: id));
+      children.add(
+        _EventEmbed(id: id, relayHints: relayHintsById[id] ?? const []),
+      );
     }
 
     final isLong = event.content.length > _kCollapseThreshold;
@@ -548,20 +553,14 @@ class SingleVideoSeg extends ContentSeg {
 // --- image grid + single image --------------------------------------------
 
 class _ImageGrid extends StatelessWidget {
-  const _ImageGrid({
-    required this.urls,
-    required this.proxyMedia,
-  });
+  const _ImageGrid({required this.urls, required this.proxyMedia});
   final List<String> urls;
   final bool proxyMedia;
 
   @override
   Widget build(BuildContext context) {
     if (urls.length == 1) {
-      return _SingleImage(
-        url: urls.first,
-        proxyMedia: proxyMedia,
-      );
+      return _SingleImage(url: urls.first, proxyMedia: proxyMedia);
     }
     return GridView.count(
       crossAxisCount: 3,
@@ -614,10 +613,7 @@ class _GridThumb extends StatelessWidget {
 }
 
 class _SingleImage extends StatelessWidget {
-  const _SingleImage({
-    required this.url,
-    required this.proxyMedia,
-  });
+  const _SingleImage({required this.url, required this.proxyMedia});
   final String url;
   final bool proxyMedia;
 
@@ -632,10 +628,8 @@ class _SingleImage extends StatelessWidget {
           forceProxy: proxyMedia,
           width: double.infinity,
           fit: BoxFit.contain,
-          placeholder: (BuildContext _) =>
-              const _Placeholder(aspect: 16 / 9),
-          errorWidget: (BuildContext _) =>
-              const _ErrorBox(aspect: 16 / 9),
+          placeholder: (BuildContext _) => const _Placeholder(aspect: 16 / 9),
+          errorWidget: (BuildContext _) => const _ErrorBox(aspect: 16 / 9),
         ),
       ),
     );
@@ -676,32 +670,47 @@ class _ErrorBox extends StatelessWidget {
 
 /// An embedded quote card for a referenced event (NIP-27 `nostr:nevent1…` /
 /// `nostr:note1…` in content, or an `e` mention tag). Fetches the event via
-/// [eventByIdProvider] (SQLite → in-memory → relay REQ) and renders the
-/// author + a content snippet; tap opens `/n/:id`.
+/// [quotedEventProvider] (SQLite → in-memory → relay REQ → the nevent's own
+/// relay hints) and renders the author + a content snippet; tap opens
+/// `/n/:id`. When the lookup settles empty the card shows "引用内容不可用"
+/// and a tap retries (the old code spun on "加载引用…" forever whenever the
+/// future settled without AsyncData — e.g. an error state).
 class _EventEmbed extends ConsumerWidget {
-  const _EventEmbed({required this.id});
+  const _EventEmbed({required this.id, this.relayHints = const []});
   final String id;
+  final List<String> relayHints;
+
+  /// Family key: id + hints (baked in so the widget stays a ConsumerWidget).
+  String get _key => <String>[id, ...relayHints].join('\x1f');
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final async = ref.watch(eventByIdProvider(id));
+    final async = ref.watch(quotedEventProvider(_key));
     final ev = async.value;
     if (ev == null) {
-      final notFound = !async.isLoading && async.hasValue;
-      return Container(
-        margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: CostrColors.of(context).bg2,
-          border: Border(
-            left: BorderSide(color: theme.colorScheme.outline, width: 3),
+      final notFound = !async.isLoading;
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: notFound
+            ? () => ref.invalidate(quotedEventProvider(_key))
+            : null,
+        child: Container(
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: CostrColors.of(context).bg2,
+            border: Border(
+              left: BorderSide(color: theme.colorScheme.outline, width: 3),
+            ),
+            borderRadius: BorderRadius.circular(12),
           ),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          notFound ? '引用内容不可用' : '加载引用…',
-          style: theme.textTheme.bodySmall?.copyWith(color: CostrColors.of(context).text3),
+          child: Text(
+            notFound ? '引用内容不可用 · 点击重试' : '加载引用…',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: CostrColors.of(context).text3,
+            ),
+          ),
         ),
       );
     }
