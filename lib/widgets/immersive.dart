@@ -70,6 +70,16 @@ ImmersiveBarAction immersiveBarAction(
 /// [appBarsVisibleProvider] from scroll direction. No-op (returns the bare
 /// child) when [immersiveBrowseProvider] is off, so there's zero listener
 /// overhead unless the user opted in.
+///
+/// Only VERTICAL scroll notifications are honored. The listener sees
+/// notifications from EVERY scrollable in the subtree — including nested
+/// HORIZONTAL ones (a post card's author-status line is a horizontal
+/// SingleChildScrollView). Their horizontal metrics used to drive this
+/// vertical show/hide logic — swiping a status line sideways hid or
+/// re-showed the chrome ("菜单偶尔隐藏偶尔不隐藏" on the 关注 tab, whose
+/// followees' statuses render that line). Axis-filtering them out fixes it
+/// while keeping legit vertical nested scrollables (the profile page's
+/// NestedScrollView inner list) in charge.
 class ImmersiveScrollDetector extends ConsumerStatefulWidget {
   const ImmersiveScrollDetector({super.key, required this.child});
   final Widget child;
@@ -90,6 +100,13 @@ class _ImmersiveScrollDetectorState
     return NotificationListener<ScrollNotification>(
       onNotification: (n) {
         if (!mounted) return false;
+        // Ignore non-vertical scrollables nested inside the page (see class
+        // doc) — their pixels/deltas have nothing to do with the vertical
+        // chrome.
+        final axis = n.metrics.axisDirection;
+        if (axis != AxisDirection.down && axis != AxisDirection.up) {
+          return false;
+        }
         final action = immersiveBarAction(n, _accumulated, _kHideThreshold);
         switch (action) {
           case ImmersiveBarAction.show:
@@ -179,13 +196,26 @@ class ImmersiveScaffold extends ConsumerWidget {
               curve: Curves.easeOut,
               height: hide ? collapsedHeight : expandedHeight,
               width: double.infinity,
-              child: AnimatedSlide(
-                duration: _kDuration,
-                curve: Curves.easeOut,
-                offset: hide ? const Offset(0, -1) : Offset.zero,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[topBar, ?belowBar],
+              child: OverflowBox(
+                // The outer AnimatedContainer hands down its ANIMATED height
+                // as a tight constraint (down to collapsedHeight when hidden).
+                // The bar column must instead lay out at its fixed natural
+                // height and just slide/clip — otherwise it overflows the
+                // shrunken window on every intermediate animation frame
+                // (RenderFlex overflow errors in debug). OverflowBox breaks
+                // the constraint and lays the child out at expandedHeight
+                // regardless; the outer ClipRect clips the excess.
+                alignment: Alignment.topCenter,
+                minHeight: expandedHeight,
+                maxHeight: expandedHeight,
+                child: AnimatedSlide(
+                  duration: _kDuration,
+                  curve: Curves.easeOut,
+                  offset: hide ? const Offset(0, -1) : Offset.zero,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[topBar, ?belowBar],
+                  ),
                 ),
               ),
             ),

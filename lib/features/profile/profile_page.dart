@@ -23,6 +23,7 @@ import '../../nostr/identity.dart';
 import '../../nostr/actions.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/display_name.dart';
 import 'user_post_item.dart';
 import '../../widgets/immersive.dart';
 
@@ -231,15 +232,25 @@ class _Header extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          meta?.bestName ?? '(未设置名字)',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          softWrap: true,
-                        ),
+                        (meta?.bestName ?? '').isEmpty
+                            ? Text(
+                                '(未设置名字)',
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: true,
+                              )
+                            : DisplayName(
+                                pubkey: pubkey,
+                                meta: meta,
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                         _CopyableNprofile(pubkey: pubkey),
                       ],
                     ),
@@ -2094,8 +2105,9 @@ class _FollowRow extends ConsumerWidget {
     final meta = ref.watch(metadataProvider(pubkey)).value;
     return ListTile(
       leading: Avatar(pubkey: pubkey, radius: 18),
-      title: Text(
-        displayLabelFor(pubkey, meta),
+      title: DisplayName(
+        pubkey: pubkey,
+        meta: meta,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),

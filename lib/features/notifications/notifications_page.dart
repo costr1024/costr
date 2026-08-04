@@ -19,8 +19,9 @@ import '../../models/event.dart';
 import '../../nostr/relay_pool.dart';
 import '../../services/local_cache.dart' as cache;
 import '../../utils/nav.dart';
-import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/display_name.dart';
+import '../../widgets/double_tap_shortcut.dart';
 import '../../widgets/immersive.dart';
 import '../../widgets/mention_linkifier.dart';
 
@@ -653,6 +654,29 @@ class NotificationsPage extends ConsumerStatefulWidget {
 class _NotificationsPageState extends ConsumerState<NotificationsPage> {
   String _tab = 'all';
 
+  /// Drives the double-tap-on-tab "jump to the newest notification" shortcut.
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// Double-tap on the 全部/提及 tab row: jump back to the newest
+  /// notification (same shortcut as the home feed's 全球/关注 row).
+  void _scrollToTop() {
+    if (!_controller.hasClients) return;
+    final px = _controller.offset;
+    if (px <= 0) return;
+    final ms = (px / 60).clamp(250, 700).toInt();
+    _controller.animateTo(
+      0,
+      duration: Duration(milliseconds: ms),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final identity = ref.watch(identityProvider).value;
@@ -710,23 +734,26 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
       // the AppBar on scroll-down (user: "提及和全部不会隐藏"). _TabButton
       // fills the fixed 52 height so the collapse math is exact.
       belowBarHeight: 52,
-      belowBar: SizedBox(
-        height: 52,
-        child: Material(
-          color: CostrColors.of(context).bg,
-          child: Row(
-            children: [
-              _TabButton(
-                '全部',
-                _tab == 'all',
-                () => setState(() => _tab = 'all'),
-              ),
-              _TabButton(
-                '提及',
-                _tab == 'mentions',
-                () => setState(() => _tab = 'mentions'),
-              ),
-            ],
+      belowBar: DoubleTapShortcut(
+        onDoubleTap: _scrollToTop,
+        child: SizedBox(
+          height: 52,
+          child: Material(
+            color: CostrColors.of(context).bg,
+            child: Row(
+              children: [
+                _TabButton(
+                  '全部',
+                  _tab == 'all',
+                  () => setState(() => _tab = 'all'),
+                ),
+                _TabButton(
+                  '提及',
+                  _tab == 'mentions',
+                  () => setState(() => _tab = 'mentions'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -755,6 +782,7 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
                     );
                   }
                   return ListView.builder(
+                    controller: _controller,
                     itemCount: filtered.length,
                     itemBuilder: (_, i) => _NotificationTile(
                       item: filtered[i],
@@ -864,9 +892,10 @@ class _NotificationTile extends ConsumerWidget {
     // item.unread flag, which is always true at creation). Per-item: stays
     // unread until the user taps it (stable styling — no whole-page clear).
     final unread = !ref.watch(notificationReadProvider).contains(item.id);
-    final head = item.extraCount > 0
-        ? '${item.pubkeys.length} 人和另外 ${item.extraCount} 人'
-        : item.pubkeys.map((pk) => _displayName(ref, pk)).take(3).join('、');
+    // Bold style for the "who" part of the title; name spans carry it
+    // explicitly (custom-emoji names render inline images — see
+    // [displayNameSpans]).
+    const headStyle = TextStyle(fontWeight: FontWeight.w700);
     final verb = _verbForType(item.type);
 
     return InkWell(
@@ -962,10 +991,21 @@ class _NotificationTile extends ConsumerWidget {
                     text: TextSpan(
                       style: theme.textTheme.bodyMedium,
                       children: [
-                        TextSpan(
-                          text: head,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
+                        if (item.extraCount > 0)
+                          TextSpan(
+                            text:
+                                '${item.pubkeys.length} 人和另外 ${item.extraCount} 人',
+                            style: headStyle,
+                          )
+                        else
+                          for (final (i, pk) in item.pubkeys.take(3).indexed) ...[
+                            if (i > 0) TextSpan(text: '、', style: headStyle),
+                            ...displayNameSpans(
+                              pubkey: pk,
+                              meta: ref.watch(metadataProvider(pk)).value,
+                              style: headStyle,
+                            ),
+                          ],
                         TextSpan(
                           text: ' $verb',
                           style: TextStyle(
@@ -1052,17 +1092,6 @@ class _NotificationTile extends ConsumerWidget {
         ),
       ),
     );
-  }
-
-  String _displayName(WidgetRef ref, String pubkey) {
-    final meta = ref.read(metadataProvider(pubkey)).value;
-    final name = meta?.bestName;
-    if (name != null && name.isNotEmpty) return name;
-    try {
-      return shortenEntity(hexToNpub(pubkey));
-    } catch (_) {
-      return pubkey.substring(0, 8);
-    }
   }
 
   String _relativeTime(int createdAt) {

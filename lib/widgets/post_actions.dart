@@ -20,23 +20,32 @@ import '../../app/providers.dart';
 import '../../models/event.dart';
 import '../../nostr/actions.dart';
 import '../../utils/nip19.dart';
+import 'proxied_network_image.dart';
 
 class PostActions extends ConsumerWidget {
   const PostActions({super.key, required this.event});
   final Event event;
 
-  static const List<String> _emoji = [
-    '❤️',
-    '🔥',
-    '👍',
-    '👎',
-    '😮',
-    '😂',
-    '🎉',
-    '🤔',
-    '👏',
-    '🙏',
+  /// The unicode reaction set (DESIGN §3 「快捷 unicode」区). A curated
+  /// frequently-used selection in display order — the picker scrolls, so
+  /// more rows fit without pushing the sheet to full height.
+  static const List<String> _emoji = <String>[
+    // 快捷行（DESIGN §3 点弹首屏）
+    '❤️', '👍', '😂', '🔥', '🎉', '👎',
+    // 表情
+    '😀', '😊', '😉', '😍', '🥰', '😘', '😎', '🤩', '🥳', '😅',
+    '🤣', '😭', '😢', '😳', '🤯', '😱', '😴', '🤤', '😋', '🙃',
+    '😇', '🤗', '🫡', '😬', '🤡', '😡',
+    // 手势
+    '👏', '🙏', '🤝', '💪', '✌️', '🤘', '🫶', '👌', '🤙', '👀',
+    // 心情/符号
+    '💯', '💔', '✨', '⭐', '🌈', '☕', '🍺', '🍻', '🚀', '⚡',
+    '💎', '🎂', '🏆', '🐳',
   ];
+
+  /// What the picker returns: a plain unicode glyph, or a NIP-30 custom
+  /// emoji (shortcode + image URL → `["emoji", shortcode, url]` tag).
+  /// `shortcode == null` → unicode (`emoji` carries the glyph).
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -131,40 +140,99 @@ class PostActions extends ConsumerWidget {
   Future<void> _pickReaction(BuildContext context, WidgetRef ref) async {
     final identity = ref.read(identityProvider).value;
     if (identity == null) return;
-    final emoji = await showModalBottomSheet<String>(
+    // Custom emoji candidates (DESIGN §3 「自定义表情」区，按帖子上出现过的
+    // 优先): the post's OWN NIP-30 `["emoji", shortcode, url]` tags, plus any
+    // custom emoji OTHERS already reacted to this post with (the reaction
+    // tallies carry their image URLs). Deduped by shortcode, stable order.
+    final custom = <String, String>{}; // shortcode -> url
+    for (final t in event.tags) {
+      if (t.length >= 3 &&
+          t[0] == 'emoji' &&
+          t[1] is String &&
+          t[2] is String) {
+        custom.putIfAbsent(t[1] as String, () => t[2] as String);
+      }
+    }
+    final tallies = ref.read(reactionsProvider(event.id));
+    for (final entry in tallies.entries) {
+      final url = entry.value.emojiUrl;
+      if (url == null) continue;
+      final m = RegExp(r'^:([a-zA-Z0-9_+-]+):$').firstMatch(entry.key);
+      final code = m?.group(1);
+      if (code != null) custom.putIfAbsent(code, () => url);
+    }
+    final picked = await showModalBottomSheet<({String emoji, String? url})>(
       context: context,
+      isScrollControlled: true,
       builder: (BuildContext ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('选择表情', style: Theme.of(ctx).textTheme.titleSmall),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final e in _emoji)
-                    ActionChip(
-                      label: Text(e, style: const TextStyle(fontSize: 22)),
-                      onPressed: () => Navigator.pop(ctx, e),
-                    ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.55,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('选择表情', style: Theme.of(ctx).textTheme.titleSmall),
+                if (custom.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final e in custom.entries)
+                        ActionChip(
+                          avatar: CostrNetworkImage(
+                            url: e.value,
+                            width: 22,
+                            height: 22,
+                            fit: BoxFit.contain,
+                            errorWidget: (_) => Text(
+                              ':${e.key}:',
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                          ),
+                          label: Text(':${e.key}:'),
+                          onPressed: () =>
+                              Navigator.pop(ctx, (emoji: e.key, url: e.value)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
                 ],
-              ),
-            ],
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final e in _emoji)
+                      ActionChip(
+                        label: Text(e, style: const TextStyle(fontSize: 22)),
+                        onPressed: () =>
+                            Navigator.pop(ctx, (emoji: e, url: null)),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
-    if (emoji == null) return;
-    final signed = NostrActions(
-      identity,
-    ).reaction(event, emoji, relay: relayHintFor(ref, event.pubkey) ?? '');
+    if (picked == null) return;
+    final isCustom = picked.url != null;
+    final signed = NostrActions(identity).reaction(
+      event,
+      isCustom ? ':${picked.emoji}:' : picked.emoji,
+      customShortcode: isCustom ? picked.emoji : null,
+      customUrl: picked.url,
+      relay: relayHintFor(ref, event.pubkey) ?? '',
+    );
     final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
     if (context.mounted) {
-      _snack(context, ok.ok ? '已发送 $emoji' : '反应失败：${ok.reason}');
+      final glyph = isCustom ? ':${picked.emoji}:' : picked.emoji;
+      _snack(context, ok.ok ? '已发送 $glyph' : '反应失败：${ok.reason}');
     }
   }
 

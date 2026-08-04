@@ -9,6 +9,7 @@ import '../../app/providers.dart';
 import '../../models/event.dart';
 import '../../utils/nav.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/display_name.dart';
 import '../../widgets/mention_linkifier.dart';
 import '../feed/event_card.dart';
 
@@ -87,8 +88,9 @@ class _QuotedParent extends ConsumerWidget {
                         Avatar(pubkey: parent.pubkey, radius: 10),
                         const SizedBox(width: 6),
                         Flexible(
-                          child: Text(
-                            displayLabelFor(parent.pubkey, meta),
+                          child: DisplayName(
+                            pubkey: parent.pubkey,
+                            meta: meta,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: theme.textTheme.labelSmall?.copyWith(

@@ -15,6 +15,7 @@ import '../../nostr/actions.dart';
 import '../../utils/nav.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
+import '../../widgets/display_name.dart';
 import '../../widgets/markdown_content.dart';
 import '../../widgets/post_actions.dart';
 import '../../widgets/proxied_network_image.dart';
@@ -80,8 +81,9 @@ class _EventCardState extends ConsumerState<EventCard> {
                         Flexible(
                           child: GestureDetector(
                             onTap: () => context.push('/u/${event.pubkey}'),
-                            child: Text(
-                              displayLabelFor(event.pubkey, meta),
+                            child: DisplayName(
+                              pubkey: event.pubkey,
+                              meta: meta,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelMedium?.copyWith(
@@ -277,13 +279,27 @@ class _RepostView extends ConsumerWidget {
                 Flexible(
                   child: GestureDetector(
                     onTap: () => context.push('/u/${event.pubkey}'),
-                    child: Text(
-                      '${displayLabelFor(event.pubkey, meta)} 转发',
+                    child: Text.rich(
+                      TextSpan(
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: CostrColors.of(context).text3,
+                        ),
+                        children: <InlineSpan>[
+                          WidgetSpan(
+                            alignment: PlaceholderAlignment.middle,
+                            child: DisplayName(
+                              pubkey: event.pubkey,
+                              meta: meta,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: CostrColors.of(context).text3,
+                              ),
+                            ),
+                          ),
+                          const TextSpan(text: ' 转发'),
+                        ],
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: CostrColors.of(context).text3,
-                      ),
                     ),
                   ),
                 ),
@@ -514,8 +530,9 @@ class _ReplyParentPreview extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            displayLabelFor(parent.pubkey, meta),
+          DisplayName(
+            pubkey: parent.pubkey,
+            meta: meta,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.labelSmall?.copyWith(

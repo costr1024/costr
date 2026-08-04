@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.6.6-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6.6-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.6.8-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6.8-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta）。
 
 ---
 
@@ -171,7 +171,9 @@ lib/
   **本地可配置项**（设置 → 沉浸式浏览，**不同步中继**），默认关。开启后向下滚动 40px 隐藏顶部 AppBar +
   底部导航栏 + 发帖 FAB（220ms 动画），向上滚或回到顶部立即恢复；切 tab 自动回显。关闭时各页
   `Scaffold(appBar:, body:)` 与改造前逐字节一致（零回归）——顶栏折叠只在开关开启时走 `AnimatedContainer`/
-  `AnimatedSlide` 分支。
+  `AnimatedSlide` 分支。**只响应竖向滚动**：卡片内嵌的横向滚动控件（作者状态行）的滚动事件不参与
+  隐藏/恢复判定（depth/轴向过滤前它们会随机乱跳顶/底栏）。配套快捷键：双击首页「全球/关注」、
+  通知「全部/提及」页签行（`DoubleTapShortcut`，Listener 实现不与子级点按抢手势）平滑滚回最新内容。
 - **关注 / 取消关注**（`followUser`/`unfollowUser`）：**乐观更新**——签名后立即更新本地 kind-3 缓存 +
   `followingStateProvider`，`publishAndWait` 落到后台，按钮不再卡 5–20s 等中继 ACK；失败时 invalidate 重拉对账。
 - **关注集分组**（`_buildFollowGroups`）：按 kind-30000 的 **`d` tag**（稳定标识）分组，组名取该 d 下
@@ -310,6 +312,27 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 主页 5 个过滤/搜索框 X 一键清空；发帖/回帖发送快返（首个中继 OK 即成功，不再等最慢中继）；
 点回复/点赞通知跳到具体回帖/被点赞帖而非 root 主贴；自己的帖发帖后立即进关注信息流；
 个人主页加载完整帖子/回帖历史（修复只显示几条、刷新刷不出更多）。
+
+**v0.6.8-beta 相对 v0.6.6-beta 的修复**：
+**沉浸式浏览不再乱跳**——帖子卡片里的作者状态行是横向可滚动单行文本，横滑它发出的
+横向滚动事件此前被当成竖向滚动，导致顶/底栏随横滑误隐藏/误恢复（关注 tab 上关注对象
+带状态时「菜单偶尔隐藏偶尔不隐藏」），现沉浸式隐藏/恢复只响应竖向滚动；同一横滑还会
+误触发阅读冻结的「到顶/离顶」判定与信息流「加载更多」，一并修复。顶栏折叠动画中的
+RenderFlex 溢出告警也一并消除。
+**双击页签一键回顶部**——信息流「全球/关注」、通知「全部/提及」页签行双击即平滑滚回
+最新帖子/通知（刷了几百条也不用一直往上划），阅读冻结的双击回顶会同时释放积压的
+「N 条新帖」。
+**引用不再永久「加载引用…」**——引用/转发/线程补全的事件查询此前订阅了信息流事件
+仓库，仓库每 ~200ms 刷新一次就把整个查询推倒重来，信息流热闹时查询永远跑不完，引用卡
+死在「加载引用…」；现改为一次性查询，跑完即出结果（找不到显示「不可用·点击重试」，
+重试同样有效）。
+**昵称自定义表情（NIP-30）**——kind-0 资料里 `:shortcode:` 昵称（如
+「科代 :winnie_kanahei_0:」）按事件 emoji 标签渲染成内联图片（对齐 Amethyst；此前
+显示原始 :shortcode: 文本），覆盖信息流/转发/引用/回复上下文/个人主页/关注列表/通知
+列表标题行。
+**点赞表情选择扩充**——reaction 选择器从 2 排 10 个扩充到 50+ 个常用表情并可滚动，
+另按 NIP-30 增加「自定义表情」区：帖子自带的或被他人用来反应过的 `:shortcode:` 表情
+可直接选用（带 emoji 标签发布 kind-7）。
 
 **v0.6.6-beta 相对 v0.6.5-beta 的修复**：
 **沉浸式浏览真正全屏**——下滑隐藏顶栏时，首页「全球/关注」、通知「全部/提及」、

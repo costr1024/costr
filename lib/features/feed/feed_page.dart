@@ -15,6 +15,7 @@ import '../../nostr/outbox_router.dart';
 import '../../nostr/relay_client.dart';
 import '../../nostr/relay_pool.dart';
 import '../../widgets/costr_logo.dart';
+import '../../widgets/double_tap_shortcut.dart';
 import '../../widgets/immersive.dart';
 import 'event_card.dart';
 
@@ -106,6 +107,26 @@ class _FeedPageState extends ConsumerState<FeedPage> {
         );
       }
     });
+  }
+
+  /// Double-tap on the 全球/关注 tab row: jump straight back to the newest
+  /// post (user: "下滑刷了 200 条帖子，没办法一键回到最新的帖子位置").
+  /// The read-freeze releases itself on arrival — the scroll listener's
+  /// "atTop → _release()" fires as the animation lands at the top, so the
+  /// held-back "N 条新帖" unroll at the same time. Chrome restores too
+  /// (the immersive detector shows on any upward scroll).
+  void _scrollToTop() {
+    if (!_controller.hasClients) return;
+    final px = _controller.offset;
+    if (px <= 0) return;
+    // Duration scales with distance (long jumps shouldn't take forever,
+    // short ones shouldn't snap).
+    final ms = (px / 60).clamp(250, 700).toInt();
+    _controller.animateTo(
+      0,
+      duration: Duration(milliseconds: ms),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   Future<void> _refresh() async {
@@ -258,29 +279,36 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       // The 全球/关注 toggle is part of the top chrome: collapsing it WITH
       // the AppBar on scroll-down gives the true fullscreen reading mode
       // (user: "全球和关注 tab 不会隐藏"). Fixed 64 height keeps the
-      // ImmersiveScaffold collapse math exact.
+      // ImmersiveScaffold collapse math exact. Double-tapping the row jumps
+      // back to the newest post (Amethyst "tap the tab to scroll to top").
       belowBarHeight: 64,
-      belowBar: SizedBox(
-        height: 64,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Align(
-            child: SegmentedButton<FeedMode>(
-              segments: const [
-                ButtonSegment(value: FeedMode.global, label: Text('全球')),
-                ButtonSegment(value: FeedMode.following, label: Text('关注')),
-              ],
-              selected: {mode},
-              onSelectionChanged: (Set<FeedMode> s) {
-                if (s.isNotEmpty) {
-                  // Release any read-freeze before switching modes so the new
-                  // mode's list isn't pinned behind the old mode's barrier
-                  // (the barrier post id likely isn't in the new mode's events
-                  // anyway, but clearing avoids a one-frame freeze artifact).
-                  _release();
-                  ref.read(feedModeProvider.notifier).set(s.first);
-                }
-              },
+      belowBar: DoubleTapShortcut(
+        onDoubleTap: _scrollToTop,
+        child: SizedBox(
+          height: 64,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Align(
+              child: SegmentedButton<FeedMode>(
+                segments: const [
+                  ButtonSegment(value: FeedMode.global, label: Text('全球')),
+                  ButtonSegment(
+                    value: FeedMode.following,
+                    label: Text('关注'),
+                  ),
+                ],
+                selected: {mode},
+                onSelectionChanged: (Set<FeedMode> s) {
+                  if (s.isNotEmpty) {
+                    // Release any read-freeze before switching modes so the new
+                    // mode's list isn't pinned behind the old mode's barrier
+                    // (the barrier post id likely isn't in the new mode's events
+                    // anyway, but clearing avoids a one-frame freeze artifact).
+                    _release();
+                    ref.read(feedModeProvider.notifier).set(s.first);
+                  }
+                },
+              ),
             ),
           ),
         ),
@@ -308,6 +336,20 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                         children: <Widget>[
                           NotificationListener<ScrollNotification>(
                             onNotification: (ScrollNotification n) {
+                              // Only the feed list itself drives the freeze /
+                              // load-more logic. Nested scrollables inside
+                              // cards (a post's horizontal author-status
+                              // line) also bubble notifications up here;
+                              // their HORIZONTAL metrics used to misfire the
+                              // freeze (`pixels <= 0` read as "at top" →
+                              // `_release()`, `pixels > 0` → `_freeze()`) and
+                              // could even trigger `_loadMore()` when the
+                              // horizontal offset neared its own max extent.
+                              final axis = n.metrics.axisDirection;
+                              if (axis != AxisDirection.down &&
+                                  axis != AxisDirection.up) {
+                                return false;
+                              }
                               if (n is ScrollUpdateNotification) {
                                 final atTop = n.metrics.pixels <= 0;
                                 if (!atTop && _barrierId == null) {

@@ -24,6 +24,7 @@ import '../utils/nav.dart';
 import '../utils/nip19.dart';
 import '../services/media_download.dart';
 import 'avatar.dart';
+import 'display_name.dart';
 import 'media_viewer_page.dart';
 import 'proxied_network_image.dart';
 import 'mention_linkifier.dart';
@@ -751,8 +752,9 @@ class _EventEmbed extends ConsumerWidget {
                 Avatar(pubkey: ev.pubkey, radius: 12),
                 const SizedBox(width: 6),
                 Flexible(
-                  child: Text(
-                    displayLabelFor(ev.pubkey, meta),
+                  child: DisplayName(
+                    pubkey: ev.pubkey,
+                    meta: meta,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(

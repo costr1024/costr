@@ -1853,8 +1853,14 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
       return _cacheRowToEvent(row);
     }
   }
-  // 2. In-memory store.
-  final store = ref.watch(eventStoreProvider);
+  // 2. In-memory store. READ, not watch: the live store flushes a new list
+  //    every ~200ms while events arrive, and a watch made this provider (and
+  //    everything awaiting its `.future` — quote/repost/ancestor lookups)
+  //    RESTART the whole lookup on every flush. On a busy feed the restart
+  //    loop never let a relay fetch run to completion, so quote cards sat on
+  //    「加载引用…」 forever. The lookup is one-shot by design; the SQLite
+  //    tier + relay tiers + the card's tap-to-retry cover late arrivals.
+  final store = ref.read(eventStoreProvider);
   for (final e in store) {
     if (e.id == id) return e;
   }
@@ -2903,7 +2909,9 @@ Metadata? _metaFromStore(List<Event> store, String pubkey) {
     if (e.kind == 0 && e.pubkey == pubkey) {
       try {
         final j = jsonDecode(e.content);
-        if (j is Map<String, dynamic>) return Metadata.fromJson(j);
+        if (j is Map<String, dynamic>) {
+          return Metadata.fromJson(j, tags: e.tags);
+        }
       } catch (_) {}
     }
   }
@@ -3086,7 +3094,9 @@ final searchUsersProvider = StreamProvider.family<List<UserResult>, String>((
       Metadata? meta;
       try {
         final json = jsonDecode(e.content);
-        if (json is Map<String, dynamic>) meta = Metadata.fromJson(json);
+        if (json is Map<String, dynamic>) {
+          meta = Metadata.fromJson(json, tags: e.tags);
+        }
       } catch (_) {}
       merged[e.pubkey] = UserResult(e.pubkey, meta);
       scheduleEmit();
@@ -4068,7 +4078,10 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
       try {
         final json = jsonDecode(row.content);
         if (json is Map<String, dynamic>) {
-          cached = Metadata.fromJson(json);
+          cached = Metadata.fromJson(
+            json,
+            tags: jsonDecode(row.tagsJson) as List,
+          );
           cachedCreatedAt = row.createdAt;
         }
       } catch (_) {}
@@ -4081,7 +4094,7 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
         try {
           final json = jsonDecode(e.content);
           if (json is Map<String, dynamic>) {
-            cached = Metadata.fromJson(json);
+            cached = Metadata.fromJson(json, tags: e.tags);
             cachedCreatedAt = e.createdAt;
           }
         } catch (_) {}
@@ -4139,7 +4152,7 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
           ),
         );
       }
-      ctrl.add(Metadata.fromJson(json));
+      ctrl.add(Metadata.fromJson(json, tags: e.tags));
     } catch (_) {
       // Malformed metadata content — ignore, keep waiting for EOSE.
     }
