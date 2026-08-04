@@ -151,6 +151,59 @@ void main() {
     });
   });
 
+  group('Amethyst reactions — pubkey in the NIP-10 marker slot', () {
+    // Real-world shape (Amethyst): ["e", <liked-id>, <relay>, <author-pubkey>]
+    // — the 4th field is a pubkey, NOT a root/reply/mention marker. The old
+    // parser matched no branch and returned null → the tap fell back to the
+    // reaction event itself.
+    const liked =
+        'ef8b760789d80e8f8e96618057d004af6475c09da884bc6041cf8fa4299ad4a4';
+    const author =
+        'd26761d144210054851d0707b0f06a51f8d65ddcf47c9b925545a8db07348f24';
+
+    test('un-gated target resolves the liked post', () {
+      final reaction = _ev(
+        kind: 7,
+        id: 'like_ev',
+        pubkey: '9' * 64,
+        content: '💪',
+        tags: [
+          ['e', liked, 'wss://relay.gulugulu.moe/', author],
+          ['p', author, 'wss://relay.gulugulu.moe/'],
+          ['k', '1'],
+          ['client', 'Amethyst'],
+        ],
+      );
+      expect(primaryETagTarget(reaction), liked);
+    });
+
+    test('gated resolution finds it when the liked post is in myEventIds', () {
+      final reaction = _ev(
+        kind: 7,
+        id: 'like_ev',
+        pubkey: '9' * 64,
+        content: '+',
+        tags: [
+          ['e', liked, '', author],
+          ['p', author],
+        ],
+      );
+      expect(notificationReferencedId(reaction, {liked}), liked);
+    });
+
+    test('mention marker is still excluded', () {
+      final e = _ev(
+        kind: 1,
+        id: 'n',
+        pubkey: 'b' * 64,
+        tags: const [
+          ['e', 'm_id', '', 'mention'],
+        ],
+      );
+      expect(primaryETagTarget(e), isNull);
+    });
+  });
+
   group('notificationNavTarget', () {
     NotificationItem item(NotificationType t, {String? target, String? source}) =>
         NotificationItem(
@@ -229,17 +282,21 @@ void main() {
       // Initial empty emission settles.
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      // A kind-7 reaction: e-tag → an OLD own post (not in myEventIds),
-      // p-tag → me (so it passes the mention gate).
+      // A kind-7 reaction in REAL Amethyst wire shape: the e-tag's 4th field
+      // is the liked post's author PUBKEY (not a NIP-10 root/reply marker),
+      // plus a ["k","1"] kind tag. e-tag → an OLD own post (not in
+      // myEventIds), p-tag → me (passes the mention gate).
       relay.emit(
         _ev(
           kind: 7,
           id: 'like_event_1',
           pubkey: 'c' * 64,
-          content: '+',
+          content: '💪',
           tags: [
-            ['e', 'old_own_post'],
-            ['p', me],
+            ['e', 'old_own_post', 'wss://relay.example/', me],
+            ['p', me, 'wss://relay.example/'],
+            ['k', '1'],
+            ['client', 'Amethyst'],
           ],
         ),
       );

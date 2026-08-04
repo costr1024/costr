@@ -287,6 +287,14 @@ NotificationType _classify(Event e, bool mentionsMe, bool interactsMyPost) {
 /// NIP-10 marker precedence (reply > positional > root) over [e]'s `e` tags.
 /// When [onlyIds] is given, only ids in that set are considered (gated);
 /// otherwise every `e` tag is a candidate (un-gated).
+///
+/// Marker handling: NIP-10 defines `root` / `reply` / `mention`. Some clients
+/// — notably Amethyst, which generates many of the reactions on this network —
+/// put the interacted post's AUTHOR PUBKEY in the marker slot of a reaction's
+/// `e` tag (`["e", <liked-id>, <relay>, <pubkey>]`, plus a `["k", <kind>]`
+/// tag). Any unrecognized non-empty marker is therefore treated as a direct
+/// (positional) reference — the `e` tag still names the interacted post, so
+/// it must resolve. Only `mention` is excluded (never an interaction).
 String? _primaryETagTarget(Event e, {Set<String>? onlyIds}) {
   String? replyRef;
   String? positionalRef;
@@ -298,10 +306,14 @@ String? _primaryETagTarget(Event e, {Set<String>? onlyIds}) {
     final marker = (t.length >= 4 && t[3] is String) ? (t[3] as String) : '';
     if (marker == 'reply') {
       replyRef ??= id;
-    } else if (marker.isEmpty) {
-      positionalRef ??= id;
     } else if (marker == 'root') {
       rootRef ??= id;
+    } else if (marker == 'mention') {
+      // A mention marker is never an interaction — skip.
+    } else {
+      // Empty marker (legacy positional) OR an unrecognized one (e.g.
+      // Amethyst's pubkey-in-marker-slot) → direct reference to the post.
+      positionalRef ??= id;
     }
   }
   return replyRef ?? positionalRef ?? rootRef;
@@ -693,11 +705,50 @@ class _TabButton extends StatelessWidget {
   }
 }
 
+/// Preview line for a reaction/repost notification: the content of the post
+/// that was interacted with. The incoming event itself is just an emoji
+/// (kind-7) or a repost envelope (kind-6) — the useful context is the liked/
+/// reposted post's own text ("在通知中心就能看到点赞对应的帖子内容", like the
+/// reply preview). Resolved via [eventByIdProvider]'s 3-tier lookup; the
+/// user's own posts are SQLite-cached (TTL-exempt) so this is instant. Shown
+/// only while [item]'s own [NotificationItem.preview] is null (reposts embed
+/// the reposted text directly, so they usually don't need this).
+class _InteractPreview extends ConsumerWidget {
+  const _InteractPreview({required this.targetId});
+  final String targetId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ev = ref.watch(eventByIdProvider(targetId)).value;
+    final content = ev?.content.trim() ?? '';
+    if (content.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text.rich(
+        linkifyMentions(
+          content,
+          ref,
+          baseStyle: TextStyle(
+            fontSize: 14,
+            color: CostrColors.of(context).text2,
+          ),
+          mentionStyle: TextStyle(
+            fontSize: 14,
+            color: CostrColors.of(context).brand,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
 class _NotificationTile extends ConsumerWidget {
   const _NotificationTile({required this.item, required this.myPubkey});
   final NotificationItem item;
   final String myPubkey;
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -851,7 +902,12 @@ class _NotificationTile extends ConsumerWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                  ],
+                  ] else if ((item.type == NotificationType.reaction ||
+                          item.type == NotificationType.repost) &&
+                      item.targetEventId != null)
+                    // No inline preview (a reaction's own content is just the
+                    // emoji) — show the liked/reposted post's content instead.
+                    _InteractPreview(targetId: item.targetEventId!),
                   const SizedBox(height: 4),
                   Text(
                     _relativeTime(item.time),
