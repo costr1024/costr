@@ -108,6 +108,13 @@ class _ProfileBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final meta = ref.watch(metadataProvider(pubkey)).value;
     final theme = Theme.of(context);
+    // The tab bar lives inside the scroll content (pinned sliver), not in the
+    // AppBar — so to hide it with the immersive chrome we unpin it while the
+    // bars are hidden: scroll down → it scrolls away (fullscreen reading),
+    // scroll up → chrome returns and the tab bar pins again.
+    final pinTabs =
+        !ref.watch(immersiveBrowseProvider) ||
+        ref.watch(appBarsVisibleProvider);
 
     return ImmersiveScrollDetector(
       child: NestedScrollView(
@@ -122,7 +129,7 @@ class _ProfileBody extends ConsumerWidget {
               ),
             ),
             SliverPersistentHeader(
-              pinned: true,
+              pinned: pinTabs,
               delegate: _StickyTabBarDelegate(
                 TabBar(
                   tabAlignment: TabAlignment.start,

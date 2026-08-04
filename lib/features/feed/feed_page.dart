@@ -255,10 +255,16 @@ class _FeedPageState extends ConsumerState<FeedPage> {
           _RelayStatusChip(relays: relays.value ?? const []),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      // The 全球/关注 toggle is part of the top chrome: collapsing it WITH
+      // the AppBar on scroll-down gives the true fullscreen reading mode
+      // (user: "全球和关注 tab 不会隐藏"). Fixed 64 height keeps the
+      // ImmersiveScaffold collapse math exact.
+      belowBarHeight: 64,
+      belowBar: SizedBox(
+        height: 64,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Align(
             child: SegmentedButton<FeedMode>(
               segments: const [
                 ButtonSegment(value: FeedMode.global, label: Text('全球')),
@@ -277,6 +283,10 @@ class _FeedPageState extends ConsumerState<FeedPage> {
               },
             ),
           ),
+        ),
+      ),
+      body: Column(
+        children: [
           if (tagFilter != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),

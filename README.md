@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.6.5-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6.5-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.6.6-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6.6-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta）。
 
 ---
 
@@ -255,7 +255,7 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 ```bash
 flutter pub get          # 安装/刷新依赖
 flutter run -d linux     # 桌面运行（或 android / macos / windows）
-flutter test             # 全套测试（346 个）
+flutter test             # 全套测试（347 个）
 flutter analyze          # 静态分析（须 0 警告）
 dart format lib/ test/   # 格式化
 flutter build linux      # 桌面构建验证
@@ -288,7 +288,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 346 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 347 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -310,6 +310,13 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 主页 5 个过滤/搜索框 X 一键清空；发帖/回帖发送快返（首个中继 OK 即成功，不再等最慢中继）；
 点回复/点赞通知跳到具体回帖/被点赞帖而非 root 主贴；自己的帖发帖后立即进关注信息流；
 个人主页加载完整帖子/回帖历史（修复只显示几条、刷新刷不出更多）。
+
+**v0.6.6-beta 相对 v0.6.5-beta 的修复**：
+**沉浸式浏览真正全屏**——下滑隐藏顶栏时，首页「全球/关注」、通知「全部/提及」、
+搜索「全部/帖子/用户」页签行随 AppBar 一起折叠（此前页签行在 body 里不隐藏）；
+个人主页的 pinned 页签条在沉浸隐藏时改为随内容滚走、上滑恢复固定；帖子详情页
+也接入沉浸式（下滑隐藏顶/底栏）。**代理媒体大图继承**——帖子开了「代理媒体」后
+点开九宫格大图直接走代理加载（此前大图独立默认直连原站，缩略图能看、大图一直转圈）。
 
 **v0.6.5-beta 相对 v0.6.4-beta 的修复**：
 信息流引用/转发补全——引用卡片沿 NIP-19 nevent 的 relay hint 定向补拉
@@ -393,7 +400,7 @@ content 里带 NIP-18 嵌入 JSON 的转发无需解析 e-tag 直接渲染原帖
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 346 个测试
+flutter test             # 347 个测试
 flutter build linux      # 桌面构建
 ```
 

@@ -18,10 +18,15 @@ import 'proxied_network_image.dart';
 /// Push the viewer over the current route with a black fade transition.
 /// [images] is the full set of images in the post (so the gallery can swipe
 /// between them); [initialIndex] is the one that was tapped.
+/// [initialForceProxy] inherits the post card's 代理媒体 toggle: when the
+/// user already opted this post's media into the proxy mirror (because the
+/// origin host is unreachable for them), the fullscreen image must start
+/// proxied too — otherwise it spins on the dead origin ("大图一直加载中").
 void pushMediaViewer(
   BuildContext context, {
   required List<String> images,
   int initialIndex = 0,
+  bool initialForceProxy = false,
 }) {
   if (images.isEmpty) return;
   Navigator.of(context, rootNavigator: true).push(
@@ -36,6 +41,7 @@ void pushMediaViewer(
               child: _MediaViewerPage(
                 images: images,
                 initialIndex: initialIndex.clamp(0, images.length - 1),
+                initialForceProxy: initialForceProxy,
               ),
             );
           },
@@ -44,9 +50,14 @@ void pushMediaViewer(
 }
 
 class _MediaViewerPage extends StatefulWidget {
-  const _MediaViewerPage({required this.images, required this.initialIndex});
+  const _MediaViewerPage({
+    required this.images,
+    required this.initialIndex,
+    this.initialForceProxy = false,
+  });
   final List<String> images;
   final int initialIndex;
+  final bool initialForceProxy;
 
   @override
   State<_MediaViewerPage> createState() => _MediaViewerPageState();
@@ -109,8 +120,11 @@ class _MediaViewerPageState extends State<_MediaViewerPage> {
               controller: _pageController,
               itemCount: widget.images.length,
               onPageChanged: (int i) => setState(() => _index = i),
-              itemBuilder: (BuildContext _, int i) =>
-                  _ZoomableImage(url: widget.images[i], onTap: _toggleControls),
+              itemBuilder: (BuildContext _, int i) => _ZoomableImage(
+                url: widget.images[i],
+                onTap: _toggleControls,
+                initialForceProxy: widget.initialForceProxy,
+              ),
             ),
           ),
           // Top bar: close + counter. Fades with the controls.
@@ -163,19 +177,25 @@ class _MediaViewerPageState extends State<_MediaViewerPage> {
 }
 
 class _ZoomableImage extends StatefulWidget {
-  const _ZoomableImage({required this.url, required this.onTap});
+  const _ZoomableImage({
+    required this.url,
+    required this.onTap,
+    this.initialForceProxy = false,
+  });
   final String url;
   final VoidCallback onTap;
+  final bool initialForceProxy;
 
   @override
   State<_ZoomableImage> createState() => _ZoomableImageState();
 }
 
 class _ZoomableImageState extends State<_ZoomableImage> {
-  // Manual proxy opt-in for the fullscreen image (independent of the post
-  // card's toggle — the viewer is its own route). Flipped by the "使用代理加载"
-  // overlay shown on load failure.
-  bool _forceProxy = false;
+  // Starts from the post card's 代理媒体 state (inherited via the viewer
+  // route) so a post whose thumbnails only load through the proxy doesn't
+  // spin on the dead origin here; the "使用代理加载" overlay below still
+  // allows a manual opt-in per image.
+  late bool _forceProxy = widget.initialForceProxy;
 
   @override
   Widget build(BuildContext context) {

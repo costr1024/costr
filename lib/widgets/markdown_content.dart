@@ -597,7 +597,12 @@ class _GridThumb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => pushMediaViewer(context, images: urls, initialIndex: index),
+      onTap: () => pushMediaViewer(
+        context,
+        images: urls,
+        initialIndex: index,
+        initialForceProxy: proxyMedia,
+      ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),
         child: CostrNetworkImage(
@@ -620,7 +625,11 @@ class _SingleImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => pushMediaViewer(context, images: [url]),
+      onTap: () => pushMediaViewer(
+        context,
+        images: [url],
+        initialForceProxy: proxyMedia,
+      ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: CostrNetworkImage(

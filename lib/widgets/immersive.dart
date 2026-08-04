@@ -56,8 +56,7 @@ ImmersiveBarAction immersiveBarAction(
   double accumulated,
   double threshold,
 ) {
-  final update =
-      n is ScrollUpdateNotification ? n : null;
+  final update = n is ScrollUpdateNotification ? n : null;
   return immersiveBarActionFromPixels(
     pixels: n.metrics.pixels,
     scrollDelta: update?.scrollDelta,
@@ -119,6 +118,8 @@ class ImmersiveScaffold extends ConsumerWidget {
     super.key,
     required this.topBar,
     required this.body,
+    this.belowBar,
+    this.belowBarHeight = 0,
   });
 
   /// The page's top bar (typically `AppBar(...)`). Treated as a
@@ -126,23 +127,44 @@ class ImmersiveScaffold extends ConsumerWidget {
   /// kToolbarHeight` (AppBar handles the status-bar inset itself).
   final PreferredSizeWidget topBar;
 
+  /// Optional page tab row (全球/关注, 全部/提及…) rendered directly under
+  /// [topBar] and collapsed TOGETHER with it when immersive hides the chrome.
+  /// Previously these lived in the body, so scrolling down hid the AppBar but
+  /// left the tab row pinned ("沉浸式不会隐藏 topbar" — the tabs ARE part of
+  /// the top bar to the user). Fixed-height ([belowBarHeight]) so the
+  /// collapse math stays exact.
+  final Widget? belowBar;
+  final double belowBarHeight;
+
   final Widget body;
 
   static const Duration _kDuration = Duration(milliseconds: 220);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // OFF → byte-identical to the prior Scaffold. No animated wrapper, no
-    // Column restructure — guaranteed zero regression when the toggle is off.
+    // OFF → byte-identical to the prior Scaffold (plus the tab row in the
+    // body where it used to live). No animated wrapper, no Column
+    // restructure — guaranteed zero regression when the toggle is off.
     if (!ref.watch(immersiveBrowseProvider)) {
-      return Scaffold(appBar: topBar, body: body);
+      return Scaffold(
+        appBar: topBar,
+        body: belowBar == null
+            ? body
+            : Column(
+                children: <Widget>[
+                  belowBar!,
+                  Expanded(child: body),
+                ],
+              ),
+      );
     }
     final hide = !ref.watch(appBarsVisibleProvider);
     final mq = MediaQuery.of(context);
-    // AppBar renders at viewPadding.top + kToolbarHeight. When hidden we
-    // still reserve viewPadding.top so content never sits under the status
-    // bar; the bar content slides up out of the clipped window.
-    final expandedHeight = mq.viewPadding.top + kToolbarHeight;
+    // AppBar renders at viewPadding.top + kToolbarHeight; the tab row adds
+    // belowBarHeight. When hidden we still reserve viewPadding.top so
+    // content never sits under the status bar; the bar content slides up
+    // out of the clipped window.
+    final expandedHeight = mq.viewPadding.top + kToolbarHeight + belowBarHeight;
     final collapsedHeight = mq.viewPadding.top;
     return Scaffold(
       // No appBar slot — we render the bar in the body so its height change
@@ -161,7 +183,10 @@ class ImmersiveScaffold extends ConsumerWidget {
                 duration: _kDuration,
                 curve: Curves.easeOut,
                 offset: hide ? const Offset(0, -1) : Offset.zero,
-                child: topBar,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[topBar, ?belowBar],
+                ),
               ),
             ),
           ),

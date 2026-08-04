@@ -21,6 +21,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
+import '../../widgets/immersive.dart';
 import 'event_card.dart';
 
 class PostDetailPage extends ConsumerStatefulWidget {
@@ -88,79 +89,82 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
     // ready, so the page is never blank while the chain resolves.
     final focusedAv = ref.watch(eventByIdProvider(widget.id));
     final chainAv = ref.watch(threadAncestorsProvider(widget.id));
-    return Scaffold(
-      appBar: AppBar(title: const Text('帖子')),
-      body: focusedAv.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (Object e, _) => Center(child: Text('加载失败：$e')),
-        data: (Event? focused) {
-          if (focused == null) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('未找到该帖子（可能未在中继上）'),
-                  const SizedBox(height: 12),
-                  FilledButton.tonal(
-                    onPressed: () =>
-                        ref.invalidate(eventByIdProvider(widget.id)),
-                    child: const Text('重试'),
-                  ),
-                ],
-              ),
-            );
-          }
-          // chain is root-first ending in focused; null while still loading.
-          final chain = chainAv.value ?? const <Event>[];
-          final ancestors =
-              chain.length > 1 ? chain.sublist(0, chain.length - 1) : <Event>[];
-          final displayFocused = chain.isNotEmpty ? chain.last : focused;
-          final theme = Theme.of(context);
-          // Once the chain has settled (AsyncValue data), position to the
-          // focused post. Called during build but only schedules a post-frame
-          // callback — no setState during build. Re-runs when the chain
-          // length changes (ancestors prepended async).
-          if (chainAv.value != null) _positionToFocused(chain.length);
-          return SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  for (final e in ancestors) EventCard(event: e),
-                  if (ancestors.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 2, bottom: 2),
-                      child: Text(
-                        '你打开的帖子',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.outline,
-                        ),
-                      ),
+    return ImmersiveScaffold(
+      topBar: AppBar(title: const Text('帖子')),
+      body: ImmersiveScrollDetector(
+        child: focusedAv.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (Object e, _) => Center(child: Text('加载失败：$e')),
+          data: (Event? focused) {
+            if (focused == null) {
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('未找到该帖子（可能未在中继上）'),
+                    const SizedBox(height: 12),
+                    FilledButton.tonal(
+                      onPressed: () =>
+                          ref.invalidate(eventByIdProvider(widget.id)),
+                      child: const Text('重试'),
                     ),
                   ],
-                  // Highlight flash on the focused card right after the
-                  // auto-scroll, so the user can pick it out of the chain.
-                  AnimatedContainer(
-                    key: _focusedKey,
-                    duration: const Duration(milliseconds: 600),
-                    decoration: BoxDecoration(
-                      color: _highlight
-                          ? CostrColors.of(context).brand.withValues(
-                              alpha: 0.10,
-                            )
-                          : null,
-                      borderRadius: BorderRadius.circular(14),
+                ),
+              );
+            }
+            // chain is root-first ending in focused; null while still loading.
+            final chain = chainAv.value ?? const <Event>[];
+            final ancestors = chain.length > 1
+                ? chain.sublist(0, chain.length - 1)
+                : <Event>[];
+            final displayFocused = chain.isNotEmpty ? chain.last : focused;
+            final theme = Theme.of(context);
+            // Once the chain has settled (AsyncValue data), position to the
+            // focused post. Called during build but only schedules a post-frame
+            // callback — no setState during build. Re-runs when the chain
+            // length changes (ancestors prepended async).
+            if (chainAv.value != null) _positionToFocused(chain.length);
+            return SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    for (final e in ancestors) EventCard(event: e),
+                    if (ancestors.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 2, bottom: 2),
+                        child: Text(
+                          '你打开的帖子',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.outline,
+                          ),
+                        ),
+                      ),
+                    ],
+                    // Highlight flash on the focused card right after the
+                    // auto-scroll, so the user can pick it out of the chain.
+                    AnimatedContainer(
+                      key: _focusedKey,
+                      duration: const Duration(milliseconds: 600),
+                      decoration: BoxDecoration(
+                        color: _highlight
+                            ? CostrColors.of(
+                                context,
+                              ).brand.withValues(alpha: 0.10)
+                            : null,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: EventCard(event: displayFocused),
                     ),
-                    child: EventCard(event: displayFocused),
-                  ),
-                  _RepliesSection(eventId: displayFocused.id),
-                ],
+                    _RepliesSection(eventId: displayFocused.id),
+                  ],
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

@@ -121,11 +121,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           ),
         ),
       ),
-      body: Column(
-        children: <Widget>[
-          // 全部 / 帖子 / 用户 filter (default 全部).
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      // The 全部/帖子/用户 filter row is top chrome too — collapse it with
+      // the search AppBar on scroll-down. Fixed 60 height (8+48+4, same as
+      // the old in-body padding) keeps the collapse math exact.
+      belowBarHeight: 60,
+      belowBar: SizedBox(
+        height: 60,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Align(
             child: SegmentedButton<_SearchTab>(
               segments: const [
                 ButtonSegment(value: _SearchTab.all, label: Text('全部')),
@@ -136,6 +140,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               onSelectionChanged: (s) => setState(() => _tab = s.first),
             ),
           ),
+        ),
+      ),
+      body: Column(
+        children: <Widget>[
           Expanded(child: ImmersiveScrollDetector(child: _buildBody())),
         ],
       ),

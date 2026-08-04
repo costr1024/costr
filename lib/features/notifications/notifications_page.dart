@@ -706,26 +706,32 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
           ),
         ],
       ),
+      // The 全部/提及 tab row is part of the top chrome — collapse it WITH
+      // the AppBar on scroll-down (user: "提及和全部不会隐藏"). _TabButton
+      // fills the fixed 52 height so the collapse math is exact.
+      belowBarHeight: 52,
+      belowBar: SizedBox(
+        height: 52,
+        child: Material(
+          color: CostrColors.of(context).bg,
+          child: Row(
+            children: [
+              _TabButton(
+                '全部',
+                _tab == 'all',
+                () => setState(() => _tab = 'all'),
+              ),
+              _TabButton(
+                '提及',
+                _tab == 'mentions',
+                () => setState(() => _tab = 'mentions'),
+              ),
+            ],
+          ),
+        ),
+      ),
       body: Column(
         children: [
-          // All / Mentions tabs.
-          Material(
-            color: CostrColors.of(context).bg,
-            child: Row(
-              children: [
-                _TabButton(
-                  '全部',
-                  _tab == 'all',
-                  () => setState(() => _tab = 'all'),
-                ),
-                _TabButton(
-                  '提及',
-                  _tab == 'mentions',
-                  () => setState(() => _tab = 'mentions'),
-                ),
-              ],
-            ),
-          ),
           Expanded(
             child: ImmersiveScrollDetector(
               child: async.when(
@@ -776,7 +782,8 @@ class _TabButton extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          height: double.infinity,
+          alignment: Alignment.center,
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
