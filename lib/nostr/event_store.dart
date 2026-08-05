@@ -7,14 +7,23 @@ library;
 import '../models/event.dart';
 
 class EventStore {
-  EventStore({this.maxEvents = 5000});
+  EventStore({this.maxEvents = 20000});
 
+  /// Memory cap. Raised from the original 5000: with indiscriminate eviction
+  /// a saturated store made backward pagination IMPOSSIBLE — every older post
+  /// fetched by load-more was evicted the moment it was added (it was the
+  /// oldest thing in the store), so the feed froze a few hundred posts deep
+  /// and the load-more spinner ran forever ("无法加载更老的帖子…一直转圈").
+  /// 20000 leaves headroom for deep backward paging in a session.
   final int maxEvents;
 
   final Map<String, Event> _byId = {};
   final List<Event> _sorted = [];
 
-  /// Returns true if the event was newly added (false on duplicate id).
+  /// Returns true if the event is held in the store after the call (false on
+  /// duplicate id, unsupported kind, or immediate eviction — a fetch of
+  /// content OLDER than everything held can still self-evict once the cap is
+  /// saturated with posts; the caller treats that as "not shown").
   bool add(Event e) {
     // Store kind-0 (metadata), kind-1 (text notes), kind-6 (reposts),
     // kind-7 (reactions). These all come in via the global feed subscription
@@ -22,13 +31,64 @@ class EventStore {
     if (e.kind != 0 && e.kind != 1 && e.kind != 6 && e.kind != 7) return false;
     if (_byId.containsKey(e.id)) return false;
     _byId[e.id] = e;
-    _sorted.add(e);
-    _sorted.sort(_compareDesc);
+    _insertSorted(e);
     if (_sorted.length > maxEvents) {
-      final removed = _sorted.removeLast();
-      _byId.remove(removed.id);
+      final victim = _pickEvictionVictim();
+      if (victim != null) {
+        _sorted.remove(victim);
+        _byId.remove(victim.id);
+      }
     }
-    return true;
+    return _byId.containsKey(e.id);
+  }
+
+  /// Binary-search insert into the newest-first list (a full re-sort per add
+  /// was O(n log n) — a load-more burst of hundreds of events re-sorted the
+  /// whole cap-sized list every time).
+  void _insertSorted(Event e) {
+    var lo = 0;
+    var hi = _sorted.length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (_compareDesc(e, _sorted[mid]) <= 0) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+    _sorted.insert(lo, e);
+  }
+
+  /// Over-cap eviction priority: OLDEST kind-7 reactions first, then kind-6
+  /// reposts, then kind-1 posts; kind-0 metadata is NEVER evicted.
+  ///
+  /// The old behavior evicted the single oldest event regardless of kind.
+  /// That broke two things at once:
+  /// - Reactions (kind-7) are by far the highest-volume kind on a following
+  ///   feed, so the cap saturated with reaction churn and backward pagination
+  ///   stalled: load-more fetched older POSTS, which sorted to the end and
+  ///   were evicted immediately — the visible feed never got older and the
+  ///   `until` cursor (derived from the oldest held post) never advanced.
+  /// - Kind-0 metadata rows got evicted too, latching stale avatars/names
+  ///   for the rest of the session ("连我的个人信息都是旧的比如头像和背景"
+  ///   on the first launch after an update, fixed only by a restart).
+  /// Reactions are the cheapest to lose (counts on old posts degrade to what
+  /// is held; live counts on recent posts are unaffected), metadata the most
+  /// expensive (every avatar/name in the UI reads it).
+  Event? _pickEvictionVictim() {
+    // Oldest kind-7 first…
+    for (var i = _sorted.length - 1; i >= 0; i--) {
+      if (_sorted[i].kind == 7) return _sorted[i];
+    }
+    // …then kind-6 reposts before kind-1 originals (a repost's source note
+    // stays fetchable by id; the timeline of originals matters more)…
+    for (var i = _sorted.length - 1; i >= 0; i--) {
+      if (_sorted[i].kind == 6) return _sorted[i];
+    }
+    for (var i = _sorted.length - 1; i >= 0; i--) {
+      if (_sorted[i].kind == 1) return _sorted[i];
+    }
+    return null; // only kind-0 left — never evict metadata
   }
 
   /// Newest-first: higher createdAt first; ties broken by id ascending so the
@@ -46,7 +106,7 @@ class EventStore {
 
   /// Look up a live event by id (O(1)). Used to validate a NIP-09 kind-5
   /// deletion's authorship before removing the deleted event from the store
-  /// (you can only delete your own events). Returns null if not held.
+  /// (you can only delete your own posts). Returns null if not held.
   Event? byId(String id) => _byId[id];
 
   /// Remove an event by id (e.g. after a NIP-09 kind-5 deletion). Returns true

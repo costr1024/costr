@@ -81,9 +81,11 @@ class OutboxRouter {
     int? since,
     void Function(Event)? onEvent,
   }) async {
-    // Cold load (no since): cap at 200. Warm refresh (since set): raise to 500
-    // so a long absence doesn't lose a prolific followee's posts beyond 200.
-    final limit = since == null ? 200 : 500;
+    // Per-relay page size. 500 (was 200 on cold load): kinds 0/1/6/7 are
+    // mixed in one REQ and reactions dominate, so 200 bought only a few
+    // hours of posts ("也就9个小时前的帖子" on the first page). The store
+    // cap is now 20000, so the deeper cold page is affordable.
+    const limit = 500;
     for (final entry in relayToAuthors.entries) {
       final url = entry.key;
       final chunks = _chunkAuthors(entry.value);
@@ -104,10 +106,16 @@ class OutboxRouter {
   /// elapses), then close + dispose — leaving nothing persistent behind.
   /// Mirrors [RelayPool.fetchFromUrls]. Events stream to [onEvent] as they
   /// arrive; the final list is also returned.
+  ///
+  /// [kinds] defaults to the live-feed set; backward pagination passes
+  /// `[1, 6]` so the per-relay `limit` is spent on POSTS, not on the far
+  /// higher-volume kind-7 reactions (which used to eat most of every page,
+  /// stalling the `until` cursor a few hours deep).
   Future<List<Event>> fetchOnce(
     Map<String, List<String>> relayToAuthors, {
     int? until,
     int? since,
+    List<int> kinds = const [0, 1, 6, 7],
     Duration timeout = const Duration(seconds: 10),
     void Function(Event)? onEvent,
   }) async {
@@ -140,7 +148,13 @@ class OutboxRouter {
           for (var i = 0; i < chunks.length; i++) {
             client.request(
               subIds[i],
-              _filter(chunks[i], until: until, since: since, limit: 200),
+              _filter(
+                chunks[i],
+                until: until,
+                since: since,
+                kinds: kinds,
+                limit: 200,
+              ),
             );
           }
           await done.future.timeout(timeout);
@@ -210,10 +224,11 @@ class OutboxRouter {
     List<String> authors, {
     int? since,
     int? until,
+    List<int> kinds = const [0, 1, 6, 7],
     required int limit,
   }) {
     final f = <String, dynamic>{
-      'kinds': [0, 1, 6, 7],
+      'kinds': kinds,
       'authors': authors,
       'limit': limit,
     };

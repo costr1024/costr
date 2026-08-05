@@ -20,32 +20,45 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/providers.dart';
 
 /// Hide bars only after the user scrolls this many px DOWN, so a tiny
-/// accidental drag doesn't yank the chrome away. Any UP scroll shows them
-/// immediately (matches "向上滚动再显示").
+/// accidental drag doesn't yank the chrome away.
 const double _kHideThreshold = 40;
+
+/// NET UP scroll (px) needed to bring the bars back. Not a single negative
+/// delta: real finger drags jitter — a downward scroll is interleaved with
+/// momentary 2–10px upward micro-movements, and treating every one of those
+/// as an intentional scroll-up made the chrome pop back in the middle of
+/// browsing DOWN ("沉浸式…时不时会显示出来上下菜单栏"). A deliberate
+/// scroll-back is far more than 20px net; a jitter burst never nets that
+/// much. (Image loads that push content down were suspected, but resize
+/// dispatches no ScrollNotification at all — verified by probe test — so the
+/// jittering finger was the true trigger.)
+const double _kShowThreshold = 20;
 
 /// What a scroll notification means for bar visibility.
 enum ImmersiveBarAction { show, hide, none }
 
 /// Pure direction logic (testable without a widget tree). Consumes the
-/// running [accumulated] down-delta and the current scroll deltas.
+/// running [accumulated] net delta (positive = toward hide, negative = toward
+/// show) and the current scroll delta.
 ///
 /// - At/near the top (pixels <= 0) → show.
 /// - Programmatic / non-user scroll (no scrollDelta) → none (don't fight).
-/// - User UP scroll (scrollDelta < 0) → show (immediately).
-/// - User DOWN scroll → accumulate; hide once the accumulated delta reaches
-///   [threshold]; otherwise none (keep accumulating).
+/// - NET UP scroll reaching [showThreshold] → show. Tiny single-event
+///   upward jitter stays accumulated (no chrome flip).
+/// - NET DOWN scroll reaching [threshold] → hide.
 ImmersiveBarAction immersiveBarActionFromPixels({
   required double pixels,
   required double? scrollDelta,
   required bool isUserUpdate,
   required double accumulated,
   required double threshold,
+  required double showThreshold,
 }) {
   if (pixels <= 0) return ImmersiveBarAction.show;
   if (!isUserUpdate || scrollDelta == null) return ImmersiveBarAction.none;
-  if (scrollDelta < 0) return ImmersiveBarAction.show;
-  if (accumulated + scrollDelta >= threshold) return ImmersiveBarAction.hide;
+  final next = accumulated + scrollDelta;
+  if (next <= -showThreshold) return ImmersiveBarAction.show;
+  if (next >= threshold) return ImmersiveBarAction.hide;
   return ImmersiveBarAction.none;
 }
 
@@ -55,6 +68,7 @@ ImmersiveBarAction immersiveBarAction(
   ScrollNotification n,
   double accumulated,
   double threshold,
+  double showThreshold,
 ) {
   final update = n is ScrollUpdateNotification ? n : null;
   return immersiveBarActionFromPixels(
@@ -63,6 +77,7 @@ ImmersiveBarAction immersiveBarAction(
     isUserUpdate: update != null,
     accumulated: accumulated,
     threshold: threshold,
+    showThreshold: showThreshold,
   );
 }
 
@@ -107,7 +122,12 @@ class _ImmersiveScrollDetectorState
         if (axis != AxisDirection.down && axis != AxisDirection.up) {
           return false;
         }
-        final action = immersiveBarAction(n, _accumulated, _kHideThreshold);
+        final action = immersiveBarAction(
+          n,
+          _accumulated,
+          _kHideThreshold,
+          _kShowThreshold,
+        );
         switch (action) {
           case ImmersiveBarAction.show:
             _accumulated = 0;

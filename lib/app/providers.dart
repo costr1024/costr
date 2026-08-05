@@ -653,8 +653,10 @@ class EventStoreNotifier extends Notifier<List<Event>> {
     final db = _cache;
     if (db == null) return;
     try {
-      // Kind-1 feed (200 newest)
-      for (final row in await db.queryFeed(limit: 200)) {
+      // Kind-1 feed (1000 newest — deep enough that a relaunch restores the
+      // depth the user had scrolled to (load-more pages are persisted by
+      // _persist), instead of dumping them back at the newest 200)
+      for (final row in await db.queryFeed(limit: 1000)) {
         _store.add(_cacheRowToEvent(row));
       }
       // Kind-7 reactions (500 newest)
@@ -845,6 +847,18 @@ class EventStoreNotifier extends Notifier<List<Event>> {
         state = _store.events;
       }
     });
+  }
+
+  /// Flush any pending batched emission NOW. Callers that compare `state`
+  /// against what was just ingested (feed load-more's did-the-feed-grow
+  /// check) would otherwise race the 200ms debounce and read a stale list.
+  void flushNow() {
+    _flush?.cancel();
+    _flush = null;
+    if (_dirty) {
+      _dirty = false;
+      state = _store.events;
+    }
   }
 
   void clear() {
@@ -1581,7 +1595,7 @@ final feedSubscriptionProvider = Provider<void>((ref) {
   final subId = nextSubId('feed');
   // Keep subscription open (no closeOnEose) so live reactions (kind-7) +
   // metadata (kind-0) continue arriving after the initial snapshot.
-  // EventStore cap (5000) bounds memory; throttled emission bounds CPU.
+  // EventStore cap bounds memory; throttled emission bounds CPU.
   pool.request(subId, buildFeedFilter(mode, follows), closeOnEose: false);
   ref.onDispose(() => pool.closeSubscription(subId));
 });
@@ -1730,7 +1744,7 @@ final followingOutboxProvider = Provider<void>((ref) {
       final filter = <String, dynamic>{
         'kinds': [0, 1, 6, 7],
         'authors': List<String>.from(map.defaultBucket),
-        'limit': newest > 0 ? 500 : 200,
+        'limit': 500,
       };
       if (newest > 0) filter['since'] = newest;
       pool.request(subId, filter, closeOnEose: false);

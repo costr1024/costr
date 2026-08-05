@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.6.8-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6.8-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.6.9-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6.9-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta）。
 
 ---
 
@@ -312,6 +312,23 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 主页 5 个过滤/搜索框 X 一键清空；发帖/回帖发送快返（首个中继 OK 即成功，不再等最慢中继）；
 点回复/点赞通知跳到具体回帖/被点赞帖而非 root 主贴；自己的帖发帖后立即进关注信息流；
 个人主页加载完整帖子/回帖历史（修复只显示几条、刷新刷不出更多）。
+
+**v0.6.9-beta 相对 v0.6.8-beta 的修复**：
+**关注信息流可以一直向更早翻**——此前内存事件仓库上限 5000 条、超限无差别淘汰最老
+事件：点赞事件数量最多先把上限占满，之后"加载更早"拉回来的旧帖子因为最老、刚进仓库
+就被立刻淘汰，信息流永远停在某个时间点（约几天前）、底部一直转圈。现改为分优先级淘汰
+（先最老的 kind-7 点赞 → kind-6 转发 → kind-1 帖子，kind-0 资料永不淘汰）、上限提到
+20000，翻页游标得以持续向更早推进；"加载更早"也改为只拉帖子/转发（不再让点赞吃掉每页
+配额），冷启动首屏加载深度同步加深。
+**顶部黑色加载条不再永久转动**——它与上一条同根因：加载无进展时列表不变长、人停在底部，
+每一下滚动都立刻再次触发加载，顶部进度条与底部转圈永远在动；现加载若没让信息流变长，
+30 秒内不再重复触发。
+**覆盖升级后首次启动资料不再发旧**——旧逻辑下 kind-0 资料（头像/昵称/背景）同样会被
+无差别淘汰、整个会话卡在旧资料；资料现在永不淘汰。
+**沉浸式浏览菜单不再偶尔弹出**——此前任何一次微小的向上滚动都会立即恢复菜单，而真手指
+下滑时夹杂的 2~10px 回勾抖动会被误判为"上滑"，菜单时不时弹回；现恢复菜单需累计净上滑
+≥20px（与隐藏方向的 40px 阈值对称）。另经探针测试确认：图片加载把卡片撑高并不会发出任何
+滚动通知，与菜单弹出无关（内容视觉下移属原生列表行为，不影响浏览状态）。
 
 **v0.6.8-beta 相对 v0.6.6-beta 的修复**：
 **沉浸式浏览不再乱跳**——帖子卡片里的作者状态行是横向可滚动单行文本，横滑它发出的

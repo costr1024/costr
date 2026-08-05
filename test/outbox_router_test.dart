@@ -127,7 +127,7 @@ void main() {
 
       final aReq = fakes['wss://a']!.sent.where((m) => m[0] == 'REQ').single;
       expect(aReq[2]['authors'], ['a1', 'a2', 'a3']);
-      expect(aReq[2]['limit'], 200); // cold load (no since) → 200
+      expect(aReq[2]['limit'], 500); // cold page deepened (was 200)
 
       final bReq = fakes['wss://b']!.sent.where((m) => m[0] == 'REQ').single;
       expect(bReq[2]['authors'], ['b1', 'b2', 'b3']);
@@ -236,6 +236,32 @@ void main() {
       // Subscription closed after EOSE.
       expect(fakes['wss://a']!.sent.where((m) => m[0] == 'CLOSE'), isNotEmpty);
       expect(fakes['wss://a']!.disposed, isTrue);
+    });
+
+    test('kinds defaults to the live set; pagination narrows to posts',
+        () async {
+      final fakes = {'wss://a': _FakeRelay('wss://a')};
+      final r = _router(fakes).router;
+      final done = r.fetchOnce({
+        'wss://a': ['pk'],
+      }, until: 99);
+      await Future<void>.delayed(Duration.zero);
+      var req = fakes['wss://a']!.sent.where((m) => m[0] == 'REQ').single;
+      expect(req[2]['kinds'], [0, 1, 6, 7]);
+      fakes['wss://a']!.emitEose(req[1] as String);
+      await done;
+
+      // Backward pagination spends the per-relay limit on POSTS only.
+      final fakes2 = {'wss://a': _FakeRelay('wss://a')};
+      final r2 = _router(fakes2).router;
+      final done2 = r2.fetchOnce({
+        'wss://a': ['pk'],
+      }, until: 99, kinds: const [1, 6]);
+      await Future<void>.delayed(Duration.zero);
+      req = fakes2['wss://a']!.sent.where((m) => m[0] == 'REQ').single;
+      expect(req[2]['kinds'], [1, 6]);
+      fakes2['wss://a']!.emitEose(req[1] as String);
+      await done2;
     });
 
     test('dedups across relays within a one-shot fetch', () async {

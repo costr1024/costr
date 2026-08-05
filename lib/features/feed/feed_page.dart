@@ -54,6 +54,14 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   bool _loadingMore = false;
   static const int _loadMoreThreshold = 300; // px from bottom
 
+  /// Last time a load-more finished WITHOUT extending the feed (relays
+  /// returned nothing older / were unreachable). Load-more skips itself
+  /// while inside [_kEmptyLoadMoreCooldown] so a dead end doesn't keep
+  /// re-firing on every scroll tick at the bottom (that loop was the
+  /// never-stopping black progress bar + perpetual tail spinner).
+  DateTime? _emptyLoadMoreAt;
+  static const Duration _kEmptyLoadMoreCooldown = Duration(seconds: 30);
+
   final ScrollController _controller = ScrollController();
 
   @override
@@ -134,6 +142,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     // Following mode → outbox router rebuilds with a `since`增量 cursor;
     // global mode → default-relay broadcast re-issues.
     _release();
+    _emptyLoadMoreAt = null; // a refresh may revive dead relays
     final mode = ref.read(feedModeProvider);
     if (mode == FeedMode.following) {
       ref.invalidate(followingOutboxProvider);
@@ -146,6 +155,17 @@ class _FeedPageState extends ConsumerState<FeedPage> {
 
   Future<void> _loadMore() async {
     if (_loadingMore) return;
+    // Empty-result cooldown: a load-more that failed to extend the feed
+    // (relays dead, nothing older, …) used to re-trigger on EVERY scroll
+    // tick at the bottom — each attempt opens ~30 transient relay
+    // connections and takes up to ~20s, so the top progress bar + tail
+    // spinner looked permanent ("黑色的进度条一直在动…永远不会停止").
+    // Back off for a while instead of hammering.
+    final now = DateTime.now();
+    final cooldown = _emptyLoadMoreAt == null
+        ? Duration.zero
+        : now.difference(_emptyLoadMoreAt!);
+    if (cooldown < _kEmptyLoadMoreCooldown) return;
     final events = ref.read(currentFeedEventsProvider);
     if (events.isEmpty) return;
     final mode = ref.read(feedModeProvider);
@@ -162,6 +182,18 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       } else {
         await _loadMoreGlobal(until);
       }
+      // Did the page actually extend the feed? If the oldest visible post
+      // didn't move back, record an empty attempt so the trigger backs off
+      // (instead of spinning on every further scroll tick at the bottom).
+      // Flush the debounced store first so `after` reflects what just landed.
+      ref.read(eventStoreProvider.notifier).flushNow();
+      final after = ref.read(currentFeedEventsProvider);
+      final oldestAfter = after.isEmpty
+          ? null
+          : after.map((e) => e.createdAt).reduce((a, b) => a < b ? a : b);
+      _emptyLoadMoreAt = (oldestAfter == null || oldestAfter >= oldest)
+          ? DateTime.now()
+          : null;
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
@@ -170,10 +202,14 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   /// Global load-more: backward page (until = oldest-1) broadcast to the main
   /// pool. Resolves on the first relay EOSE so a slow relay doesn't stall the
   /// snapshot (the pool's closeOnEose waits ALL; we resolve locally first).
+  /// Kinds [1,6] only: backward pages exist to deepen the POST timeline;
+  /// kind-7 reactions vastly outnumber posts and would eat the `limit`,
+  /// stalling the `until` cursor.
   Future<void> _loadMoreGlobal(int until) async {
     final pool = ref.read(relayPoolProvider);
     final follows = ref.read(followingStateProvider).value ?? const <String>[];
     final filter = buildFeedFilter(FeedMode.global, follows);
+    filter['kinds'] = [1, 6];
     filter['until'] = until;
     final subId = nextSubId('more');
     final done = Completer<void>();
@@ -206,12 +242,16 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       makeClient: RelayClient.new,
       identityGetter: () => ref.read(identityProvider).value,
     );
-    // Outbox tier: one-shot fetch with `until`. onEvent ingests as they arrive
-    // (debounced by EventStoreNotifier's _scheduleFlush), so the UI fills in
-    // live instead of waiting for the whole batch.
+    // Outbox tier: one-shot fetch with `until`. kinds [1,6] only — backward
+    // pages deepen the POST timeline; kind-0/7 would eat most of each relay's
+    // `limit` (reactions vastly outnumber posts), stalling the `until` cursor
+    // a few hours deep. onEvent ingests as they arrive (debounced by
+    // EventStoreNotifier's _scheduleFlush), so the UI fills in live instead
+    // of waiting for the whole batch.
     await router.fetchOnce(
       map.relayToAuthors,
       until: until,
+      kinds: const [1, 6],
       onEvent: (e) => store.ingest(e),
     );
     await router.close();
@@ -220,7 +260,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     if (map.defaultBucket.isNotEmpty) {
       final pool = ref.read(relayPoolProvider);
       final filter = <String, dynamic>{
-        'kinds': [0, 1, 6, 7],
+        'kinds': [1, 6],
         'authors': List<String>.from(map.defaultBucket),
         'limit': 200,
         'until': until,
@@ -305,6 +345,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                     // (the barrier post id likely isn't in the new mode's events
                     // anyway, but clearing avoids a one-frame freeze artifact).
                     _release();
+                    _emptyLoadMoreAt = null; // new mode = new pagination state
                     ref.read(feedModeProvider.notifier).set(s.first);
                   }
                 },
