@@ -47,7 +47,9 @@ class Nprofile {
 }
 
 /// Decode an `nprofile1...` to its pubkey + relay hints. Accepts an optional
-/// `nostr:` prefix. Returns null if not an nprofile or has no pubkey TLV.
+/// `nostr:` prefix. Returns null if not an nprofile, has no pubkey TLV, or
+/// the bech32 is malformed (junk like `nprofile1abc…` must not throw — these
+/// decoders run on untrusted post content during widget build).
 /// Relay hints (TLV type 0x01) are the URLs where this user publishes their
 /// events (NIP-65 outbox model) — preserve them so callers can DIRECT REQs
 /// at the user's own relays instead of broadcasting.
@@ -55,7 +57,12 @@ Nprofile? nprofileDecode(String nprofile) {
   var e = nprofile;
   if (e.toLowerCase().startsWith('nostr:')) e = e.substring(6);
   if (!e.toLowerCase().startsWith('nprofile1')) return null;
-  final bytes = decodeBech32(e).data;
+  final List<int> bytes;
+  try {
+    bytes = decodeBech32(e).data;
+  } on Bech32Exception {
+    return null; // malformed bech32 — treat as "not an nprofile"
+  }
   int i = 0;
   String? pubkey;
   final relays = <String>[];
@@ -86,13 +93,19 @@ String? nprofileToPubkeyHex(String nprofile) =>
 /// Decode any NIP-19 pubkey entity (`npub1` or `nprofile1`) to pubkey hex.
 /// Strips an optional `nostr:` prefix (mentions in post content are often
 /// written as `nostr:npub1…` / `nostr:nprofile1…`, per NIP-27). Returns null
-/// for non-pubkey entities (note1) or invalid input.
+/// for non-pubkey entities (note1) or invalid input — including malformed
+/// bech32 (the entity regex matches any bech32-charset run, so junk like
+/// `npub1qqqqqq` reaches here; throwing would crash the render path).
 String? entityToPubkeyHex(String entity) {
   var e = entity;
   if (e.toLowerCase().startsWith('nostr:')) e = e.substring(6);
   final l = e.toLowerCase();
-  if (l.startsWith('npub1')) return npubToHex(e);
-  if (l.startsWith('nprofile1')) return nprofileToPubkeyHex(e);
+  try {
+    if (l.startsWith('npub1')) return npubToHex(e);
+    if (l.startsWith('nprofile1')) return nprofileToPubkeyHex(e);
+  } on Bech32Exception {
+    return null;
+  }
   return null;
 }
 
@@ -167,12 +180,19 @@ class Nevent {
 }
 
 /// Decode an `nevent1...` (NIP-19) to its parts. Accepts an optional
-/// `nostr:` prefix. Returns null if not a nevent or has no id TLV.
+/// `nostr:` prefix. Returns null if not a nevent, has no id TLV, or the
+/// bech32 is malformed (these decoders run on untrusted post content during
+/// widget build — junk must yield null, not throw).
 Nevent? neventDecode(String nevent) {
   var e = nevent;
   if (e.toLowerCase().startsWith('nostr:')) e = e.substring(6);
   if (!e.toLowerCase().startsWith('nevent1')) return null;
-  final bytes = decodeBech32(e).data;
+  final List<int> bytes;
+  try {
+    bytes = decodeBech32(e).data;
+  } on Bech32Exception {
+    return null; // malformed bech32 — treat as "not an nevent"
+  }
   int i = 0;
   String? id;
   final relays = <String>[];
@@ -201,13 +221,17 @@ Nevent? neventDecode(String nevent) {
 
 /// Decode any NIP-19 event entity (`nevent1` or `note1`, optionally with
 /// `nostr:` prefix) to the hex event id. Returns null for non-event entities
-/// or invalid input.
+/// or invalid input — including malformed bech32 (see [entityToPubkeyHex]).
 String? entityToEventIdHex(String entity) {
   var e = entity;
   if (e.toLowerCase().startsWith('nostr:')) e = e.substring(6);
   final l = e.toLowerCase();
-  if (l.startsWith('nevent1')) return neventDecode(e)?.id;
-  if (l.startsWith('note1')) return noteToHex(e);
+  try {
+    if (l.startsWith('nevent1')) return neventDecode(e)?.id;
+    if (l.startsWith('note1')) return noteToHex(e);
+  } on Bech32Exception {
+    return null;
+  }
   return null;
 }
 
@@ -215,4 +239,23 @@ String? entityToEventIdHex(String entity) {
 String shortenEntity(String entity) {
   if (entity.length <= 16) return entity;
   return '${entity.substring(0, 8)}…${entity.substring(entity.length - 4)}';
+}
+
+/// Matches a bare http(s) URL (up to the next whitespace). Used to keep
+/// NIP-19 entity matching from reaching INSIDE URLs.
+final RegExp _urlRegex = RegExp(r'https?://[^\s]+');
+
+/// True when match [m] falls inside a `https?://…` URL in [text].
+///
+/// NIP-19 entities embedded in URLs must NOT be linkified/stripped: blossom
+/// servers serve media under the uploader's npub as a subdomain
+/// (`https://npub1….blossom.band/<sha256>.mp4`), and rewriting the npub part
+/// into an `[@name](nostr:…)` mention breaks the URL — the mention shows up
+/// as stray `@npub…` text and the media fails to load.
+bool entityMatchInUrl(String text, Match m) {
+  for (final u in _urlRegex.allMatches(text)) {
+    if (m.start >= u.start && m.end <= u.end) return true;
+    if (u.start > m.end) break; // both sequences are start-ordered
+  }
+  return false;
 }

@@ -77,9 +77,15 @@ void main() {
       final relay1 = 'wss://relay.ditto.pub/';
       final relay2 = 'wss://search.nos.today/';
       final tlv = <int>[
-        0, 32, ...pubkeyBytes,
-        1, relay1.length, ...relay1.codeUnits,
-        1, relay2.length, ...relay2.codeUnits,
+        0,
+        32,
+        ...pubkeyBytes,
+        1,
+        relay1.length,
+        ...relay1.codeUnits,
+        1,
+        relay2.length,
+        ...relay2.codeUnits,
       ];
       final nprofile = encodeBech32('nprofile', tlv);
       final decoded = nprofileDecode(nprofile);
@@ -87,7 +93,10 @@ void main() {
       expect(decoded!.pubkey, HEX.encode(pubkeyBytes));
       expect(decoded.relays, [relay1, relay2]);
       // nostr: prefix handled
-      expect(nprofileDecode('nostr:$nprofile')?.pubkey, HEX.encode(pubkeyBytes));
+      expect(
+        nprofileDecode('nostr:$nprofile')?.pubkey,
+        HEX.encode(pubkeyBytes),
+      );
     });
 
     test('nprofileDecode returns null without a pubkey TLV', () {
@@ -153,6 +162,60 @@ void main() {
       expect(decoded.relays, isEmpty);
       expect(decoded.author, isNull);
       expect(decoded.kind, isNull);
+    });
+  });
+
+  group('NIP-19 decoders on malformed input (untrusted content)', () {
+    // The entity regex matches ANY bech32-charset run (`npub1qqqqqq`, junk in
+    // URLs, typos). Decoders run during widget build, so malformed bech32
+    // must yield null — never throw (pre-fix: Bech32Exception crashed the
+    // render path).
+    test('entityToPubkeyHex returns null for invalid checksum', () {
+      expect(entityToPubkeyHex('npub1qqqqqq'), isNull);
+    });
+
+    test('entityToPubkeyHex returns null for invalid characters', () {
+      // 'b' is not in the bech32 charset.
+      expect(entityToPubkeyHex('npub1abcdef'), isNull);
+    });
+
+    test('entityToEventIdHex returns null for malformed note/nevent', () {
+      expect(entityToEventIdHex('note1qqqqqq'), isNull);
+      expect(entityToEventIdHex('nevent1qqqqqq'), isNull);
+    });
+
+    test('neventDecode / nprofileDecode return null for junk', () {
+      expect(neventDecode('nevent1notbech32'), isNull);
+      expect(nprofileDecode('nprofile1notbech32'), isNull);
+    });
+  });
+
+  group('entityMatchInUrl', () {
+    const pubHex =
+        '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
+    final npub = hexToNpub(pubHex);
+    final re = RegExp(r'(?:nostr:)?(npub1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]+)');
+
+    Match first(String text) => re.firstMatch(text)!;
+
+    test('true for an entity inside a URL (npub-subdomain blossom host)', () {
+      final text = 'clip https://$npub.blossom.band/abc.mp4 end';
+      expect(entityMatchInUrl(text, first(text)), isTrue);
+    });
+
+    test('true for an entity in a URL path', () {
+      final text = 'https://media.example/$npub/img.jpg';
+      expect(entityMatchInUrl(text, first(text)), isTrue);
+    });
+
+    test('false for a bare mention', () {
+      final text = 'hello nostr:$npub world';
+      expect(entityMatchInUrl(text, first(text)), isFalse);
+    });
+
+    test('false for a mention after a URL', () {
+      final text = 'https://example.com/a.jpg then $npub';
+      expect(entityMatchInUrl(text, first(text)), isFalse);
     });
   });
 }

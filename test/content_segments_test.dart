@@ -112,5 +112,20 @@ void main() {
       expect((segs[1] as SingleVideoSeg).url, 'https://x/v.mp4');
       expect(segs[2], isA<TextSeg>());
     });
+
+    test('npub-subdomain blossom URL → SingleVideoSeg with the full URL', () {
+      // blossom.band serves media under the uploader's npub as a subdomain;
+      // the tokenizer must hand the URL through intact (the npub inside it
+      // is part of the host name, not a mention).
+      const url =
+          'https://npub1ak68qfcjj7k95c0jwleu69x72nr8adwv6g80pkwl9xlps6zmkqzqrxy8fx'
+          '.blossom.band/200f65747d4b50e01a6e912a628e2c1da49fc4a45c5bfdccc2cb4fef'
+          '783e8776.mp4';
+      final segs = tokenizeContent('NVK knew in 2021.\n\n$url');
+      expect(segs.length, 2);
+      expect(segs[0], isA<TextSeg>());
+      expect(segs[1], isA<SingleVideoSeg>());
+      expect((segs[1] as SingleVideoSeg).url, url);
+    });
   });
 }

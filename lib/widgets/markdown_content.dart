@@ -81,6 +81,27 @@ final RegExp _mediaTokenRegex = RegExp(
 const int _kCollapseThreshold = 400;
 const double _kCollapsedMaxHeight = 220;
 
+/// Replace each match of [re] in [text] with [replace(m)], SKIPPING matches
+/// that fall inside a `https?://…` URL (see [entityMatchInUrl]). Entity
+/// matches inside URLs (e.g. npub-subdomain blossom media hosts) must stay
+/// untouched or the URL — and the media it points to — breaks.
+String _replaceOutsideUrls(
+  String text,
+  RegExp re,
+  String Function(Match) replace,
+) {
+  final buf = StringBuffer();
+  var lastEnd = 0;
+  for (final m in re.allMatches(text)) {
+    if (entityMatchInUrl(text, m)) continue;
+    buf.write(text.substring(lastEnd, m.start));
+    buf.write(replace(m));
+    lastEnd = m.end;
+  }
+  buf.write(text.substring(lastEnd));
+  return buf.toString();
+}
+
 class MarkdownContent extends ConsumerStatefulWidget {
   const MarkdownContent({
     super.key,
@@ -107,9 +128,12 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
   @override
   Widget build(BuildContext context) {
     final event = widget.event;
-    // 1. Linkify npub/nprofile mentions.
+    // 1. Linkify npub/nprofile mentions — but never ones INSIDE a URL (npub-
+    // subdomain blossom media hosts like `https://npub1….blossom.band/x.mp4`;
+    // rewriting those broke the URL and its media).
     final pubkeysByEntity = <String, String?>{};
     for (final m in _pubkeyEntityRegex.allMatches(event.content)) {
+      if (entityMatchInUrl(event.content, m)) continue;
       // group(1) = full bare entity (no nostr: prefix).
       final entity = m.group(1)!;
       pubkeysByEntity.putIfAbsent(entity, () => entityToPubkeyHex(entity));
@@ -121,7 +145,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       final name = meta?.bestName;
       if (name != null && name.isNotEmpty) nameByPubkey[pk] = name;
     }
-    final linkified = event.content.replaceAllMapped(_pubkeyEntityRegex, (
+    final linkified = _replaceOutsideUrls(event.content, _pubkeyEntityRegex, (
       Match m,
     ) {
       final entity = m.group(1)!;
@@ -141,6 +165,9 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     // broadcast misses (quotes often live only on the author's own relays).
     final relayHintsById = <String, List<String>>{};
     for (final m in _eventEntityRegex.allMatches(linkified)) {
+      // Same URL guard as pubkey mentions: an nevent/note entity inside a URL
+      // (e.g. a shared link) must not be stripped out of it.
+      if (entityMatchInUrl(linkified, m)) continue;
       final entity = m.group(1)!;
       final id = entityToEventIdHex(entity) ?? '';
       if (id.isEmpty || !seenRef.add(id)) continue;
@@ -158,7 +185,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     }
     final stripped = referencedIds.isEmpty
         ? linkified
-        : linkified.replaceAllMapped(_eventEntityRegex, (Match m) => '');
+        : _replaceOutsideUrls(linkified, _eventEntityRegex, (Match m) => '');
 
     // 2. Tokenize into segments: text / image-group (contiguous) / single video.
     final segments = tokenizeContent(stripped);

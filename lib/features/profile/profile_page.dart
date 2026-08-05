@@ -2342,9 +2342,12 @@ class _AboutTextState extends ConsumerState<_AboutText> {
         .split('\n')
         .map((l) => l.trim().isEmpty ? '​' : l)
         .join('\n');
-    // 1. Linkify npub/nprofile mentions.
+    // 1. Linkify npub/nprofile mentions — skipping entities INSIDE URLs
+    // (npub-subdomain blossom hosts like `https://npub1….blossom.band/x.mp4`;
+    // rewriting those would break the URL).
     final pubkeysByEntity = <String, String?>{};
     for (final m in _entityRegex.allMatches(processed)) {
+      if (entityMatchInUrl(processed, m)) continue;
       // group(1) = the bare entity (no `nostr:` prefix); use it for both
       // pubkey lookup and the link href so the href stays `nostr:<bare>`
       // (no doubled prefix).
@@ -2358,13 +2361,20 @@ class _AboutTextState extends ConsumerState<_AboutText> {
       final name = meta?.bestName;
       if (name != null && name.isNotEmpty) nameByPubkey[pk] = name;
     }
-    processed = processed.replaceAllMapped(_entityRegex, (Match m) {
+    final aboutBuf = StringBuffer();
+    var aboutLastEnd = 0;
+    for (final m in _entityRegex.allMatches(processed)) {
+      if (entityMatchInUrl(processed, m)) continue;
       final entity = m.group(1)!;
       final pk = pubkeysByEntity[entity];
       final label =
           (pk != null ? nameByPubkey[pk] : null) ?? shortenEntity(entity);
-      return '[@$label](nostr:$entity)';
-    });
+      aboutBuf.write(processed.substring(aboutLastEnd, m.start));
+      aboutBuf.write('[@$label](nostr:$entity)');
+      aboutLastEnd = m.end;
+    }
+    aboutBuf.write(processed.substring(aboutLastEnd));
+    processed = aboutBuf.toString();
     // 2. Linkify #hashtag → [#tag](costr:tag:tag)
     processed = processed.replaceAllMapped(_hashtagRegex, (Match m) {
       final tag = m.group(1)!.toLowerCase();

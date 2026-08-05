@@ -52,12 +52,16 @@ InlineSpan linkifyMentions(
   final children = <InlineSpan>[];
   var lastEnd = 0;
   for (final m in _mentionRegex.allMatches(text)) {
+    // An entity INSIDE a URL (npub-subdomain blossom media hosts like
+    // `https://npub1….blossom.band/x.mp4`) is part of the URL, not a mention
+    // — leave it as plain text or the URL breaks. Skipped matches stay in the
+    // surrounding plain-text spans (lastEnd only advances on accepted ones).
+    if (entityMatchInUrl(text, m)) continue;
     // Plain text before this match.
     if (m.start > lastEnd) {
-      children.add(TextSpan(
-        text: text.substring(lastEnd, m.start),
-        style: baseStyle,
-      ));
+      children.add(
+        TextSpan(text: text.substring(lastEnd, m.start), style: baseStyle),
+      );
     }
     final entity = m.group(1)!;
     final pk = entityToPubkeyHex(entity);
@@ -74,11 +78,9 @@ InlineSpan linkifyMentions(
     final recognizer = (onTapPubkey != null && pk != null)
         ? (TapGestureRecognizer()..onTap = () => onTapPubkey(pk))
         : null;
-    children.add(TextSpan(
-      text: '@$name',
-      style: mentionStyle,
-      recognizer: recognizer,
-    ));
+    children.add(
+      TextSpan(text: '@$name', style: mentionStyle, recognizer: recognizer),
+    );
     lastEnd = m.end;
   }
   // Trailing plain text.
