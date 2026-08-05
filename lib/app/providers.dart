@@ -2611,11 +2611,12 @@ class FollowGroup {
   }
 }
 
-/// Human-readable name of a NIP-51 kind-30000 follow set. Prefers the
-/// `name` tag (Amethyst puts the human name here and a UUID in `d`); falls
-/// back to the `d` tag (Costr's own lists use the human name directly as
-/// `d` and carry no `name` tag). Returns null for the default list (d="").
-String? kind30000DisplayName(Event e) {
+/// Human-readable name of a NIP-51 parameterized replaceable list (kind-30000
+/// follow sets, kind-30003 bookmark sets, …). Prefers the `name` tag
+/// (Amethyst puts the human name here and a UUID in `d`); falls back to the
+/// `d` tag (Costr's own lists use the human name directly as `d` and carry no
+/// `name` tag). Returns null for the default list (d="").
+String? listDisplayName(Event e) {
   String? name;
   String? d;
   for (final t in e.tags) {
@@ -2640,7 +2641,7 @@ String? kind30000DisplayName(Event e) {
 /// refresh).
 ///
 /// Groups are keyed by the kind-30000 **`d` tag** (the stable identifier),
-/// NOT by [kind30000DisplayName]: Amethyst keeps a UUID in `d` and puts the
+/// NOT by [listDisplayName]: Amethyst keeps a UUID in `d` and puts the
 /// human name in the `name` tag, so an older revision (no `name` tag) would
 /// otherwise group under the UUID while a newer revision (with `name`) groups
 /// under the human name — splitting one logical list into two entries and
@@ -2694,7 +2695,7 @@ List<FollowGroup> _buildFollowGroups(
         .toList();
     // Display name: the NEWEST revision's `name` tag, else `d`. Stable per
     // group now that we key by d (no more 中文↔UUID flicker).
-    final display = kind30000DisplayName(groupSource[d]!) ?? d;
+    final display = listDisplayName(groupSource[d]!) ?? d;
     result.add(FollowGroup(display, inGroup, source: groupSource[d]));
   }
   return result;
@@ -2835,7 +2836,7 @@ final userGroupNamesProvider = StreamProvider.family<List<String>, String>((
   if (cache != null) {
     try {
       for (final row in await cache.queryFollowSets(pubkey)) {
-        final name = kind30000DisplayName(_replaceableToEvent(row));
+        final name = listDisplayName(_replaceableToEvent(row));
         if (name != null && seen.add(name)) collected.add(name);
       }
     } catch (_) {}
@@ -2850,7 +2851,7 @@ final userGroupNamesProvider = StreamProvider.family<List<String>, String>((
   final done = Completer<void>();
   evSub = pool.rawEvents.listen((e) {
     if (e.kind == 30000 && e.pubkey == pubkey) {
-      final name = kind30000DisplayName(e);
+      final name = listDisplayName(e);
       if (name != null && seen.add(name)) {
         collected.add(name);
         ctrl.add(List<String>.unmodifiable(collected));
@@ -3553,7 +3554,7 @@ Future<void> _addToCategoryList(
     try {
       for (final row in await cache.queryFollowSets(identity.pubkeyHex)) {
         final ev = _replaceableToEvent(row);
-        if (kind30000DisplayName(ev) == category) {
+        if (listDisplayName(ev) == category) {
           current = ev;
           break;
         }
@@ -3571,7 +3572,7 @@ Future<void> _addToCategoryList(
       if (e.kind == 30000 &&
           e.pubkey == identity.pubkeyHex &&
           !completer.isCompleted &&
-          kind30000DisplayName(e) == category) {
+          listDisplayName(e) == category) {
         completer.complete(e);
       }
     });
@@ -3788,18 +3789,19 @@ Future<RelayOk> muteEntry(
   return ok;
 }
 
-/// A user's bookmarked note ids with origin (public vs private). NIP-51
-/// kind-10003 (single global list) AND kind-30003 (labeled bookmark lists,
-/// multi-instance — Amethyst uses these for named bookmark groups). Both
-/// carry public `e` tags + NIP-44-encrypted private entries; we aggregate
-/// across them. Amethyst-style loading: yields the SQLite-cached list
-/// instantly (public `e` tags for anyone; plus the NIP-44-decrypted private
-/// entries when [pubkey] is the logged-in user), then background-refreshes
-/// from relays. Used by the profile's 收藏 section (DESIGN §8) — every
-/// user's PUBLIC bookmarks show on their profile; private bookmarks only
-/// render for the owner (others can't decrypt them). Entries are
-/// origin-tagged so the tab can render 公开书签 / 私人书签 separately.
-final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
+/// A user's bookmark groups. NIP-51 kind-10003 (single global list) AND
+/// kind-30003 (labeled bookmark lists, multi-instance — Amethyst uses these
+/// for named bookmark groups); both carry public `e` tags + NIP-44-encrypted
+/// private entries. Output mirrors the follows tab's group model so the
+/// 收藏 tab can render the same chip-row + segmented-sections UI: two
+/// built-in groups (公开书签 / 私人书签 — aggregated across every list; the
+/// private one only for the owner, others can't decrypt) plus one group per
+/// kind-30003 `d`. Groups are keyed by the **`d` tag** (stable identifier —
+/// Amethyst keeps a UUID in `d` and the human name in `name`), display name
+/// from the newest revision's `name` tag else `d` (see [listDisplayName]).
+/// Amethyst-style loading: yields the SQLite-cached snapshot instantly,
+/// then background-refreshes from relays.
+final bookmarksProvider = StreamProvider.family<List<BookmarkGroup>, String>((
   ref,
   pubkey,
 ) async* {
@@ -3811,14 +3813,15 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
       ? NostrActions(identity).bookmarkEntries(e, includePrivate: isSelf)
       : const <BookmarkEntry>[];
 
-  // Aggregate bookmark entries across the global kind-10003 + every
-  // kind-30003 labeled list (deduped by note id; public wins on collision).
-  List<BookmarkEntry> aggregate(Event? k10003, Map<String, Event> k30003) {
-    final out = <BookmarkEntry>[];
+  // Built-in public/private aggregates (deduped by note id across every
+  // list) + one group per kind-30003 list. Map iteration is first-seen `d`
+  // order (LinkedHashMap), so chip order stays stable across refreshes.
+  List<BookmarkGroup> build(Event? k10003, Map<String, Event> k30003) {
+    final all = <BookmarkEntry>[];
     final seen = <String>{};
     void addAll(List<BookmarkEntry> es) {
       for (final e in es) {
-        if (seen.add(e.id)) out.add(e);
+        if (seen.add(e.id)) all.add(e);
       }
     }
 
@@ -3826,7 +3829,20 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
     for (final e in k30003.values) {
       addAll(entriesOf(e));
     }
-    return out;
+    final groups = <BookmarkGroup>[
+      BookmarkGroup('公开书签', all.where((e) => e.public).toList()),
+      if (isSelf) BookmarkGroup('私人书签', all.where((e) => !e.public).toList()),
+    ];
+    for (final g in k30003.entries) {
+      groups.add(
+        BookmarkGroup(
+          listDisplayName(g.value) ?? g.key,
+          entriesOf(g.value),
+          source: g.value,
+        ),
+      );
+    }
+    return groups;
   }
 
   String dOf(Event e) {
@@ -3854,12 +3870,14 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
       }
     } catch (_) {}
   }
-  var latest = aggregate(cachedK10003, cachedK30003);
-  if (latest.isNotEmpty) yield List<BookmarkEntry>.unmodifiable(latest);
+  var latest = build(cachedK10003, cachedK30003);
+  // Always yield the cache snapshot (even all-empty) so the tab renders
+  // chip row + 暂无收藏 instead of an endless spinner for empty lists.
+  yield List<BookmarkGroup>.unmodifiable(latest);
 
   // 2. Relay refresh — kinds [10003, 30003], newest per (kind|d).
   final pool = ref.watch(relayPoolProvider);
-  final ctrl = StreamController<List<BookmarkEntry>>();
+  final ctrl = StreamController<List<BookmarkGroup>>();
   Timer? flush;
   var dirty = false;
   void scheduleEmit() {
@@ -3868,7 +3886,7 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
       flush = null;
       if (dirty && !ctrl.isClosed) {
         dirty = false;
-        ctrl.add(List<BookmarkEntry>.unmodifiable(latest));
+        ctrl.add(List<BookmarkGroup>.unmodifiable(latest));
       }
     });
   }
@@ -3883,7 +3901,7 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
     if (e.kind == 10003) {
       if (netK10003 == null || e.createdAt > netK10003!.createdAt) {
         netK10003 = e;
-        latest = aggregate(netK10003, netK30003);
+        latest = build(netK10003, netK30003);
         scheduleEmit();
       }
     } else if (e.kind == 30003) {
@@ -3891,7 +3909,7 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
       final prev = netK30003[d];
       if (prev == null || e.createdAt > prev.createdAt) {
         netK30003[d] = e;
-        latest = aggregate(netK10003, netK30003);
+        latest = build(netK10003, netK30003);
         scheduleEmit();
       }
     }
@@ -3911,7 +3929,7 @@ final bookmarksProvider = StreamProvider.family<List<BookmarkEntry>, String>((
   done.future.whenComplete(() {
     flush?.cancel();
     if (dirty && !ctrl.isClosed) {
-      ctrl.add(List<BookmarkEntry>.unmodifiable(latest));
+      ctrl.add(List<BookmarkGroup>.unmodifiable(latest));
     }
     if (!ctrl.isClosed) ctrl.close();
   });

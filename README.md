@@ -187,7 +187,9 @@ lib/
   `AsyncLoading`，切走再回搜索 tab 仍转圈；现在对齐 `repliesProvider`，收尾**恒吐一次快照（即便
   空列表）**再关流，provider 落到 data（「无用户结果」）。
 - **收藏**（`bookmarkEvent`）：SQLite 缓存优先取当前 kind-10003 再签名发布，**不再每次等 10s 中继 ACK**
-  （冷启动才回落中继 + 防清空守卫）；收藏 tab 分公开/私人两段展示。
+  （冷启动才回落中继 + 防清空守卫）；收藏 tab 与关注页同款分组 UI：横滑 chip 行
+  （全部 / 公开书签 / 私人书签 / 各自定义分组）+ 全部模式按组分段（组头 + 计数），
+  自定义分组读自 NIP-51 kind-30003 labeled bookmark lists（只读展示，管理功能下一批）。
 - **首页分页**：滚动到底触发 `_loadMore`（global 广播 `until` / following 走 outbox `until`），底部加
   转圈指示器；ScrollUpdate 临近底部也触发（避免 fling 错过 ScrollEnd）。
 - **首页 tab 滚动独立**：ListView 用 `PageStorageKey<FeedMode>(mode)`，全球/关注各自记忆滚动位置，
@@ -424,6 +426,11 @@ content 里带 NIP-18 嵌入 JSON 的转发无需解析 e-tag 直接渲染原帖
 - **发帖（Compose）**：FAB，字数计数，`Identity.signEvent` 签名 + 发布。EVENT 用对象形式（2026 NIP-01）。NIP-42 AUTH 自动签 kind-22242。发布可靠性：`publishAndWait` per-relay 1s/2s/3s 重试，**任一 OK 即成功**、其余后台重试；全失败存草稿跨会话补发（`retryDrafts` + `onPublishExhausted`）。**发送快返**：`_collectOks` 首个中继 `ok:true` 即返回（此前等齐所有中继裁决/整轮超时，一台慢中继把每次发送拖到 1~5s——用户实测中继 RTT 仅 100ms~1s，发送却要等 1~3s 的根因），慢/无响应的中继转后台重试，发送耗时≈最快中继 RTT。
 - **媒体上传（Blossom BUD-02/BUD-11）**：图片≤10MB 最多 9 张 / 视频≤100MB 单条 / 文件≤100MB 最多 4 个。签 kind-24242 auth → `PUT /upload` → url + NIP-92 imeta。默认服务器逐台尝试失败自动换。**键盘表情/贴纸直插**（Amethyst 式，Android）：发帖编辑框经 `ContentInsertionConfiguration` 声明 `image/gif|webp|png|jpeg`——这正是让 Gboard/三星键盘的表情与贴纸面板出现「插入到应用」的开关（`EditorInfoCompat.setContentMimeTypes`）；用户选中的 GIF/贴纸经 Android Commit Content API 直接进编辑器，`_onKeyboardContentInserted` 拿到字节走同一条 Blossom 上传，成为普通图片附件（imeta + 正文 URL）。Flutter 3.10+ 引擎原生支持，零三方依赖、无需改 manifest/Gradle；iOS 无对等键盘 API（该回调不触发）。已知：大文件（>~3MB）经 `flutter/textinput` JSON 序列化有约数秒卡顿（flutter#188977，等官方二进制通道修复）。
 - **媒体/文件下载**：`lib/services/media_download.dart` 统一入口。移动端图片/视频走 `gal` 存相册；桌面/普通文件走 `file_picker` save-as。接入点：图片全屏查看器、全屏视频页、文件 chip。
+- **视频播放控件（内联 + 全屏统一控制层）**：`lib/widgets/video_controls.dart` 共享覆盖层——
+  进度条拖动（拖动暂停、松手 seek 并恢复）、±10 秒快进快退（到头钳制）、倍速 0.5–2.0（底部 sheet）、
+  分享视频链接（系统分享，桌面降级复制 + 「已复制视频链接」）、缓冲指示、播放中 3s 自动隐藏、
+  点表面切换控件显隐。内联紧凑版右上分享 + 全屏入口；全屏完整版顶栏关闭 + 分享 + 保存相册。
+  内联 → 全屏携带进度与倍速；视频表面恒黑底白字不随主题。继续 `video_player`，无新依赖。
 - **关注信息流 outbox 路由（★）**：`OutboxRouter` 按 followee kind-10002 分组开持久连接（30 上限、authors 200 分片、live、重连重发、NIP-42 AUTH），`since` 增量刷新 limit 提到 500（根治漏帖），加载更多走 `fetchOnce(until:)` + 默认桶广播。全球路径不动。
 - **自定义关注列表（NIP-51 kind-30000）**：兼容 Amethyst 的 `d`=UUID + `name`=人类名约定；`kind30000DisplayName` 优先 `name` 回退 `d`；编辑保留 UUID `d`+元数据。**重命名**（⋯ 菜单 → 底部弹窗，`d` 不变只改 `name`，列表不分叉）+ **删除**（发 NIP-09 kind-5 `a`-坐标 `30000:pubkey:d`，删全版本——Amethyst 自带删除只发 `e` 对 replaceable 无效，这是修正）。新列表创建用 UUID `d`（Amethyst 约定，避免重命名后 `d` 冲突）。列表人数显示真实 `p` 标签数（非「已关注 ∩ 组内」交集，对齐 Amethyst）。
 - **服务器节点页**：中继（连接状态 + 真实 WS RTT，NIP-50 CLOSED 回退 search 重试）+ Blossom（HTTP HEAD RTT）。时延缓存 SQLite，颜色绿快黄慢红离线。NIP-50 搜索中继单列。

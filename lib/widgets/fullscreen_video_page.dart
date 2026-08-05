@@ -1,8 +1,9 @@
 /// Fullscreen video page. Owns its own [VideoPlayerController] (the inline
 /// [NetworkVideo] keeps a separate one), starts from the inline's last
-/// position so the user doesn't restart, and forces landscape on mobile
-/// (no-op on desktop). Isolated from the inline player so it can't regress
-/// inline playback — the inline is paused while this is open.
+/// position AND speed so playback continues seamlessly, and forces
+/// orientation on mobile by the clip's aspect (no-op on desktop). Controls
+/// come from the shared [VideoControlsOverlay] (full variant) — same
+/// progress/±10s/speed/share UI as inline, plus close + save-to-gallery.
 library;
 
 import 'package:flutter/material.dart';
@@ -10,26 +11,37 @@ import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../services/media_download.dart';
+import 'video_controls.dart';
 
-/// Push a fullscreen video route for [url], starting at [startPosition].
+/// Push a fullscreen video route for [url], starting at [startPosition]
+/// with [startSpeed] (both carried over from the inline player).
 Future<void> pushFullscreenVideo(
   BuildContext context, {
   required String url,
   Duration startPosition = Duration.zero,
+  double startSpeed = 1.0,
 }) {
   return Navigator.of(context, rootNavigator: true).push(
     MaterialPageRoute<void>(
-      builder: (BuildContext _) =>
-          _FullscreenVideoPage(url: url, startPosition: startPosition),
+      builder: (BuildContext _) => _FullscreenVideoPage(
+        url: url,
+        startPosition: startPosition,
+        startSpeed: startSpeed,
+      ),
       fullscreenDialog: true,
     ),
   );
 }
 
 class _FullscreenVideoPage extends StatefulWidget {
-  const _FullscreenVideoPage({required this.url, required this.startPosition});
+  const _FullscreenVideoPage({
+    required this.url,
+    required this.startPosition,
+    required this.startSpeed,
+  });
   final String url;
   final Duration startPosition;
+  final double startSpeed;
 
   @override
   State<_FullscreenVideoPage> createState() => _FullscreenVideoPageState();
@@ -39,7 +51,6 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
   VideoPlayerController? _controller;
   bool _initialized = false;
   bool _error = false;
-  bool _showControls = true;
   bool _saving = false;
 
   @override
@@ -58,6 +69,7 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
           }
           _applyOrientation();
           _controller!.seekTo(widget.startPosition);
+          _controller!.setPlaybackSpeed(widget.startSpeed);
           _controller!.play();
           setState(() => _initialized = true);
         })
@@ -112,16 +124,6 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
     super.dispose();
   }
 
-  void _togglePlay() {
-    final c = _controller;
-    if (c == null || !c.value.isInitialized) return;
-    setState(() {
-      c.value.isPlaying ? c.pause() : c.play();
-    });
-  }
-
-  void _toggleControls() => setState(() => _showControls = !_showControls);
-
   @override
   Widget build(BuildContext context) {
     Widget body;
@@ -142,95 +144,30 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
       );
     } else {
       final c = _controller!;
-      body = GestureDetector(
-        onTap: _toggleControls,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: double.infinity,
-              height: double.infinity,
-              child: FittedBox(
-                fit: BoxFit.contain,
-                child: SizedBox(
-                  width: c.value.size.width,
-                  height: c.value.size.height,
-                  child: VideoPlayer(c),
-                ),
-              ),
-            ),
-            if (_showControls)
-              IconButton.filled(
-                iconSize: 40,
-                icon: Icon(c.value.isPlaying ? Icons.pause : Icons.play_arrow),
-                onPressed: _togglePlay,
-              ),
-          ],
-        ),
-      );
-    }
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
+      body = Stack(
         children: [
-          body,
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: AnimatedOpacity(
-              opacity: _showControls ? 1 : 0,
-              duration: const Duration(milliseconds: 150),
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Row(
-                    children: [
-                      _CloseButton(
-                        onTap: () => Navigator.of(context).pop(),
-                      ),
-                      const Spacer(),
-                      _CloseButton(
-                        icon: _saving
-                            ? Icons.downloading_outlined
-                            : Icons.download_rounded,
-                        onTap: _saving ? null : _save,
-                      ),
-                    ],
-                  ),
-                ),
+          SizedBox(
+            width: double.infinity,
+            height: double.infinity,
+            child: FittedBox(
+              fit: BoxFit.contain,
+              child: SizedBox(
+                width: c.value.size.width,
+                height: c.value.size.height,
+                child: VideoPlayer(c),
               ),
             ),
+          ),
+          VideoControlsOverlay(
+            controller: c,
+            shareUrl: widget.url,
+            onClose: () => Navigator.of(context).pop(),
+            onSave: _save,
+            saving: _saving,
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _CloseButton extends StatelessWidget {
-  const _CloseButton({this.icon = Icons.close_rounded, required this.onTap});
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final disabled = onTap == null;
-    return Material(
-      color: Colors.black38,
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Icon(
-            icon,
-            color: disabled ? Colors.white38 : Colors.white,
-            size: 24,
-          ),
-        ),
-      ),
-    );
+      );
+    }
+    return Scaffold(backgroundColor: Colors.black, body: body);
   }
 }

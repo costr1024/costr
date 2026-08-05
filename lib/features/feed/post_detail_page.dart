@@ -138,7 +138,7 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
                         child: Text(
                           '你打开的帖子',
                           style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.outline,
+                            color: CostrColors.of(context).text3,
                           ),
                         ),
                       ),

@@ -121,7 +121,7 @@ class NostrActions {
   /// human name in a `name` tag: rewriting `d` to the display name would
   /// fork the list into a second replaceable event, and dropping the `name`
   /// tag would erase the human name other clients (and Costr's own display)
-  /// rely on. See [kind30000DisplayName] for the matching read side.
+  /// rely on. See [listDisplayName] for the matching read side.
   Event followCategory(
     Event? current,
     String pubkey,

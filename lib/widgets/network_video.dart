@@ -1,5 +1,7 @@
-/// Inline network video player (video_player). Tap to play/pause. Disposes
-/// the controller when the widget leaves the tree (e.g. scrolls off-screen).
+/// Inline network video player (video_player) with the shared controls
+/// overlay ([VideoControlsOverlay], compact variant): progress bar, ±10s,
+/// speed, share + fullscreen entry. Disposes the controller when the widget
+/// leaves the tree (e.g. scrolls off-screen).
 library;
 
 import 'package:flutter/material.dart';
@@ -7,6 +9,7 @@ import 'package:video_player/video_player.dart';
 
 import 'fullscreen_video_page.dart';
 import 'proxied_network_image.dart';
+import 'video_controls.dart';
 
 class NetworkVideo extends StatefulWidget {
   const NetworkVideo({
@@ -55,8 +58,9 @@ class _NetworkVideoState extends State<NetworkVideo> {
   }
 
   void _init() {
-    final effectiveUrl =
-        widget.forceProxy ? proxiedUrl(widget.url) : widget.url;
+    final effectiveUrl = widget.forceProxy
+        ? proxiedUrl(widget.url)
+        : widget.url;
     _controller = VideoPlayerController.networkUrl(Uri.parse(effectiveUrl));
     _controller!
         .initialize()
@@ -76,22 +80,21 @@ class _NetworkVideoState extends State<NetworkVideo> {
     super.dispose();
   }
 
-  void _togglePlay() {
+  void _enterFullscreen() {
     final c = _controller;
     if (c == null || !c.value.isInitialized) return;
-    setState(() {
-      c.value.isPlaying ? c.pause() : c.play();
-    });
-  }
-
-  Future<void> _enterFullscreen() async {
-    final c = _controller;
-    if (c == null || !c.value.isInitialized) return;
-    final pos = c.value.position;
     // Pause the inline player so the same clip isn't audible twice while the
-    // fullscreen page (its own controller) is open.
+    // fullscreen page (its own controller) is open. Position AND speed carry
+    // over so playback continues seamlessly.
+    final pos = c.value.position;
+    final speed = c.value.playbackSpeed;
     c.pause();
-    await pushFullscreenVideo(context, url: widget.url, startPosition: pos);
+    pushFullscreenVideo(
+      context,
+      url: widget.url,
+      startPosition: pos,
+      startSpeed: speed,
+    );
   }
 
   @override
@@ -118,44 +121,15 @@ class _NetworkVideoState extends State<NetworkVideo> {
       child: AspectRatio(
         aspectRatio: aspect,
         child: Stack(
-          alignment: Alignment.center,
           children: [
             VideoPlayer(c),
-            Center(
-              child: IconButton.filled(
-                icon: Icon(c.value.isPlaying ? Icons.pause : Icons.play_arrow),
-                onPressed: _togglePlay,
-              ),
-            ),
-            // Fullscreen affordance (top-right). The fullscreen page owns its
-            // own controller and starts from the inline's current position.
-            Positioned(
-              top: 4,
-              right: 4,
-              child: _FullscreenButton(onTap: _enterFullscreen),
+            VideoControlsOverlay(
+              compact: true,
+              controller: c,
+              shareUrl: widget.url,
+              onEnterFullscreen: _enterFullscreen,
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FullscreenButton extends StatelessWidget {
-  const _FullscreenButton({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black38,
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: const Padding(
-          padding: EdgeInsets.all(6),
-          child: Icon(Icons.fullscreen_rounded, color: Colors.white, size: 20),
         ),
       ),
     );

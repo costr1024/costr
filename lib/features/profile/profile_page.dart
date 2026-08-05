@@ -1142,7 +1142,7 @@ class _FollowsTabState extends ConsumerState<_FollowsTab> {
         slivers.add(
           SliverToBoxAdapter(
             child: _GroupChipRow(
-              groups: groups,
+              groups: groups.map((g) => g.name).toList(),
               selected: _selectedGroup,
               onSelected: (v) => setState(() => _selectedGroup = v),
             ),
@@ -1454,12 +1454,15 @@ class _FollowersTabState extends ConsumerState<_FollowersTab> {
   }
 }
 
-/// 收藏 tab (NIP-51 kind-10003). Shows the user's bookmarked posts — public
-/// bookmarks for everyone, plus the owner's private (NIP-44-decrypted) ones.
-/// Amethyst-style: [bookmarksProvider] yields the SQLite-cached id list
-/// instantly then background-refreshes from relays; each id resolves to an
-/// [EventCard] via [eventByIdProvider]'s 3-tier lookup (SQLite → memory →
-/// relay). DESIGN §8 — placed right after 关注者.
+/// 收藏 tab (NIP-51 kind-10003 + kind-30003). Follows-page parity: a
+/// horizontally scrollable chip row (全部 / 公开书签 / 私人书签 / one chip per
+/// custom kind-30003 group); 全部 shows each group as a section with a
+/// header bar, a single chip is a flat list. [bookmarksProvider] yields the
+/// SQLite-cached groups instantly then background-refreshes from relays;
+/// each id resolves to an [EventCard] via [eventByIdProvider]'s 3-tier
+/// lookup (SQLite → memory → relay). DESIGN §8 — placed right after
+/// 关注者. Read-only for now; group management (create/rename/delete,
+/// bookmark-into-group) lands in a later batch.
 class _BookmarksTab extends ConsumerStatefulWidget {
   const _BookmarksTab({required this.pubkey});
   final String pubkey;
@@ -1471,6 +1474,9 @@ class _BookmarksTab extends ConsumerStatefulWidget {
 class _BookmarksTabState extends ConsumerState<_BookmarksTab> {
   final _controller = TextEditingController();
   String _query = '';
+
+  /// Selected chip (group name), or null for 全部 (segmented view).
+  String? _selectedGroup;
   Timer? _debounce;
 
   @override
@@ -1509,20 +1515,34 @@ class _BookmarksTabState extends ConsumerState<_BookmarksTab> {
     return false;
   }
 
-  Widget _sectionHeader(String title, int count, ThemeData theme) {
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-        child: Text(
-          '$title · $count',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: theme.colorScheme.outline,
-          ),
+  /// Section header bar for the 全部 (segmented) view — same look as the
+  /// follows tab's group headers.
+  Widget _groupHeader(String title, int count, ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Text(
+        '$title ($count)',
+        style: theme.textTheme.labelMedium?.copyWith(
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
+  }
+
+  /// Empty-state copy for the active chip when there is nothing to show.
+  String _emptyText(List<BookmarkGroup> groups) {
+    if (groups.every((g) => g.entries.isEmpty)) return '暂无收藏';
+    switch (_selectedGroup) {
+      case '公开书签':
+        return '暂无公开收藏';
+      case '私人书签':
+        return '暂无私人收藏';
+      case null:
+        return '暂无收藏';
+      default:
+        return '该分组暂无收藏';
+    }
   }
 
   @override
@@ -1554,45 +1574,58 @@ class _BookmarksTabState extends ConsumerState<_BookmarksTab> {
               hasScrollBody: false,
               child: Center(child: Text('加载失败：$e')),
             ),
-            data: (List<BookmarkEntry> entries) {
-              final public = entries
-                  .where((e) => e.public && _matches(e, _query))
-                  .toList();
-              final private = entries
-                  .where((e) => !e.public && _matches(e, _query))
-                  .toList();
-              if (public.isEmpty && private.isEmpty) {
-                return SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(child: Text(_query.isEmpty ? '暂无收藏' : '无匹配结果')),
-                );
+            data: (List<BookmarkGroup> groups) {
+              // If the selected group vanished after a refresh, fall back
+              // to 全部 (same guard as the follows tab).
+              if (_selectedGroup != null &&
+                  !groups.any((g) => g.name == _selectedGroup)) {
+                _selectedGroup = null;
+              }
+              final segmented = _selectedGroup == null;
+              final sections = <Widget>[];
+              for (final g in groups) {
+                if (!segmented && g.name != _selectedGroup) continue;
+                final rows = g.entries
+                    .where((e) => _matches(e, _query))
+                    .toList();
+                if (rows.isEmpty) continue;
+                if (segmented) {
+                  sections.add(_groupHeader(g.name, g.entries.length, theme));
+                }
+                // A private entry only needs its lock badge outside an
+                // inherently-private section (私人书签 chip / section).
+                final inPrivateOnly = segmented
+                    ? g.name == '私人书签'
+                    : _selectedGroup == '私人书签';
+                for (final e in rows) {
+                  sections.add(
+                    _BookmarkRow(
+                      entry: e,
+                      showLock: !e.public && !inPrivateOnly,
+                    ),
+                  );
+                }
               }
               return SliverMainAxisGroup(
                 slivers: <Widget>[
-                  if (public.isNotEmpty) ...[
-                    _sectionHeader('公开书签', public.length, theme),
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (BuildContext context, int i) => _BookmarkRow(
-                          eventId: public[i].id,
-                          publicList: true,
-                        ),
-                        childCount: public.length,
-                      ),
+                  SliverToBoxAdapter(
+                    child: _GroupChipRow(
+                      groups: groups.map((g) => g.name).toList(),
+                      selected: _selectedGroup,
+                      onSelected: (v) => setState(() => _selectedGroup = v),
                     ),
-                  ],
-                  if (private.isNotEmpty) ...[
-                    _sectionHeader('私人书签', private.length, theme),
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (BuildContext context, int i) => _BookmarkRow(
-                          eventId: private[i].id,
-                          publicList: false,
+                  ),
+                  if (sections.isEmpty)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: Text(
+                          _query.isEmpty ? _emptyText(groups) : '无匹配结果',
                         ),
-                        childCount: private.length,
                       ),
-                    ),
-                  ],
+                    )
+                  else
+                    SliverList(delegate: SliverChildListDelegate(sections)),
                 ],
               );
             },
@@ -1603,22 +1636,22 @@ class _BookmarksTabState extends ConsumerState<_BookmarksTab> {
   }
 }
 
-/// A single bookmarked post — resolves [eventId] → [Event] via
+/// A single bookmarked post — resolves [BookmarkEntry.id] → [Event] via
 /// [eventByIdProvider] (SQLite → memory → relay) and renders an [EventCard].
 /// Loading / not-found states degrade gracefully (a bookmark may reference an
-/// event not yet fetched; it streams in when the relay responds). A small lock
-/// badge marks private bookmarks so the owner can tell them apart at a glance.
+/// event not yet fetched; it streams in when the relay responds). A small
+/// lock badge marks private entries outside inherently-private sections so
+/// the owner can tell them apart at a glance.
 class _BookmarkRow extends ConsumerWidget {
-  const _BookmarkRow({required this.eventId, this.publicList = true});
-  final String eventId;
-  final bool publicList;
+  const _BookmarkRow({required this.entry, this.showLock = false});
+  final BookmarkEntry entry;
+  final bool showLock;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(eventByIdProvider(eventId));
-    final badge = publicList
-        ? null
-        : Padding(
+    final async = ref.watch(eventByIdProvider(entry.id));
+    final badge = showLock
+        ? Padding(
             padding: const EdgeInsets.only(left: 12, top: 8),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -1626,19 +1659,20 @@ class _BookmarkRow extends ConsumerWidget {
                 Icon(
                   Icons.lock_outline,
                   size: 12,
-                  color: Theme.of(context).colorScheme.outline,
+                  color: CostrColors.of(context).text3,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   '私人',
                   style: TextStyle(
                     fontSize: 11,
-                    color: Theme.of(context).colorScheme.outline,
+                    color: CostrColors.of(context).text3,
                   ),
                 ),
               ],
             ),
-          );
+          )
+        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -1773,7 +1807,9 @@ class _GroupChipRow extends StatelessWidget {
     required this.selected,
     required this.onSelected,
   });
-  final List<FollowGroup> groups;
+
+  /// Chip labels (follow groups / bookmark groups). `全部` is prepended.
+  final List<String> groups;
   final String? selected;
   final ValueChanged<String?> onSelected;
 
@@ -1820,10 +1856,7 @@ class _GroupChipRow extends StatelessWidget {
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
-          children: [
-            chip('全部', null),
-            for (final g in groups) chip(g.name, g.name),
-          ],
+          children: [chip('全部', null), for (final g in groups) chip(g, g)],
         ),
       ),
     );
@@ -2069,7 +2102,7 @@ class _Nip05Badge extends ConsumerWidget {
         height: 14,
         child: CircularProgressIndicator(
           strokeWidth: 2,
-          color: theme.colorScheme.outline,
+          color: CostrColors.of(context).text3,
         ),
       );
     }
@@ -2084,7 +2117,7 @@ class _Nip05Badge extends ConsumerWidget {
       case Nip05Status.unknown:
       case Nip05Status.none:
         icon = Icons.error_outline;
-        color = theme.colorScheme.outline;
+        color = CostrColors.of(context).text3;
     }
     return Icon(icon, size: 16, color: color);
   }

@@ -24,6 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
+import '../../app/theme.dart';
 import '../../nostr/relay_pool.dart';
 import '../../services/blossom_upload.dart' show measureBlossomRtt;
 
@@ -407,7 +408,7 @@ class _ServerRow extends StatelessWidget {
     final dotColor = online
         ? Colors.green
         : (connecting ? Colors.amber : Colors.red);
-    final trailing = _trailing(theme);
+    final trailing = _trailing(theme, CostrColors.of(context).text3);
     return ListTile(
       dense: true,
       visualDensity: const VisualDensity(horizontal: 0, vertical: -3),
@@ -418,7 +419,7 @@ class _ServerRow extends StatelessWidget {
     );
   }
 
-  Widget _trailing(ThemeData theme) {
+  Widget _trailing(ThemeData theme, Color muted) {
     // Offline → red "离线".
     if (!online && !connecting) {
       return Text(
@@ -440,9 +441,7 @@ class _ServerRow extends StatelessWidget {
             )
           : Text(
               '…',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.outline,
-              ),
+              style: theme.textTheme.bodyMedium?.copyWith(color: muted),
             );
     }
     // Has a number → green (low) or yellow (high).
