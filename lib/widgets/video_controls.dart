@@ -57,10 +57,14 @@ Future<void> shareVideoUrl(BuildContext context, String url) async {
 /// Bottom-sheet speed picker (app sheet pattern). Returns the chosen speed,
 /// null when dismissed without picking.
 Future<double?> showSpeedPickerSheet(BuildContext context, double current) {
+  // Fullscreen playback is usually landscape, where six tiles + title are
+  // taller than the screen — the sheet content must scroll. Full-screen
+  // width is also far too wide for a short option list, so in landscape
+  // the sheet is narrowed to a centered panel.
+  final landscape = MediaQuery.orientationOf(context) == Orientation.landscape;
   return showModalBottomSheet<double>(
     context: context,
-    // Fullscreen playback is usually landscape, where six tiles + title are
-    // taller than the screen — the sheet content must scroll.
+    constraints: landscape ? const BoxConstraints(maxWidth: 320) : null,
     builder: (BuildContext ctx) => SafeArea(
       child: SingleChildScrollView(
         child: Column(

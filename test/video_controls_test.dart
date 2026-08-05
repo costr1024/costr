@@ -87,6 +87,10 @@ void main() {
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
 
+      // The sheet is a narrow centered panel in landscape, not a full-width
+      // bar spanning most of the wide screen.
+      expect(tester.getSize(find.byType(SingleChildScrollView)).width, 320);
+
       // 2.0x is off the bottom of the sheet → scroll up to reach it.
       await tester.drag(
         find.byType(SingleChildScrollView),
@@ -96,6 +100,32 @@ void main() {
       await tester.tap(find.text('2.0x'));
       await tester.pumpAndSettle();
       expect(picked, 2.0);
+    });
+
+    testWidgets('stays full width in portrait', (tester) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: Builder(
+                builder: (BuildContext ctx) => FilledButton(
+                  onPressed: () => showSpeedPickerSheet(ctx, 1.0),
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      // Portrait phones are narrow enough — keep the usual full-width sheet.
+      expect(tester.getSize(find.byType(SingleChildScrollView)).width, 400);
     });
 
     testWidgets('dismiss without picking returns null', (tester) async {
