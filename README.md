@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.8.3-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.8.3-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.8.4-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.8.4-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta）。
 
 ---
 
@@ -305,6 +305,15 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
 
+**v0.8.4-beta 相对 v0.8.3-beta 的修复**：
+**发帖输入框里 URL 内的 npub 不再被当成 @提及**——粘贴 blossom npub 子域名图床链接
+（`https://npub1….blossom.band/<sha256>.jpg`）时，输入框的提及 chip 正则把 URL 里的
+npub 也换成 `@昵称`，URL 显示被拆坏（签名内容一直正常、发出去渲染也正常，仅编辑时显示
+错乱）；现 URL 内实体按纯文本渲染，草稿恢复/发送的提及 tag 推导同样跳过 URL 内实体。
+**顺带修复退出发帖页时最后一次草稿保存从未生效**——`_flushDraft` 在 dispose 里
+`ref.read`（Riverpod 卸载后禁用 ref）每次退出都抛异常；改缓存数据库句柄后退出前草稿
+可靠落盘。
+
 **v0.8.3-beta 相对 v0.8.2-beta 的修复**：
 **blossom npub 子域名图床的图/视频恢复加载**——blossom 图床把上传者 npub 用作子域名
 （`https://npub1….blossom.band/<sha256>.mp4`），提及 linkify 正则把 URL 里的 npub 误当
@@ -422,7 +431,7 @@ content 里带 NIP-18 嵌入 JSON 的转发无需解析 e-tag 直接渲染原帖
 - **中继池**：多中继 fan-out，按 id 去重（`events` 流给全球流）；另开 `rawEvents`（不去重）给一次性定向拉取（kind-3、关注者 `#p`、NIP-50 搜索）。断线指数退避重连，重连后自动重发活跃订阅。`RelayClient.connect` 等 `channel.ready` 才标 connected（+10s 超时让被墙中继快速判离线）。
 - **事件存储**：内存单源，按 id 去重，时间倒序，上限 5000 淘汰最旧。`ingest` 经 `_scheduleFlush` 200ms 去抖批量刷新（避免突发百条 jank）。
 - **头像资料**：`metadataProvider` 是 StreamProvider——先 yield SQLite/内存缓存（即时），再异步拉 kind-0 刷新（按 `created_at` 不回退）。社交图谱资料预取（冷启动延迟 5s 对 follows+followers+self bulk REQ kind-0 落库）。
-- **正文渲染**：GitHub 风格 markdown。多图九宫格、裸图片/视频 URL 当图渲染、NIP-92 imeta + `["image",url]`/`["video",url]` tag 跨协议去重、NIP-30 自定义表情 `:shortcode:` 内联、长帖折叠、空行保留（Amethyst 式）。NIP-19 npub/nprofile 提及 linkify——**URL 里的实体不动**：blossom 图床把上传者 npub 当子域名（`https://npub1….blossom.band/<sha256>.mp4`），此前误把 URL 里的 npub 换成 `@昵称` 提及、URL 被改写、图片/视频加载失败，现 URL 内的 npub/nprofile/nevent/note 一律跳过（正文渲染、引用卡/通知预览、个人简介同修）；NIP-19 解码器对畸形 bech32 一律返回 null 不再抛异常（构造出的 `npub1…` 乱串不会再崩渲染）。
+- **正文渲染**：GitHub 风格 markdown。多图九宫格、裸图片/视频 URL 当图渲染、NIP-92 imeta + `["image",url]`/`["video",url]` tag 跨协议去重、NIP-30 自定义表情 `:shortcode:` 内联、长帖折叠、空行保留（Amethyst 式）。NIP-19 npub/nprofile 提及 linkify——**URL 里的实体不动**：blossom 图床把上传者 npub 当子域名（`https://npub1….blossom.band/<sha256>.mp4`），此前误把 URL 里的 npub 换成 `@昵称` 提及、URL 被改写、图片/视频加载失败，现 URL 内的 npub/nprofile/nevent/note 一律跳过（正文渲染、引用卡/通知预览、个人简介、发帖输入框的 @提及 chip 同修）；NIP-19 解码器对畸形 bech32 一律返回 null 不再抛异常（构造出的 `npub1…` 乱串不会再崩渲染）。
 - **标签与语言过滤**：NIP-12 `t` tag + 正文内联 `#hashtag`（支持中文），chip 点选过滤/长按关注。**关注 hashtag 存 NIP-51 kind-10015 + NIP-44 加密 content**（`[["t",…]]` JSON，对齐 Amethyst 的私密兴趣列表，迁移互通），同时只读聚合 kind-30015 命名兴趣集的明文 `t`。语言下拉 🌐/🇨🇳/🇬🇧/🇯🇵，假名优先判日文。
 - **用户状态（NIP-38）**：kind-30315 短文本，信息流卡昵称下一行显示，自己主页内联编辑。
 - **用户主页**：NestedScrollView（banner/头像可滚走 + TabBar 吸顶）+ sliver 根治 overflow。4+1 tab：帖子/回帖/关注/关注者/收藏。`userPostsProvider` StreamProvider：先 yield 内存+SQLite 快照，后台 NIP-65 outbox 定向拉取（250ms 去抖流式 yield），拉取经 `yield* ctrl.stream` 吐给 UI——**修复了两处「有的用户只能看到几条帖子/回帖、下拉刷新也刷不出更多」**：① 原实现把中继结果写进 `ctrl` 却没有 `yield*` 管道，全部静默丢弃、主页永远只显示缓存快照；② 原 `since` 增量以「缓存里最新一条」为锚点，而社交圈外用户的帖子不落库、缓存只是信息流里瞥见的几条，锚点之后的历史永远拉不到——现改为每次拉最新 `limit:100` 窗口（merged 按 id 去重）。下拉刷新、发帖后立即可见。各 tab 的过滤/搜索框（搜帖子/搜回帖/过滤已关注/过滤关注者/搜收藏）共用一个 `_SearchBar`，带 **X 一键清空**——清空文本同时回调 `onChanged('')` 复位父级 `_query`，列表回到全量（`controller.clear()` 本身不触发 `TextField.onChanged`，须手动回调）。
