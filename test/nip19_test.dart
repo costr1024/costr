@@ -218,4 +218,33 @@ void main() {
       expect(entityMatchInUrl(text, first(text)), isFalse);
     });
   });
+
+  group('rangeInUrl (offset variant)', () {
+    const pubHex =
+        '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
+    final npub = hexToNpub(pubHex);
+
+    test('true when the range sits inside a URL', () {
+      final text = 'see https://$npub.blossom.band/x.jpg ok';
+      final s = text.indexOf(npub);
+      expect(rangeInUrl(text, s, s + npub.length), isTrue);
+    });
+
+    test('false when the range is outside every URL', () {
+      final text = 'hello $npub world';
+      final s = text.indexOf(npub);
+      expect(rangeInUrl(text, s, s + npub.length), isFalse);
+    });
+
+    test('range at the very start of a leading URL is inside it', () {
+      final text = 'https://example.com/a.jpg';
+      expect(rangeInUrl(text, 0, 0), isTrue);
+    });
+
+    test('true for a URL followed by a separate mention', () {
+      final text = 'https://example.com/a.jpg $npub';
+      final s = text.indexOf(npub);
+      expect(rangeInUrl(text, s, s + npub.length), isFalse);
+    });
+  });
 }

@@ -23,6 +23,7 @@ import '../../app/providers.dart';
 import '../../models/event.dart';
 import '../../nostr/actions.dart';
 import '../../services/blossom_upload.dart';
+import '../../services/local_cache.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 
@@ -70,6 +71,11 @@ class _ComposePageState extends ConsumerState<ComposePage>
   /// same parent (otherwise the parent context is gone and the text is wrong).
   Timer? _draftDebounce;
   bool _loadingDraft = false;
+
+  /// Last successfully resolved local cache. Held so [_flushDraft] (called
+  /// from [dispose], where `ref` is already unmounted and `ref.read` throws)
+  /// can still write the final draft without touching [ref].
+  LocalCache? _cache;
 
   /// Rowids of outbox drafts saved during FAILED publish attempts in THIS
   /// session. A retry signs a FRESH event (new `created_at` → new id), so
@@ -159,6 +165,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
   Future<void> _loadDraft() async {
     try {
       final db = await ref.read(localCacheProvider.future);
+      _cache = db;
       final raw = await db.readConfig(_draftKey);
       if (raw == null || raw.isEmpty || !mounted) return;
       _loadingDraft = true;
@@ -227,16 +234,19 @@ class _ComposePageState extends ConsumerState<ComposePage>
   Future<void> _saveDraft() async {
     try {
       final db = await ref.read(localCacheProvider.future);
+      _cache = db;
       await db.writeConfig(_draftKey, _serializeDraft());
     } catch (_) {}
   }
 
   /// Fire-and-forget flush — best-effort final save so the last keystrokes
   /// (within the debounce window) survive a back, app-pause, or crash. Uses
-  /// the synchronously-available cache value; if the cache isn't ready yet
-  /// the periodic saves during editing cover it.
+  /// the cached DB handle instead of [ref]: this runs from [dispose], where
+  /// `ref.read` throws (widget already unmounted) — which silently killed the
+  /// final flush before. If the cache was never resolved the periodic saves
+  /// during editing cover it.
   void _flushDraft() {
-    final db = ref.read(localCacheProvider).value;
+    final db = _cache;
     if (db == null) return;
     unawaited(db.writeConfig(_draftKey, _serializeDraft()));
   }
@@ -244,12 +254,14 @@ class _ComposePageState extends ConsumerState<ComposePage>
   /// Re-derive [_mentions] from any `nostr:npub1…` / `nostr:nprofile1…`
   /// references embedded in the text (e.g. inside restored markdown mention
   /// links `[@name](nostr:npub1…)`) so the send path still emits their `p`
-  /// tags after a draft restore.
+  /// tags after a draft restore. Entities INSIDE a URL are skipped — a
+  /// blossom npub-subdomain media URL must not add a mention `p` tag.
   void _reparseMentions(String text) {
     final re = RegExp(
       r'(?:nostr:)?(?:npub1|nprofile1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}',
     );
     for (final m in re.allMatches(text)) {
+      if (entityMatchInUrl(text, m)) continue;
       final pk = entityToPubkeyHex(m.group(0)!);
       if (pk != null && pk.isNotEmpty) _mentions.add(pk);
     }
@@ -512,6 +524,8 @@ class _ComposePageState extends ConsumerState<ComposePage>
     final tags = <List<String>>[];
     final seenIds = <String>{};
     for (final m in regex.allMatches(text)) {
+      // An event entity inside a URL is part of the link, not a mention.
+      if (entityMatchInUrl(text, m)) continue;
       final entity = m.group(1)!;
       final ev = neventDecode(entity); // null for note1
       final id = ev?.id ?? entityToEventIdHex(entity);
@@ -1025,10 +1039,17 @@ final RegExp _editorMentionRe = RegExp(
 /// not navigate away — profile navigation happens on the rendered post after
 /// publishing. `actualText` = the raw entity keeps the signed content correct
 /// (NIP-27) and `deleteAll: true` makes backspace remove the whole chip.
+///
+/// An entity sitting INSIDE a URL is left as plain text: blossom media hosts
+/// use the uploader's npub as a subdomain (`https://npub1….blossom.band/…`),
+/// and chipping the npub part would visually break the pasted media URL.
+/// [fullTextOf] returns the whole editor string (captured per-build by
+/// [_MentionSpanBuilder]) so the match range can be checked against URLs.
 class _MentionRegExpText extends RegExpSpecialText {
-  _MentionRegExpText(this.ref, this.mentionStyle);
+  _MentionRegExpText(this.ref, this.mentionStyle, this.fullTextOf);
   final WidgetRef ref;
   final TextStyle? mentionStyle;
+  final String Function() fullTextOf;
 
   @override
   RegExp get regExp => _editorMentionRe;
@@ -1041,6 +1062,10 @@ class _MentionRegExpText extends RegExpSpecialText {
     SpecialTextGestureTapCallback? onTap,
   }) {
     final entity = match.group(0)!; // full match incl. optional `nostr:` prefix
+    // Entity inside a URL → keep it plain so the URL stays intact.
+    if (rangeInUrl(fullTextOf(), start, start + entity.length)) {
+      return TextSpan(text: entity, style: textStyle);
+    }
     final bare = match.group(1)!;
     final pk = entityToPubkeyHex(bare);
     String name;
@@ -1073,8 +1098,24 @@ class _MentionSpanBuilder extends RegExpSpecialTextSpanBuilder {
   final WidgetRef ref;
   final TextStyle? mentionStyle;
 
+  /// The editor string handed to the most recent [build]. Mention matching
+  /// needs the whole text to tell whether an entity sits inside a URL; the
+  /// library only passes each match's offset to `finishText`, so we capture
+  /// it here and hand it to [_MentionRegExpText] via a closure.
+  String _fullText = '';
+
+  @override
+  TextSpan build(
+    String data, {
+    TextStyle? textStyle,
+    SpecialTextGestureTapCallback? onTap,
+  }) {
+    _fullText = data;
+    return super.build(data, textStyle: textStyle, onTap: onTap);
+  }
+
   @override
   List<RegExpSpecialText> get regExps => [
-    _MentionRegExpText(ref, mentionStyle),
+    _MentionRegExpText(ref, mentionStyle, () => _fullText),
   ];
 }

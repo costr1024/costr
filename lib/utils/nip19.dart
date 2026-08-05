@@ -252,10 +252,16 @@ final RegExp _urlRegex = RegExp(r'https?://[^\s]+');
 /// (`https://npub1….blossom.band/<sha256>.mp4`), and rewriting the npub part
 /// into an `[@name](nostr:…)` mention breaks the URL — the mention shows up
 /// as stray `@npub…` text and the media fails to load.
-bool entityMatchInUrl(String text, Match m) {
+bool entityMatchInUrl(String text, Match m) => rangeInUrl(text, m.start, m.end);
+
+/// True when the range [start, end) lies entirely inside a single
+/// `https?://…` URL in [text]. Offset-based variant of [entityMatchInUrl]
+/// for callers (e.g. the composer's special-text builder) that track an
+/// absolute start offset rather than holding a [Match] over the full text.
+bool rangeInUrl(String text, int start, int end) {
   for (final u in _urlRegex.allMatches(text)) {
-    if (m.start >= u.start && m.end <= u.end) return true;
-    if (u.start > m.end) break; // both sequences are start-ordered
+    if (start >= u.start && end <= u.end) return true;
+    if (u.start > end) break; // both sequences are start-ordered
   }
   return false;
 }
