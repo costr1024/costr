@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.6.9-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.6.9-beta/app-release.apk)（≈71 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.8.3-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.8.3-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta）。
 
 ---
 
@@ -304,6 +304,13 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 **v0.6-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v0.8.3-beta 相对 v0.8.2-beta 的修复**：
+**blossom npub 子域名图床的图/视频恢复加载**——blossom 图床把上传者 npub 用作子域名
+（`https://npub1….blossom.band/<sha256>.mp4`），提及 linkify 正则把 URL 里的 npub 误当
+@提及替换，URL 被改写、界面冒出 `@npubxxx`、图/视频加载失败；现 URL 内的
+npub/nprofile/nevent/note 一律跳过（正文渲染、引用卡/通知预览、个人简介同修），畸形
+bech32 乱串也不再崩渲染。
 
 **v0.6-beta 相对 v0.5.5-beta 的修复/新增**（详见 [v0.6-beta release notes](https://github.com/costr1024/costr/releases/tag/v0.6-beta)）：
 **深色模式全面修复**（X 风格深色 + 全部颜色按亮度解析）；
