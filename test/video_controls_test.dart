@@ -58,6 +58,46 @@ void main() {
       expect(picked, 2.0);
     });
 
+    testWidgets('scrolls to reach all speeds in a short landscape viewport', (
+      tester,
+    ) async {
+      // Fullscreen landscape: six tiles + title are taller than the screen,
+      // so the sheet must scroll (regression: clipped unscrollable sheet).
+      tester.view.physicalSize = const Size(900, 360);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      double? picked;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: Builder(
+                builder: (BuildContext ctx) => FilledButton(
+                  onPressed: () async {
+                    picked = await showSpeedPickerSheet(ctx, 1.0);
+                  },
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      // 2.0x is off the bottom of the sheet → scroll up to reach it.
+      await tester.drag(
+        find.byType(SingleChildScrollView),
+        const Offset(0, -300),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('2.0x'));
+      await tester.pumpAndSettle();
+      expect(picked, 2.0);
+    });
+
     testWidgets('dismiss without picking returns null', (tester) async {
       double? picked;
       var opened = false;

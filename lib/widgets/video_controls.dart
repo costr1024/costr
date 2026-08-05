@@ -59,24 +59,28 @@ Future<void> shareVideoUrl(BuildContext context, String url) async {
 Future<double?> showSpeedPickerSheet(BuildContext context, double current) {
   return showModalBottomSheet<double>(
     context: context,
+    // Fullscreen playback is usually landscape, where six tiles + title are
+    // taller than the screen — the sheet content must scroll.
     builder: (BuildContext ctx) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Text('播放速度', style: TextStyle(fontSize: 13)),
-          ),
-          for (final s in kPlaybackSpeeds)
-            ListTile(
-              dense: true,
-              title: Text(formatSpeed(s)),
-              trailing: s == current ? const Icon(Icons.check) : null,
-              onTap: () => Navigator.pop(ctx, s),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Text('播放速度', style: TextStyle(fontSize: 13)),
             ),
-          const SizedBox(height: 4),
-        ],
+            for (final s in kPlaybackSpeeds)
+              ListTile(
+                dense: true,
+                title: Text(formatSpeed(s)),
+                trailing: s == current ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(ctx, s),
+              ),
+            const SizedBox(height: 4),
+          ],
+        ),
       ),
     ),
   );

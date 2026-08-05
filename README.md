@@ -427,7 +427,7 @@ content 里带 NIP-18 嵌入 JSON 的转发无需解析 e-tag 直接渲染原帖
 - **媒体上传（Blossom BUD-02/BUD-11）**：图片≤10MB 最多 9 张 / 视频≤100MB 单条 / 文件≤100MB 最多 4 个。签 kind-24242 auth → `PUT /upload` → url + NIP-92 imeta。默认服务器逐台尝试失败自动换。**键盘表情/贴纸直插**（Amethyst 式，Android）：发帖编辑框经 `ContentInsertionConfiguration` 声明 `image/gif|webp|png|jpeg`——这正是让 Gboard/三星键盘的表情与贴纸面板出现「插入到应用」的开关（`EditorInfoCompat.setContentMimeTypes`）；用户选中的 GIF/贴纸经 Android Commit Content API 直接进编辑器，`_onKeyboardContentInserted` 拿到字节走同一条 Blossom 上传，成为普通图片附件（imeta + 正文 URL）。Flutter 3.10+ 引擎原生支持，零三方依赖、无需改 manifest/Gradle；iOS 无对等键盘 API（该回调不触发）。已知：大文件（>~3MB）经 `flutter/textinput` JSON 序列化有约数秒卡顿（flutter#188977，等官方二进制通道修复）。
 - **媒体/文件下载**：`lib/services/media_download.dart` 统一入口。移动端图片/视频走 `gal` 存相册；桌面/普通文件走 `file_picker` save-as。接入点：图片全屏查看器、全屏视频页、文件 chip。
 - **视频播放控件（内联 + 全屏统一控制层）**：`lib/widgets/video_controls.dart` 共享覆盖层——
-  进度条拖动（拖动暂停、松手 seek 并恢复）、±10 秒快进快退（到头钳制）、倍速 0.5–2.0（底部 sheet）、
+  进度条拖动（拖动暂停、松手 seek 并恢复）、±10 秒快进快退（到头钳制）、倍速 0.5–2.0（底部 sheet，横屏可滚）、
   分享视频链接（系统分享，桌面降级复制 + 「已复制视频链接」）、缓冲指示、播放中 3s 自动隐藏、
   点表面切换控件显隐。内联紧凑版右上分享 + 全屏入口；全屏完整版顶栏关闭 + 分享 + 保存相册。
   内联 → 全屏携带进度与倍速；视频表面恒黑底白字不随主题。继续 `video_player`，无新依赖。
