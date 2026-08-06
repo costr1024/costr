@@ -54,8 +54,31 @@ final RegExp _eventEntityRegex = RegExp(
 /// blank line. Replace each empty line with a zero-width space (non-whitespace
 /// → not a blank line → no paragraph split). Pair with `softLineBreak: true`
 /// on MarkdownBody so single `\n` also render as line breaks.
-String _preserveBlankLines(String s) =>
-    s.split('\n').map((l) => l.trim().isEmpty ? '​' : l).join('\n');
+///
+/// One exception: a blank line must stay a REAL blank line when it ends a
+/// blockquote. A zero-width space there is NOT a blank line, so the markdown
+/// parser treats it as a lazy-continuation line and absorbs the ENTIRE
+/// following content into the quote (a 财新-style `> 导语` post rendered its
+/// whole article inside the quote box). Track blockquote state: while inside
+/// one, keep blank lines truly blank so the quote ends where the author's
+/// blank line says it does. Public for unit testing.
+String preserveBlankLines(String s) {
+  final out = <String>[];
+  var inBlockquote = false;
+  for (final l in s.split('\n')) {
+    if (l.trim().isEmpty) {
+      out.add(inBlockquote ? '' : '\u200B');
+      inBlockquote = false;
+    } else {
+      out.add(l);
+      // A `>` line opens/continues a quote; any other non-blank line keeps
+      // the current state (right after a `>` line it is a lazy-continuation
+      // line, still inside the quote; otherwise ordinary text).
+      if (l.trimLeft().startsWith('>')) inBlockquote = true;
+    }
+  }
+  return out.join('\n');
+}
 
 /// Bare media URLs in content (image/video/file extensions) — stripped from
 /// text segments so they don't show as plain text; rendered via imeta extra
@@ -243,7 +266,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       if (seg is TextSeg) {
         // Strip bare media URLs from text (they're rendered via imeta extra).
         final cleaned = replaceEmoji(
-          _preserveBlankLines(seg.text.replaceAll(_bareMediaUrl, '')),
+          preserveBlankLines(seg.text.replaceAll(_bareMediaUrl, '')),
         ).trim();
         if (cleaned.isEmpty) continue;
         children.add(
