@@ -94,8 +94,11 @@ final RegExp _bareMediaUrl = RegExp(
 /// alternative's negative lookbehind `(?<!\]\()` prevents it from matching the
 /// URL inside `![](url)` or `[text](url)`, so only genuinely bare media URLs
 /// are extracted as images.
+const _mdImagePattern = r'!\[([^\]]*)\]\(([^)\s]+)\)';
+const _bareMediaPattern =
+    r'(?<!\]\()(https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv))';
 final RegExp _mediaTokenRegex = RegExp(
-  r'!\[([^\]]*)\]\(([^)\s]+)\)|(?<!\]\()(https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv))',
+  '$_mdImagePattern|$_bareMediaPattern',
   caseSensitive: false,
 );
 
@@ -211,7 +214,10 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
         : _replaceOutsideUrls(linkified, _eventEntityRegex, (Match m) => '');
 
     // 2. Tokenize into segments: text / image-group (contiguous) / single video.
-    final segments = tokenizeContent(stripped);
+    // Tag-declared media (imeta / ["video",url,mime]) is passed along so bare
+    // URLs without a media file extension (抖音 share links) still render as
+    // players instead of plain links.
+    final segments = tokenizeContent(stripped, tagged: event.mediaAttachments);
 
     final children = <Widget>[];
 
@@ -536,10 +542,31 @@ bool postHasMedia(Event event) {
   return false;
 }
 
-List<ContentSeg> tokenizeContent(String content) {
+List<ContentSeg> tokenizeContent(
+  String content, {
+  List<MediaAttachment> tagged = const [],
+}) {
   final out = <ContentSeg>[];
   final group = <String>[];
   int lastEnd = 0;
+  // Tag-declared media (imeta / `["video",url,mime]` / `["image",url,mime]`)
+  // whose bare URL lacks a media file extension — e.g. a 抖音 share link like
+  // `…/playwm/?video_id=…`. The base regex would miss it and it would render
+  // as a plain link instead of a player ("视频链接不渲染播放控件" bug). The
+  // tag's MIME wins over the extension guess; listed BEFORE the bare-ext
+  // alternative so the exact full URL wins over an extension-terminated
+  // prefix of it.
+  final taggedByUrl = <String, MediaAttachment>{
+    for (final m in tagged) if (m.isImage || m.isVideo) m.url: m,
+  };
+  final regex = taggedByUrl.isEmpty
+      ? _mediaTokenRegex
+      : RegExp(
+          '$_mdImagePattern|(?<!\\]\\()(?:${taggedByUrl.keys
+              .map(RegExp.escape)
+              .join('|')})|$_bareMediaPattern',
+          caseSensitive: false,
+        );
 
   void flushGroup() {
     if (group.isNotEmpty) {
@@ -548,12 +575,13 @@ List<ContentSeg> tokenizeContent(String content) {
     }
   }
 
-  for (final m in _mediaTokenRegex.allMatches(content)) {
+  for (final m in regex.allMatches(content)) {
     final between = content.substring(lastEnd, m.start);
-    // group(2) = markdown image url; group(3) = bare media url.
-    final url = (m.group(2) ?? m.group(3) ?? '').toString();
+    // group(2) = markdown image url; group(3) = bare media url; a
+    // tag-declared literal match carries neither → group(0) is the url.
+    final url = (m.group(2) ?? m.group(3) ?? m.group(0)!).toString();
     if (url.isEmpty) continue;
-    final isVideo = MediaAttachment(url: url).isVideo;
+    final isVideo = (taggedByUrl[url] ?? MediaAttachment(url: url)).isVideo;
     if (between.trim().isEmpty) {
       if (isVideo) {
         flushGroup();

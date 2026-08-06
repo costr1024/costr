@@ -1,3 +1,4 @@
+import 'package:costr/models/event.dart';
 import 'package:costr/widgets/markdown_content.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -126,6 +127,66 @@ void main() {
       expect(segs[0], isA<TextSeg>());
       expect(segs[1], isA<SingleVideoSeg>());
       expect((segs[1] as SingleVideoSeg).url, url);
+    });
+  });
+
+  group('tag-declared media whose URL lacks a file extension', () {
+    // Real-world shape (抖音 share): the bare URL carries no .mp4 extension,
+    // but the event declares it via ["video", url, "video/mp4"]. The tag's
+    // MIME must win so the player renders instead of a plain link
+    // ("视频链接不渲染播放控件" bug).
+    const douyin =
+        'https://www.iesdouyin.com/aweme/v1/playwm/?line=0&logo_name=aweme'
+        '_diversion_search&ratio=720p&video_id=v0300fg10000d9kbvqfog65vt6g0i58g';
+
+    test('["video", url, video/mp4] → SingleVideoSeg', () {
+      final segs = tokenizeContent(
+        '分享一个视频\n$douyin\n#媒体',
+        tagged: const [MediaAttachment(url: douyin, mimeType: 'video/mp4')],
+      );
+      expect(segs.whereType<SingleVideoSeg>().map((s) => s.url), [douyin]);
+      // The URL must NOT also linger in a text segment.
+      for (final s in segs.whereType<TextSeg>()) {
+        expect(s.text.contains('iesdouyin'), isFalse);
+      }
+    });
+
+    test('same URL without the tag stays plain text (a link)', () {
+      final segs = tokenizeContent('分享一个视频\n$douyin\n#媒体');
+      expect(segs.whereType<SingleVideoSeg>(), isEmpty);
+      expect(segs.whereType<ImageGroupSeg>(), isEmpty);
+    });
+
+    test('tag-declared image URL without extension joins an image group', () {
+      const url = 'https://x/cdn?id=abc';
+      final segs = tokenizeContent(
+        url,
+        tagged: const [MediaAttachment(url: url, mimeType: 'image/jpeg')],
+      );
+      expect(segs.single, isA<ImageGroupSeg>());
+      expect((segs.single as ImageGroupSeg).urls, [url]);
+    });
+
+    test('tagged URL inside a markdown link is NOT extracted as media', () {
+      // The (?<!\]\() guard applies to tag-declared urls too: [text](url)
+      // stays a clickable link.
+      const url = 'https://x/play?video_id=1';
+      final segs = tokenizeContent(
+        '[click]($url)',
+        tagged: const [MediaAttachment(url: url, mimeType: 'video/mp4')],
+      );
+      expect(segs.whereType<SingleVideoSeg>(), isEmpty);
+      expect(segs.single, isA<TextSeg>());
+    });
+
+    test('tag with non-media mimetype does not hijack the URL', () {
+      const url = 'https://x/thing?id=1';
+      final segs = tokenizeContent(
+        url,
+        tagged: const [MediaAttachment(url: url, mimeType: 'text/html')],
+      );
+      expect(segs.whereType<SingleVideoSeg>(), isEmpty);
+      expect(segs.whereType<ImageGroupSeg>(), isEmpty);
     });
   });
 }

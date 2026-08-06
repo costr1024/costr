@@ -167,6 +167,9 @@ lib/
   （原 URL **去掉 scheme 前缀**——带 `https://` 拼接会被代理解析成非法域名返回 400，图裂）；
   关闭则永不显示。
   媒体查看器全屏页有「使用代理加载」点按重试。
+  **tag 声明的媒体按 MIME 渲染**：`["video", url, mime]` / imeta tag 声明的 URL，即使裸链
+  没有 `.mp4` 等文件扩展名（如抖音分享链 `…/playwm/?video_id=…`），也按 tag 的 MIME 渲染
+  内联播放器/九宫格（此前只当普通可点链接，需跳浏览器；对齐 Amethyst）。
 - **沉浸式浏览**（`ImmersiveScaffold` + `ImmersiveScrollDetector` + 全局 `appBarsVisibleProvider`）：
   **本地可配置项**（设置 → 沉浸式浏览，**不同步中继**），默认关。开启后向下滚动 40px 隐藏顶部 AppBar +
   底部导航栏 + 发帖 FAB（220ms 动画），向上滚或回到顶部立即恢复；切 tab 自动回显。关闭时各页
@@ -292,7 +295,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 347 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 431 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -313,6 +316,9 @@ id 与 hydration 后不同（`mention:<事件id>` vs `reply:<自己帖子id>`）
 现通知生成器先等事件库 hydration 完成再订阅/分类，id 跨启动稳定；并修两个读状态小竞态：
 hydration 完成前的「全部已读」被旧持久集覆盖、DB 未开时防抖写被静默丢弃（含 dispose 时
 flush 未决写）。
+**视频分享链接渲染内联播放器**——抖音等分享 URL 没有视频文件扩展名，此前只渲染成可点
+链接（跳浏览器）；现 `["video", url, mime]` tag 声明的 URL 在正文里直接按 MIME 渲染播放器
+（对齐 Amethyst）。
 
 **v0.8.6-beta 相对 v0.8.5-beta 的修复**：
 **引用块不再吞掉后面的正文**——正文以 `> 导语` 开头、空行后接正文的帖子（财新式链接
@@ -487,7 +493,7 @@ content 里带 NIP-18 嵌入 JSON 的转发无需解析 e-tag 直接渲染原帖
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 347 个测试
+flutter test             # 431 个测试
 flutter build linux      # 桌面构建
 ```
 
