@@ -72,6 +72,13 @@ class _ComposePageState extends ConsumerState<ComposePage>
   Timer? _draftDebounce;
   bool _loadingDraft = false;
 
+  /// Set once a publish succeeds. The draft is deleted on send success, and
+  /// without this flag the dispose-time flush (and any trailing change event)
+  /// would re-save the just-sent text as a FRESH draft — so the next time the
+  /// user opened compose they'd find their already-published post waiting in
+  /// the editor.
+  bool _justSent = false;
+
   /// Last successfully resolved local cache. Held so [_flushDraft] (called
   /// from [dispose], where `ref` is already unmounted and `ref.read` throws)
   /// can still write the final draft without touching [ref].
@@ -133,9 +140,11 @@ class _ComposePageState extends ConsumerState<ComposePage>
   @override
   void dispose() {
     // Flush any pending draft save so the last keystrokes survive a back/crash
-    // even if the debounce hadn't fired yet.
+    // even if the debounce hadn't fired yet. Skipped after a successful send —
+    // the draft was deleted there, and flushing would re-save the just-sent
+    // text as a fresh draft.
     _draftDebounce?.cancel();
-    _flushDraft();
+    if (!_justSent) _flushDraft();
     WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_onDraftChanged);
     _controller.dispose();
@@ -178,8 +187,9 @@ class _ComposePageState extends ConsumerState<ComposePage>
 
   void _onDraftChanged() {
     // Skip the save that the load itself triggers (it would just rewrite the
-    // same value, and worse, race the load on some platforms).
-    if (_loadingDraft) return;
+    // same value, and worse, race the load on some platforms). Also skip after
+    // a successful send — nothing left to persist.
+    if (_loadingDraft || _justSent) return;
     _draftDebounce?.cancel();
     // Short debounce: coalesce rapid keystrokes but keep the persisted copy
     // close to the latest text (the dispose + lifecycle flushes cover the
@@ -232,6 +242,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
   }
 
   Future<void> _saveDraft() async {
+    if (_justSent) return;
     try {
       final db = await ref.read(localCacheProvider.future);
       _cache = db;
@@ -715,7 +726,10 @@ class _ComposePageState extends ConsumerState<ComposePage>
           }
         }
         // Sent successfully → clear the editor text draft so it isn't
-        // restored next time the user opens compose.
+        // restored next time the user opens compose. _justSent also stops the
+        // dispose-time flush (and any trailing change event) from re-saving
+        // the just-sent text as a fresh draft.
+        _justSent = true;
         unawaited(_deleteDraft());
         // Drop outbox drafts saved by earlier FAILED attempts in this
         // session — the successful send (a fresh event id) supersedes them;
