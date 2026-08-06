@@ -2406,7 +2406,7 @@ class _AboutTextState extends ConsumerState<_AboutText> {
           launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
         }
       },
-      styleSheet: MarkdownStyleSheet.fromTheme(theme),
+      styleSheet: costrMarkdownStyleSheet(context),
     );
 
     if (!isLong || _expanded) {

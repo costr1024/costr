@@ -10,6 +10,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 /// The resolved color palette for one brightness. Obtain via
 /// [CostrColors.of] — never construct directly in widgets.
@@ -183,4 +184,23 @@ class AppTheme {
   static ThemeData light() => _build(CostrColors.light, Brightness.light);
 
   static ThemeData dark() => _build(CostrColors.dark, Brightness.dark);
+}
+
+/// Markdown body styling for post/about rendering.
+///
+/// The library default ([MarkdownStyleSheet.fromTheme]) paints blockquotes on
+/// `Colors.blue.shade100` — a Material blue outside the X palette, so posts
+/// quoting a headline with `> …` (e.g. 财新-style link posts) rendered as
+/// glaring blue blocks. Blockquotes are restyled on-palette here: [CostrPalette.bg2]
+/// fill + hairline left border, matching the app's quote-card look.
+MarkdownStyleSheet costrMarkdownStyleSheet(BuildContext context) {
+  final p = CostrColors.of(context);
+  return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+    blockquoteDecoration: BoxDecoration(
+      color: p.bg2,
+      border: Border(left: BorderSide(color: p.border, width: 3)),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    blockquotePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+  );
 }

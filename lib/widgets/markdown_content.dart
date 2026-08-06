@@ -190,7 +190,6 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     // 2. Tokenize into segments: text / image-group (contiguous) / single video.
     final segments = tokenizeContent(stripped);
 
-    final theme = Theme.of(context);
     final children = <Widget>[];
 
     // NIP-30 custom emoji: collect `["emoji", shortcode, url]` tags and
@@ -266,7 +265,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
                 );
               }
             },
-            styleSheet: MarkdownStyleSheet.fromTheme(theme),
+            styleSheet: costrMarkdownStyleSheet(context),
           ),
         );
       } else if (seg is ImageGroupSeg) {
