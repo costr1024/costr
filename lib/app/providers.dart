@@ -572,10 +572,24 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   bool _dirty = false;
   bool _disposed = false;
   cache.LocalCache? _cache;
+  // Resolved-until-build replaces it: notifiers whose build() skips _hydrate
+  // (test stubs) never block awaiters of [hydrated].
+  Completer<void> _hydrated = Completer<void>()..complete();
+
+  /// Resolves when the cold-start SQLite hydration has finished (or failed).
+  /// Awaiters (notification classification) must not judge events before the
+  /// own-post snapshot lands — judging against an empty store yields different
+  /// notification ids per launch ("已读通知复活" bug).
+  Future<void> get hydrated => _hydrated.future;
+
+  void _completeHydrated() {
+    if (!_hydrated.isCompleted) _hydrated.complete();
+  }
 
   @override
   List<Event> build() {
     // Hydrate from SQLite (async — fills store as data arrives).
+    _hydrated = Completer<void>();
     _hydrate();
     final pool = ref.watch(relayPoolProvider);
     _sub = pool.events.listen((e) {
@@ -642,6 +656,9 @@ class EventStoreNotifier extends Notifier<List<Event>> {
         if (next.hasValue && _cache == null) {
           _cache = next.value;
           _doHydrate();
+        } else if (next.hasError) {
+          // DB open failed — never leave awaiters of [hydrated] hanging.
+          _completeHydrated();
         }
       });
       return;
@@ -651,7 +668,10 @@ class EventStoreNotifier extends Notifier<List<Event>> {
 
   Future<void> _doHydrate() async {
     final db = _cache;
-    if (db == null) return;
+    if (db == null) {
+      _completeHydrated();
+      return;
+    }
     try {
       // Kind-1 feed (1000 newest — deep enough that a relaunch restores the
       // depth the user had scrolled to (load-more pages are persisted by
@@ -668,11 +688,16 @@ class EventStoreNotifier extends Notifier<List<Event>> {
         _store.add(_replaceableRowToEvent(row));
       }
       if (_store.length > 0) {
+        // Emit the hydrated snapshot NOW (not via the 200ms debounce): the
+        // feed shows cached content instantly, and awaiters of [hydrated]
+        // read a state that already carries the own-post snapshot.
         _dirty = true;
-        _scheduleFlush();
+        flushNow();
       }
     } catch (_) {
       // Hydration failure — continue with empty store, relays will fill it.
+    } finally {
+      _completeHydrated();
     }
   }
 

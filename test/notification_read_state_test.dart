@@ -121,6 +121,81 @@ void main() {
       expect(read.contains('item:0'), isFalse);
       expect(read.contains('item:1599'), isTrue);
     });
+
+    test('markRead before hydration completes survives hydration (union)',
+        () async {
+      // Cold start: the user taps 全部已读 while SQLite still opens. Hydration
+      // must UNION the persisted set with the fresh in-memory marks —
+      // replacing the set would clobber them and resurrect unread dots.
+      final stub = _StubCache()
+        .._cfg['read_notifications'] = jsonEncode(['old:x']);
+      final container = ProviderContainer(
+        overrides: [
+          relayPoolProvider.overrideWith((ref) => RelayPool(const [])),
+          localCacheProvider.overrideWith((ref) async => stub),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      // Mark read synchronously — before the async _hydrate reads the config.
+      container.read(notificationReadProvider.notifier).markRead(['new:y']);
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final read = container.read(notificationReadProvider);
+      expect(
+        read.contains('new:y'),
+        isTrue,
+        reason: 'fresh mark made before hydration must survive it',
+      );
+      expect(
+        read.contains('old:x'),
+        isTrue,
+        reason: 'persisted set must still hydrate',
+      );
+    });
+
+    test('markRead while the DB is STILL opening persists (no dropped write)',
+        () async {
+      // The debounced write fires at 500ms but the DB only opens at 600ms —
+      // the old `.value == null` path silently dropped the write.
+      final stub = _StubCache();
+      final container = ProviderContainer(
+        overrides: [
+          relayPoolProvider.overrideWith((ref) => RelayPool(const [])),
+          localCacheProvider.overrideWith((ref) async {
+            await Future<void>.delayed(const Duration(milliseconds: 600));
+            return stub;
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(notificationReadProvider.notifier).markRead(['a1']);
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      final raw = stub._cfg['read_notifications'];
+      expect(raw, isNotNull, reason: 'write must await the DB open');
+      expect((jsonDecode(raw!) as List).cast<String>(), contains('a1'));
+    });
+
+    test('pending debounced write flushes on dispose', () async {
+      final stub = _StubCache();
+      final container = ProviderContainer(
+        overrides: [
+          relayPoolProvider.overrideWith((ref) => RelayPool(const [])),
+          localCacheProvider.overrideWith((ref) async => stub),
+        ],
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      container.read(notificationReadProvider.notifier).markRead(['z9']);
+      // Dispose INSIDE the 500ms debounce window — the pending write must
+      // flush instead of being cancelled (kill-the-app-after-全部已读).
+      container.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      final raw = stub._cfg['read_notifications'];
+      expect(raw, isNotNull);
+      expect((jsonDecode(raw!) as List).cast<String>(), contains('z9'));
+    });
   });
 
   group('unreadNotificationCountProvider', () {

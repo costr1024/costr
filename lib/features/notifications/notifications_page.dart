@@ -87,6 +87,16 @@ final notificationsProvider =
       myPubkey,
     ) async* {
       final pool = ref.watch(relayPoolProvider);
+      // Wait for the event store's cold-start hydration before snapshotting
+      // own posts + registering the listener. Reply/mention classification
+      // gates e-tags against myEventIds: judging an event BEFORE hydration
+      // lands yields a different item id than after (mention:<eventId> vs
+      // reply:<myPostId>) — the persisted read-set then misses on the next
+      // launch and already-read notifications resurface as unread ("已读通知
+      // 复活" bug). Hydration is a local SQLite read; the REQs issued below
+      // re-fetch anything the relays pushed while we waited.
+      await ref.read(eventStoreProvider.notifier).hydrated;
+      if (!ref.mounted) return;
       final items = <NotificationItem>[];
       final myEventIds = <String>{};
       // Mute set (read once + reactively updated WITHOUT restarting the
@@ -572,19 +582,53 @@ final notificationReadProvider =
 
 class NotificationReadNotifier extends Notifier<Set<String>> {
   Timer? _save;
+  bool _dirty = false;
+  cache.LocalCache? _db;
+
+  /// Cached at build: onDispose may not read [ref] (Riverpod lifecycle
+  /// assertion), so the dispose-flush awaits the DB open via this future.
+  late Future<cache.LocalCache> _dbFuture;
+
+  /// Mirror of [state] as a list, kept in sync on every mutation. onDispose
+  /// may not read [state] or [ref] (Riverpod lifecycle assertion), so the
+  /// dispose-flush writes this snapshot instead.
+  List<String> _snapshot = const [];
 
   @override
   Set<String> build() {
-    final db = ref.read(localCacheProvider).value;
-    if (db == null) {
+    _db = ref.read(localCacheProvider).value;
+    _dbFuture = ref.read(localCacheProvider.future);
+    if (_db == null) {
       // Cache not ready yet (cold start) — hydrate once it resolves.
       ref.listen(localCacheProvider, (_, next) {
-        if (next.hasValue && next.value != null) _hydrate(next.value!);
+        if (next.hasValue && next.value != null) {
+          _db = next.value;
+          _hydrate(next.value!);
+        }
       });
     } else {
-      _hydrate(db);
+      _hydrate(_db!);
     }
-    ref.onDispose(() => _save?.cancel());
+    ref.onDispose(() {
+      _save?.cancel();
+      // Flush a pending debounced write instead of dropping it — killing the
+      // app right after 全部已读 must not lose the marks. No state/ref access
+      // here (Riverpod forbids both inside life-cycles); the DB-write future
+      // was cached at build.
+      if (_dirty) {
+        _dirty = false;
+        final encoded = jsonEncode(_snapshot);
+        final db = _db;
+        if (db != null) {
+          db.writeConfig(_readKey, encoded);
+        } else {
+          _dbFuture.then(
+            (d) => d.writeConfig(_readKey, encoded),
+            onError: (_) {},
+          );
+        }
+      }
+    });
     return <String>{};
   }
 
@@ -593,7 +637,13 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
       final raw = await db.readConfig(_readKey);
       if (raw != null && raw.isNotEmpty) {
         final list = (jsonDecode(raw) as List).cast<String>();
-        state = LinkedHashSet<String>.from(list);
+        // UNION with the in-memory set: markRead may have run BEFORE hydration
+        // completed (cold-start tap on 全部已读 while SQLite still opens) —
+        // replacing the set would clobber those fresh marks and resurrect
+        // unread dots for items the user just cleared.
+        final merged = LinkedHashSet<String>.from(list)..addAll(state);
+        _snapshot = merged.toList();
+        state = merged;
       }
     } catch (_) {
       // Corrupt JSON — start fresh (next markRead rewrites a clean array).
@@ -610,14 +660,38 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
     }
     // Only dirty + schedule a write if the set actually grew.
     if (next.length == state.length && state.containsAll(next)) return;
+    _snapshot = next.toList();
     state = next;
+    _dirty = true;
     _save?.cancel();
     _save = Timer(const Duration(milliseconds: 500), () {
       _save = null;
-      final db = ref.read(localCacheProvider).value;
-      if (db == null) return;
-      db.writeConfig(_readKey, jsonEncode(next.toList()));
+      _persist();
     });
+  }
+
+  /// Write the current set to SQLite. Awaits the DB OPEN (`.future`, not
+  /// `.value`) so a cold-start markRead fired before the cache is ready still
+  /// lands instead of being silently dropped.
+  void _persist() {
+    _dirty = false;
+    final encoded = jsonEncode(state.toList());
+    final db = _db;
+    if (db != null) {
+      db.writeConfig(_readKey, encoded);
+      return;
+    }
+    try {
+      ref.read(localCacheProvider.future).then(
+        (d) {
+          _db ??= d;
+          return d.writeConfig(_readKey, encoded);
+        },
+        onError: (_) {},
+      );
+    } catch (_) {
+      // Container already gone — nothing to persist to.
+    }
   }
 
   bool isUnread(String id) => !state.contains(id);
