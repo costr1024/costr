@@ -136,6 +136,14 @@ lib/
   之外**并发**拉取**被回帖作者 outbox read 中继**的 `#e` 回帖，回帖按 **时间线 + 层级**
   （`threadReplies`：父子树深度优先、同层最旧在前、按深度缩进）展示而非扁平 createdAt 倒序。
   回帖流收尾恒吐一次快照（即便空），避免零回复时 `StreamProvider` 卡在 `AsyncLoading` 转圈圈。
+  **按 id 查找抗抖动**：`eventByIdProvider` 的默认池广播放在按 id 共享的在途 Future 里（不绑定
+  单个 provider 生命周期）——页面重建引起的 provider dispose/重建不再掐断监听、丢弃中继迟到
+  的应答，重建后的查找直接并入同一在途请求（也不重复发 REQ）；中继对订阅回 `CLOSED`（如
+  relay.ditto.pub 单连接订阅超限时回 "rate-limited: too many subscriptions"）时按「该中继已
+  应答」合成 EOSE，全 miss 快速收敛不再被它拖满超时。**上级链加载不全可重试**：链顶帖本身仍
+  是回帖（父帖没取到——父帖所在中继当时掉线/限流，或原帖已删）时，线程顶部显示「上面的对话
+  没加载出来」+ 重试按钮，点击清掉缓存的 miss 并重跑上溯；此前一次性查找把 miss 缓存到底，
+  中继恢复后整个会话也看不到父帖（只活在单台桥接 relay 上的长毛象桥线程尤其容易中招）。
   **发送回复后立即可见**：回帖流是一次性加载（EOSE 即关），用户打完字时流早已关闭、且发布本地
   回显走 `events` 流而非回帖流监听的 `rawEvents`，旧实现回复后必须退出重进主贴才能看到；现在
   发送成功后先 awaited 落库（`cacheThreadEvent`）再 `invalidate` 父帖 `repliesProvider`，

@@ -198,6 +198,20 @@ class RelayClient implements RelayConnection {
       } else if (type == 'CLOSED' && msg[1] is String) {
         final reason = (msg.length >= 3 ? msg[2] : null)?.toString() ?? '';
         _closed.add((msg[1] as String, reason));
+        // A relay-CLOSED subscription will never deliver: for every
+        // "wait until all relays have answered" consumer (eventByIdProvider's
+        // all-miss fast-exit, the pool's closeOnEose counter) a CLOSED is the
+        // relay's terminal frame just like an EOSE-with-nothing. Without this
+        // synthesis one rate-limited relay — relay.ditto.pub answers
+        // "rate-limited: too many subscriptions" past ~20 open subs, flapping
+        // relays close subs on disconnect — kept id-lookups for events that
+        // live ONLY there waiting out the full timeout and resolving null, so
+        // thread parents on such relays never loaded. RTT-probe subs are
+        // excluded: measureRtt handles CLOSED itself (search-filter retry).
+        final subId = msg[1] as String;
+        if (!subId.startsWith('rtt') && !_eose.isClosed) {
+          _eose.add(subId);
+        }
       } else if (type == 'OK' && msg[1] is String) {
         final ok = msg[2] is bool ? msg[2] as bool : msg[2] == true;
         final reason = (msg.length >= 4 ? msg[3] : null)?.toString();

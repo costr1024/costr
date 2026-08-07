@@ -1904,45 +1904,23 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
     if (e.id == id) return e;
   }
   // 3. Relay REQ broadcast to the main pool. Capped at 8s; resolves early
-  //    (null) once EVERY relay has answered EOSE with nothing, so a fast
-  //    all-miss doesn't make the detail page sit out the full timeout.
+  //    (null) once EVERY relay has answered EOSE/CLOSED with nothing, so a
+  //    fast all-miss doesn't make the detail page sit out the full timeout.
+  //    The broadcast runs in a per-id SHARED in-flight future (not tied to
+  //    this provider's lifetime): page rebuilds dispose + recreate this
+  //    provider mid-lookup (router-redirect refreshes at startup, back/forward
+  //    churn), and tearing down the rawEvents listener + relay REQ on dispose
+  //    dropped responses the relay delivered seconds later — the recreated
+  //    lookup started over and could miss again, leaving e.g. a thread parent
+  //    unloaded even though the relay HAD it. With a shared future a
+  //    recreated provider joins the in-flight lookup instead of restarting.
   final pool = ref.watch(relayPoolProvider);
-  final completer = Completer<Event?>();
-  final relayCount = pool.states.length;
-  var eoses = 0;
-  final sub = pool.rawEvents.listen((e) {
-    if (e.id == id && !completer.isCompleted) completer.complete(e);
-  });
-  final subId = nextSubId('note');
-  final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    eoses++;
-    if (relayCount > 0 && eoses >= relayCount && !completer.isCompleted) {
-      completer.complete(null);
-    }
-  });
-  pool.request(subId, <String, dynamic>{
-    'ids': [id],
-  }, closeOnEose: true);
-  ref.onDispose(() {
-    sub.cancel();
-    eoseSub.cancel();
-    pool.closeSubscription(subId);
-  });
-  Event? hit;
-  try {
-    hit = await completer.future.timeout(
-      const Duration(seconds: 8),
-      onTimeout: () => null,
-    );
-  } finally {
-    // Free the listeners + relay sub as soon as the lookup settles — the
-    // FutureProvider itself stays cached, and a per-opened-post rawEvents
-    // listener left attached would accumulate over a session.
-    await sub.cancel();
-    await eoseSub.cancel();
-    pool.closeSubscription(subId);
-  }
+  final hit = await _broadcastNoteLookup(pool, id);
   if (hit != null) return hit;
+  // The shared lookup can outlive this provider instance (page churn): if it
+  // was disposed while the broadcast was in flight, stop here — the ref is
+  // dead and nobody is listening for the outbox tier anyway.
+  if (!ref.mounted) return null;
   // 4. NIP-65 outbox fallback: ask the user's OWN write relays. Reaction/
   //    reply/repost notifications always target the user's own posts, and
   //    those can outlive the connected relay set (relay list edited after
@@ -1972,6 +1950,64 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
   }
   return null;
 });
+
+/// In-flight pool-broadcast note lookups, keyed by pool+id. Concurrent
+/// lookups for the same id (a thread's ancestor BFS + its quote/repost cards
+/// + the detail page all resolve the same parent) share ONE relay REQ, and —
+/// crucially — the lookup survives its originating provider being disposed
+/// (see [eventByIdProvider] tier 3): the listener + REQ stay alive until the
+/// lookup settles, so a late relay response still completes the shared future
+/// for whoever re-asks. Entries are removed the moment the future settles —
+/// this dedupes IN-FLIGHT work only; it never caches results (a miss must
+/// stay retryable).
+final Map<String, Future<Event?>> _noteLookupsInFlight =
+    <String, Future<Event?>>{};
+
+Future<Event?> _broadcastNoteLookup(RelayPool pool, String id) {
+  final key = '${identityHashCode(pool)}\x1f$id';
+  final existing = _noteLookupsInFlight[key];
+  if (existing != null) return existing;
+  final fut = _runBroadcastNoteLookup(pool, id);
+  _noteLookupsInFlight[key] = fut;
+  unawaited(fut.whenComplete(() => _noteLookupsInFlight.remove(key)));
+  return fut;
+}
+
+Future<Event?> _runBroadcastNoteLookup(RelayPool pool, String id) async {
+  final completer = Completer<Event?>();
+  final relayCount = pool.states.length;
+  var eoses = 0;
+  final sub = pool.rawEvents.listen((e) {
+    if (e.id == id && !completer.isCompleted) completer.complete(e);
+  });
+  final subId = nextSubId('note');
+  // EOSE AND relay-CLOSED frames both count as "this relay has answered":
+  // RelayClient emits a synthesized EOSE when a relay CLOSEDs the sub (e.g.
+  // "rate-limited: too many subscriptions"), so a relay that rejects the REQ
+  // can't hold the all-miss fast-exit hostage until the timeout.
+  final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    eoses++;
+    if (relayCount > 0 && eoses >= relayCount && !completer.isCompleted) {
+      completer.complete(null);
+    }
+  });
+  pool.request(subId, <String, dynamic>{
+    'ids': [id],
+  }, closeOnEose: true);
+  try {
+    return await completer.future.timeout(
+      const Duration(seconds: 8),
+      onTimeout: () => null,
+    );
+  } finally {
+    // Free the listeners + relay sub as soon as the lookup settles — the
+    // shared future may outlive any particular provider watching it, so the
+    // cleanup lives HERE, not in a provider onDispose.
+    await sub.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+  }
+}
 
 /// Quote-card resolution for NIP-27 references: [eventByIdProvider]'s 3-tier
 /// lookup first, then — on miss — a one-shot fetch on the relay hints carried

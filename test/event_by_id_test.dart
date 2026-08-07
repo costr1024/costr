@@ -211,5 +211,34 @@ void main() {
       // Fast-exit: well under the 8s timeout once all relays EOSE.
       expect(sw.elapsed, lessThan(const Duration(seconds: 3)));
     });
+
+    test('provider churn mid-lookup joins the in-flight broadcast (one REQ)',
+        () async {
+      await setUpPool([_FakeRelay('wss://a'), _FakeRelay('wss://b')]);
+      final stale = container.read(eventByIdProvider('churned').future);
+      // The churned-away instance's future may either resolve (shared future)
+      // or error (disposed) — neither should fail the test.
+      unawaited(stale.catchError((Object _) => null));
+      final subId = await awaitReq();
+      // Simulate page-rebuild churn: the provider instance is disposed while
+      // the relay hasn't answered yet, then a fresh instance starts.
+      container.invalidate(eventByIdProvider('churned'));
+      final fresh = container.read(eventByIdProvider('churned').future);
+      // The relay answers AFTER the churn — the shared in-flight lookup must
+      // still deliver it (its listener survives the old provider's dispose).
+      relays.first.emit(_event('churned'));
+      final e = await fresh;
+      expect(e?.id, 'churned');
+      // No second broadcast REQ: the recreated provider joined the in-flight
+      // lookup instead of restarting from scratch (which would drop the late
+      // answer and could miss again — the lost thread-parent failure mode).
+      final reqs = relays.first.sent.where((m) => m[0] == 'REQ').length;
+      expect(reqs, 1);
+      // Cleanup still happens once the shared lookup settles.
+      expect(
+        relays.first.sent.where((m) => m[0] == 'CLOSE' && m[1] == subId),
+        isNotEmpty,
+      );
+    });
   });
 }

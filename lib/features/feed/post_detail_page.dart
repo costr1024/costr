@@ -11,6 +11,14 @@
 /// exact post they tapped, not the thread root ("回帖通知没定位到那条回帖"
 /// bug). Re-positions when the chain grows (ancestors resolve async and are
 /// prepended, shifting the focused card down).
+///
+/// When the chain resolves TRUNCATED (the topmost post is itself a reply but
+/// its parent couldn't be fetched — the parent lives only on a relay that
+/// was down / rate-limiting / slow at lookup time, or the parent was
+/// deleted), a retry row is shown above the chain: the one-shot lookups
+/// cache their miss for the session, so without an explicit retry the parent
+/// would stay missing even after the relay recovers ("桥接 relay 上的帖子
+/// 看不到父帖" bug).
 library;
 
 import 'dart:async';
@@ -130,6 +138,15 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
+                    // Truncated chain: the topmost post is itself a reply, so
+                    // there SHOULD be more above it — its parent couldn't be
+                    // fetched (parent lives only on a relay that was down /
+                    // rate-limited / slow at lookup time, or was deleted).
+                    // Offer an explicit retry: the one-shot lookups cache
+                    // their miss, so without it the parent stays missing for
+                    // the whole session even after the relay recovers.
+                    if (chain.isNotEmpty && chain.first.isReply)
+                      _AncestorsRetryRow(top: chain.first, focusedId: widget.id),
                     for (final e in ancestors) EventCard(event: e),
                     if (ancestors.isNotEmpty) ...[
                       const SizedBox(height: 4),
@@ -165,6 +182,48 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+/// Retry row shown above a TRUNCATED ancestor chain (the topmost post is
+/// itself a reply whose parent didn't resolve). Tapping retry clears the
+/// cached lookup misses for the referenced ancestor ids and re-runs the
+/// chain walk — recovering the parent once its relay is reachable again.
+class _AncestorsRetryRow extends ConsumerWidget {
+  const _AncestorsRetryRow({required this.top, required this.focusedId});
+  final Event top;
+  final String focusedId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '上面的对话没加载出来（原帖可能删了，或中继刚才没回应）',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: CostrColors.of(context).text3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton.tonal(
+            onPressed: () {
+              for (final t in top.tags) {
+                if (t.length >= 2 && t[0] == 'e' && t[1] is String) {
+                  ref.invalidate(eventByIdProvider(t[1] as String));
+                }
+              }
+              ref.invalidate(threadAncestorsProvider(focusedId));
+            },
+            child: const Text('重试'),
+          ),
+        ],
       ),
     );
   }
