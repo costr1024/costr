@@ -190,11 +190,47 @@ class _ComposePageState extends ConsumerState<ComposePage>
     // same value, and worse, race the load on some platforms). Also skip after
     // a successful send — nothing left to persist.
     if (_loadingDraft || _justSent) return;
+    _syncAttachmentsToText();
     _draftDebounce?.cancel();
     // Short debounce: coalesce rapid keystrokes but keep the persisted copy
     // close to the latest text (the dispose + lifecycle flushes cover the
     // exit cases).
     _draftDebounce = Timer(const Duration(milliseconds: 300), _saveDraft);
+  }
+
+  /// Text → thumbnails: an uploaded attachment's URL was appended into the
+  /// editor on upload ([_appendToEditor]), so when the user deletes that URL
+  /// from the text the thumbnail must go with it ("删了编辑框里的图片 URL
+  /// 下面缩略图还在，要手工点 ×"). Reverse direction lives in [_removeAttachment].
+  /// No text mutation here, so this can't recurse into itself.
+  void _syncAttachmentsToText() {
+    final text = _controller.text;
+    if (_attachments.every((a) => text.contains(a.url))) return;
+    setState(() {
+      _attachments.removeWhere((a) => !text.contains(a.url));
+    });
+  }
+
+  /// Thumbnails → text: removing a thumbnail also strips its URL from the
+  /// editor ("删了预览图编辑框里的 URL 还在"). The URL normally sits on its own
+  /// line (as appended on upload) — drop the whole line so no blank line is
+  /// left behind; if the user typed around it, only strip the URL substring.
+  void _removeAttachment(_Attachment a) {
+    setState(() {
+      _attachments.remove(a);
+      final text = _controller.text;
+      if (!text.contains(a.url)) return;
+      final lines = text.split('\n');
+      final urlEmbedded =
+          lines.any((l) => l.contains(a.url) && l.trim() != a.url);
+      final next = urlEmbedded
+          ? text.replaceAll(a.url, '')
+          : lines.where((l) => !l.contains(a.url)).join('\n');
+      _controller.text = next;
+      _controller.selection = TextSelection.fromPosition(
+        TextPosition(offset: next.length),
+      );
+    });
   }
 
   /// Serialize the current editor text + uploaded attachments as a JSON blob.
@@ -830,7 +866,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
             if (_attachments.isNotEmpty)
               _AttachmentGrid(
                 attachments: _attachments,
-                onRemove: (a) => setState(() => _attachments.remove(a)),
+                onRemove: _removeAttachment,
               ),
             if (_uploading) const LinearProgressIndicator(),
             const SizedBox(height: 8),
