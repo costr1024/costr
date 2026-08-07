@@ -11,6 +11,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/media_download.dart';
 import 'proxied_network_image.dart';
@@ -70,6 +71,13 @@ class _MediaViewerPageState extends State<_MediaViewerPage> {
   late int _index = widget.initialIndex;
   bool _controlsVisible = true;
   bool _saving = false;
+  // Snackbars go through a viewer-OWNED ScaffoldMessenger: the viewer is
+  // pushed over a page that has its own Scaffold, so the app-level messenger
+  // would render the snack in BOTH (doubled in widget tests, ghosted behind
+  // the viewer in-app). Keyed state (not ScaffoldMessenger.of(context))
+  // because this State sits ABOVE its own ScaffoldMessenger in the tree.
+  final GlobalKey<ScaffoldMessengerState> _messengerKey =
+      GlobalKey<ScaffoldMessengerState>();
 
   void _close() => Navigator.of(context).maybePop();
 
@@ -77,11 +85,21 @@ class _MediaViewerPageState extends State<_MediaViewerPage> {
     setState(() => _controlsVisible = !_controlsVisible);
   }
 
+  /// Copy the CURRENT image's origin URL (not the proxy mirror — the origin
+  /// is the canonical, shareable address). For sharing the URL where saving
+  /// the file isn't wanted/possible.
+  Future<void> _copyCurrentUrl() async {
+    await Clipboard.setData(ClipboardData(text: widget.images[_index]));
+    if (!mounted) return;
+    _messengerKey.currentState?.showSnackBar(
+      const SnackBar(content: Text('已复制图片链接'), duration: Duration(seconds: 2)),
+    );
+  }
+
   Future<void> _saveCurrent() async {
     if (_saving) return;
     setState(() => _saving = true);
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
+    _messengerKey.currentState?.showSnackBar(
       const SnackBar(content: Text('保存中…'), duration: Duration(seconds: 4)),
     );
     final msg = await MediaDownload.save(
@@ -90,8 +108,8 @@ class _MediaViewerPageState extends State<_MediaViewerPage> {
     );
     if (!mounted) return;
     setState(() => _saving = false);
-    messenger
-      ..clearSnackBars()
+    _messengerKey.currentState
+      ?..clearSnackBars()
       ..showSnackBar(
         SnackBar(
           duration: const Duration(seconds: 3),
@@ -108,69 +126,77 @@ class _MediaViewerPageState extends State<_MediaViewerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // Gallery (PageView) even for a single image — one code path.
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _toggleControls,
-            child: PageView.builder(
-              controller: _pageController,
-              itemCount: widget.images.length,
-              onPageChanged: (int i) => setState(() => _index = i),
-              itemBuilder: (BuildContext _, int i) => _ZoomableImage(
-                url: widget.images[i],
-                onTap: _toggleControls,
-                initialForceProxy: widget.initialForceProxy,
+    return ScaffoldMessenger(
+      key: _messengerKey,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            // Gallery (PageView) even for a single image — one code path.
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleControls,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: widget.images.length,
+                onPageChanged: (int i) => setState(() => _index = i),
+                itemBuilder: (BuildContext _, int i) => _ZoomableImage(
+                  url: widget.images[i],
+                  onTap: _toggleControls,
+                  initialForceProxy: widget.initialForceProxy,
+                ),
               ),
             ),
-          ),
-          // Top bar: close + counter. Fades with the controls.
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: AnimatedOpacity(
-              opacity: _controlsVisible ? 1 : 0,
-              duration: const Duration(milliseconds: 150),
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  child: Row(
-                    children: [
-                      _CircleButton(icon: Icons.close_rounded, onTap: _close),
-                      const Spacer(),
-                      if (widget.images.length > 1)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: Text(
-                            '${_index + 1} / ${widget.images.length}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              decoration: TextDecoration.none,
-                              fontWeight: FontWeight.w500,
+            // Top bar: close + counter. Fades with the controls.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                opacity: _controlsVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 150),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Row(
+                      children: [
+                        _CircleButton(icon: Icons.close_rounded, onTap: _close),
+                        const Spacer(),
+                        if (widget.images.length > 1)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Text(
+                              '${_index + 1} / ${widget.images.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                decoration: TextDecoration.none,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ),
+                        _CircleButton(
+                          icon: Icons.link_rounded,
+                          onTap: _copyCurrentUrl,
                         ),
-                      _CircleButton(
-                        icon: _saving
-                            ? Icons.downloading_outlined
-                            : Icons.download_rounded,
-                        onTap: _saving ? null : _saveCurrent,
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        _CircleButton(
+                          icon: _saving
+                              ? Icons.downloading_outlined
+                              : Icons.download_rounded,
+                          onTap: _saving ? null : _saveCurrent,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
