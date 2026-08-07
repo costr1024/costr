@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/login_page.dart';
 import '../features/compose/compose_page.dart';
 import '../features/feed/feed_page.dart';
+import '../features/feed/interactions_page.dart';
 import '../features/feed/post_detail_page.dart';
 import '../features/notifications/notification_settings_page.dart';
 import '../features/notifications/notifications_page.dart';
@@ -80,6 +81,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/n/:id',
         builder: (BuildContext context, GoRouterState state) =>
             PostDetailPage(id: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/interactions/:id',
+        builder: (BuildContext context, GoRouterState state) =>
+            InteractionsPage(id: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/profile/edit',

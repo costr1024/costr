@@ -53,6 +53,13 @@ class PostActions extends ConsumerWidget {
     final fg = theme.colorScheme.onSurfaceVariant;
     final myReaction = ref.watch(myReactionProvider(event.id));
     final counts = ref.watch(postCountsProvider(event.id));
+    final reactionTotal = ref
+        .watch(reactionsProvider(event.id))
+        .values
+        .fold(0, (int s, t) => s + t.count);
+    // 「谁点赞/转发了」入口：仅在有互动时出现的下箭头指示图标（无文字），
+    // 与回复等动作同排、头像下方对齐。
+    final hasInteractions = counts.reposts + reactionTotal > 0;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -85,6 +92,12 @@ class PostActions extends ConsumerWidget {
           onTap: () => _bookmark(context, ref),
         ),
         _Action(icon: Icons.ios_share, color: fg, onTap: () => _share(context)),
+        if (hasInteractions)
+          _Action(
+            icon: Icons.expand_more_rounded,
+            color: fg,
+            onTap: () => context.push('/interactions/${event.id}'),
+          ),
       ],
     );
   }

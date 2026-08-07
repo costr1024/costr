@@ -3267,6 +3267,62 @@ final reactionsProvider =
       return tallies;
     });
 
+/// Raw kind-7 reactions + kind-6/16 reposts referencing [eventId],
+/// newest-first — the "who liked / reposted this" list (tallies alone only
+/// show counts; users want the actual people + their reaction/quote).
+/// In-memory snapshot first (instant, covers what the feed already saw),
+/// then a one-shot pool REQ {kinds:[6,16,7], "#e":[id]} resolving on the
+/// first relay EOSE (or 8s) like [repliesProvider] — a slow relay must not
+/// stall the list.
+final interactorsProvider = FutureProvider.family<List<Event>, String>((
+  ref,
+  eventId,
+) async {
+  bool matches(Event e) {
+    if (e.kind != 7 && !e.isRepost) return false;
+    for (final t in e.tags) {
+      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) return true;
+    }
+    return false;
+  }
+
+  final merged = <String, Event>{
+    for (final e in ref.read(eventStoreProvider))
+      if (matches(e)) e.id: e,
+  };
+  final pool = ref.watch(relayPoolProvider);
+  final completer = Completer<void>();
+  final sub = pool.rawEvents.listen((e) {
+    if (matches(e)) merged[e.id] = e;
+  });
+  final subId = nextSubId('interactors');
+  final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    if (!completer.isCompleted) completer.complete();
+  });
+  pool.request(subId, <String, dynamic>{
+    'kinds': [Event.kindRepost, Event.kindGenericRepost, 7],
+    '#e': [eventId],
+  }, closeOnEose: true);
+  ref.onDispose(() {
+    sub.cancel();
+    eoseSub.cancel();
+    pool.closeSubscription(subId);
+  });
+  try {
+    await completer.future.timeout(
+      const Duration(seconds: 8),
+      onTimeout: () {},
+    );
+  } finally {
+    await sub.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+  }
+  final list = merged.values.toList()
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return list;
+});
+
 /// The current user's own kind-7 reaction to [eventId], if present in the
 /// in-memory store (their just-published reaction is echoed locally by
 /// [RelayPool.publish] and stored). Used to highlight the reaction icon + let
