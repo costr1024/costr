@@ -72,8 +72,17 @@ void main() {
     );
     await tester.tap(find.byIcon(Icons.favorite_border));
     await tester.pumpAndSettle();
-    expect(find.text(':pepe:'), findsWidgets,
+    // The chip's label IS the emoji image (mirrors the unicode section where
+    // the glyph is the label); the shortcode survives as the chip tooltip.
+    // Before the fix the chip rendered avatar image AND a `:code:` Text label
+    // side by side — 「自定义表情同时显示 :xxx:」bug — so the old code shows
+    // an unconditional `:pepe:` Text here and no tooltip. In the test env the
+    // image sits in its placeholder state, so the new chip shows NO text at
+    // all (on-device a dead image falls back to the :code: text instead).
+    expect(find.byTooltip(':pepe:'), findsOneWidget,
         reason: 'the post\'s own custom emoji must be offered');
+    expect(find.text(':pepe:'), findsNothing,
+        reason: 'no :code: text rendered next to the emoji image');
   });
 
   testWidgets('picking a unicode emoji publishes a kind-7', (tester) async {

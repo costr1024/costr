@@ -184,7 +184,14 @@ class PostActions extends ConsumerWidget {
                     children: [
                       for (final e in custom.entries)
                         ActionChip(
-                          avatar: CostrNetworkImage(
+                          // The image IS the chip content (mirrors the unicode
+                          // section where the glyph is the label). Rendering
+                          // avatar image AND a `:code:` label side by side
+                          // showed both — 「自定义表情同时显示 :xxx:」bug.
+                          // The shortcode survives as tooltip (discoverable)
+                          // and as the error fallback when the image dies.
+                          tooltip: ':${e.key}:',
+                          label: CostrNetworkImage(
                             url: e.value,
                             width: 22,
                             height: 22,
@@ -194,7 +201,6 @@ class PostActions extends ConsumerWidget {
                               style: const TextStyle(fontSize: 11),
                             ),
                           ),
-                          label: Text(':${e.key}:'),
                           onPressed: () =>
                               Navigator.pop(ctx, (emoji: e.key, url: e.value)),
                         ),
