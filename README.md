@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.8.7-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.8.7-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.8.8-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.8.8-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta）。
 
 ---
 
@@ -316,6 +316,23 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 **v0.6-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v0.8.8-beta 相对 v0.8.7-beta 的修复/新增**：
+**桥接 relay 独苗线程的父帖不再永久缺失**——长毛象桥（Mostr）帖子整条线程只活在
+relay.ditto.pub 一台中继上时，此前 provider 生命周期抖动会丢弃中继迟到的应答、中继
+CLOSED 限流（"too many subscriptions"）被当哑巴拖满超时、且 miss 被缓存到底没有重试
+入口，父帖一次没取到就整个会话看不到。现按 id 查找放进共享在途 Future（重建即并入、
+不重复发 REQ）、CLOSED 按已应答合成 EOSE、线程截断时顶部显示「上面的对话没加载出来」
++ 重试按钮（清缓存重跑上溯）。
+**表情选择面板自定义表情不再图文并排**——chip 的 label 即表情图片本身，`:code:` 只作
+tooltip 与加载失败兜底（此前头像图片 + `:verified:` 文字并排）。
+**大图查看器加「复制图片链接」**——顶栏链条图标复制当前图原始 URL，不便保存时直接
+分享链接；snackbar 收进查看器自有 messenger（不再两个 Scaffold 各渲染一次）。
+**发帖编辑器附件与正文双向同步**——正文删掉图片 URL 缩略图随之移除；点缩略图 × 正文
+对应 URL 一并清除（此前两头互不联动）。
+**「谁点赞/转发了」列表**——有点赞/转发时动作行出现下箭头指示图标（无文字），点进
+列表看每个互动用户的头像+昵称+对应事件（reaction 表情/图片、转发、引用文字），点行
+跳其主页（此前只有聚合计数）。
 
 **v0.8.7-beta 相对 v0.8.6-beta 的修复**：
 **已读通知不再「复活」**——通知已读状态本就持久化在 SQLite，但冷启动时「relay 应答」与
