@@ -25,6 +25,7 @@ import '../features/settings/settings_page.dart';
 import '../features/search/search_page.dart';
 import '../models/event.dart';
 import '../widgets/costr_logo.dart';
+import '../widgets/double_tap_shortcut.dart';
 import '../widgets/onboarding_overlay.dart';
 import 'providers.dart';
 import 'theme.dart';
@@ -289,52 +290,70 @@ class _AppShellState extends ConsumerState<AppShell> {
             curve: Curves.easeOut,
             height: hideBars ? 0 : _navBarHeight,
             child: ClipRect(
-              child: NavigationBar(
-                selectedIndex: shell.currentIndex,
-                onDestinationSelected: (int index) {
-                  // Switching tabs restores the chrome so the new page isn't
-                  // stuck with the previous page's hidden state.
+              // Double-tap the 通知 (bell) destination → jump the notification
+              // list to the topmost unread item. DoubleTapShortcut uses a raw
+              // Listener, so single taps still reach NavigationBar exactly as
+              // before (the shortcut fires on the SECOND tap-down). The bar
+              // spans the full shell width with 4 equal destinations, so the
+              // hit destination = x / (width/4). kDoubleTapSlop is 100px —
+              // the two taps may straddle destinations; the SECOND tap's
+              // position decides (the first tap's up already ran its own
+              // onDestinationSelected).
+              child: DoubleTapShortcut(
+                onDoubleTapAt: (pos) {
+                  final idx = (pos.dx * 4 / size.width).floor().clamp(0, 3);
+                  if (idx != 2) return;
                   ref.read(appBarsVisibleProvider.notifier).setVisible(true);
-                  shell.goBranch(
-                    index,
-                    initialLocation: index == shell.currentIndex,
-                  );
+                  if (shell.currentIndex != 2) shell.goBranch(2);
+                  ref.read(notificationJumpProvider.notifier).request();
                 },
-                destinations: <NavigationDestination>[
-                  const NavigationDestination(
-                    icon: Icon(Icons.home_outlined),
-                    selectedIcon: Icon(Icons.home),
-                    label: '首页',
-                  ),
-                  const NavigationDestination(
-                    icon: Icon(Icons.search),
-                    selectedIcon: Icon(Icons.search),
-                    label: '搜索',
-                  ),
-                  NavigationDestination(
-                    // Red count badge when there are unread notifications; a plain
-                    // icon when 0 (no clutter — DESIGN §2 "简约 / 不打扰").
-                    icon: unread > 0
-                        ? Badge(
-                            label: Text(unread > 99 ? '99+' : '$unread'),
-                            child: const Icon(Icons.notifications_outlined),
-                          )
-                        : const Icon(Icons.notifications_outlined),
-                    selectedIcon: unread > 0
-                        ? Badge(
-                            label: Text(unread > 99 ? '99+' : '$unread'),
-                            child: const Icon(Icons.notifications),
-                          )
-                        : const Icon(Icons.notifications),
-                    label: '通知',
-                  ),
-                  const NavigationDestination(
-                    icon: Icon(Icons.person_outline),
-                    selectedIcon: Icon(Icons.person),
-                    label: '我的',
-                  ),
-                ],
-              ), // NavigationBar
+                child: NavigationBar(
+                  selectedIndex: shell.currentIndex,
+                  onDestinationSelected: (int index) {
+                    // Switching tabs restores the chrome so the new page isn't
+                    // stuck with the previous page's hidden state.
+                    ref.read(appBarsVisibleProvider.notifier).setVisible(true);
+                    shell.goBranch(
+                      index,
+                      initialLocation: index == shell.currentIndex,
+                    );
+                  },
+                  destinations: <NavigationDestination>[
+                    const NavigationDestination(
+                      icon: Icon(Icons.home_outlined),
+                      selectedIcon: Icon(Icons.home),
+                      label: '首页',
+                    ),
+                    const NavigationDestination(
+                      icon: Icon(Icons.search),
+                      selectedIcon: Icon(Icons.search),
+                      label: '搜索',
+                    ),
+                    NavigationDestination(
+                      // Red count badge when there are unread notifications; a plain
+                      // icon when 0 (no clutter — DESIGN §2 "简约 / 不打扰").
+                      icon: unread > 0
+                          ? Badge(
+                              label: Text(unread > 99 ? '99+' : '$unread'),
+                              child: const Icon(Icons.notifications_outlined),
+                            )
+                          : const Icon(Icons.notifications_outlined),
+                      selectedIcon: unread > 0
+                          ? Badge(
+                              label: Text(unread > 99 ? '99+' : '$unread'),
+                              child: const Icon(Icons.notifications),
+                            )
+                          : const Icon(Icons.notifications),
+                      label: '通知',
+                    ),
+                    const NavigationDestination(
+                      icon: Icon(Icons.person_outline),
+                      selectedIcon: Icon(Icons.person),
+                      label: '我的',
+                    ),
+                  ],
+                ), // NavigationBar
+              ), // DoubleTapShortcut
             ), // ClipRect
           ), // AnimatedContainer
         ), // Scaffold

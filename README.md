@@ -304,7 +304,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 431 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 460 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -317,7 +317,11 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
 
-**v0.8.9-beta 相对 v0.8.8-beta 的修复**：
+**v0.8.9-beta 相对 v0.8.8-beta 的修复/新增**：
+**双击底栏「通知」图标定位第一条未读**——有未读时双击底栏铃铛：通知列表平滑滚动到
+最上面一条未读通知并短暂高亮闪烁，方便看出是哪条；唯一未读在另一个 tab（全部/提及）
+时自动切过去再定位；完全没有未读则维持回列表顶部。单击行为不变（页签行原有的双击
+回顶部也不变）。
 **已读通知反复「复活」根治**——v0.8.7 只修了冷启动的 hydration 时序竞态，还剩两个根因：
 ① 通知订阅无 `since` 全时段拉取（每次启动中继都重推历史互动），已读状态只靠持久化
 「已读 id 集合」（有上限、最老淘汰）——老 id 被淘汰后对应老通知又算未读，标记它又淘汰
@@ -532,7 +536,7 @@ content 里带 NIP-18 嵌入 JSON 的转发无需解析 e-tag 直接渲染原帖
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 431 个测试
+flutter test             # 460 个测试
 flutter build linux      # 桌面构建
 ```
 

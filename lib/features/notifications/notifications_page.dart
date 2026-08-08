@@ -7,6 +7,7 @@ library;
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -474,10 +475,13 @@ Future<bool?> previousContactListContainsMe(
   }, closeOnEose: true);
   Event? prev;
   try {
-    prev = await completer.future.timeout(timeout, onTimeout: () {
-      timedOut = true;
-      return null;
-    });
+    prev = await completer.future.timeout(
+      timeout,
+      onTimeout: () {
+        timedOut = true;
+        return null;
+      },
+    );
   } finally {
     await sub.cancel();
     await eoseSub.cancel();
@@ -697,10 +701,7 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
         if (db != null) {
           db.writeConfig(key, encoded);
         } else {
-          _dbFuture.then(
-            (d) => d.writeConfig(key, encoded),
-            onError: (_) {},
-          );
+          _dbFuture.then((d) => d.writeConfig(key, encoded), onError: (_) {});
         }
       }
     });
@@ -775,13 +776,10 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
       return;
     }
     try {
-      ref.read(localCacheProvider.future).then(
-        (d) {
-          _db ??= d;
-          return d.writeConfig(key, encoded);
-        },
-        onError: (_) {},
-      );
+      ref.read(localCacheProvider.future).then((d) {
+        _db ??= d;
+        return d.writeConfig(key, encoded);
+      }, onError: (_) {});
     } catch (_) {
       // Container already gone — nothing to persist to.
     }
@@ -867,13 +865,10 @@ class NotificationWatermarkNotifier extends Notifier<int> {
       return;
     }
     try {
-      _dbFuture.then(
-        (d) {
-          _db ??= d;
-          return d.writeConfig(_key, encoded);
-        },
-        onError: (_) {},
-      );
+      _dbFuture.then((d) {
+        _db ??= d;
+        return d.writeConfig(_key, encoded);
+      }, onError: (_) {});
     } catch (_) {
       // Container already gone — nothing to persist to.
     }
@@ -924,6 +919,21 @@ final unreadNotificationCountProvider = Provider.family<int, String>((
 
 // --- UI ---
 
+/// Double-tap-on-the-bottom-nav-bell jump requests. A counter: the
+/// notifications page ref.listens and treats every increment as one request
+/// to scroll to the topmost unread notification. Global (not per-account):
+/// only one account is active at a time, and the page re-listens on rebuild.
+final notificationJumpProvider =
+    NotifierProvider<NotificationJumpNotifier, int>(
+      NotificationJumpNotifier.new,
+    );
+
+class NotificationJumpNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+  void request() => state++;
+}
+
 class NotificationsPage extends ConsumerStatefulWidget {
   const NotificationsPage({super.key});
   @override
@@ -936,8 +946,28 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
   /// Drives the double-tap-on-tab "jump to the newest notification" shortcut.
   final ScrollController _controller = ScrollController();
 
+  /// Stable GlobalKeys per notification item id, so the double-tap-bell jump
+  /// can locate the topmost unread tile's BuildContext for
+  /// [Scrollable.ensureVisible]. Item ids are unique within the list and only
+  /// ONE ListView is ever mounted (全部/提及 swap the filtered data inside the
+  /// same ListView), so a key is never attached twice.
+  final Map<String, GlobalKey> _tileKeys = {};
+
+  /// The item currently flashing after a jump (cleared by [_highlightOff]).
+  String? _highlightId;
+  Timer? _highlightOff;
+
+  /// Retry-chain state for pending jumps (list still loading / target not yet
+  /// laid out). A newer request bumps [_jumpGen] and supersedes the older
+  /// chain.
+  int _jumpGen = 0;
+  int _jumpRetries = 0;
+
+  GlobalKey _keyFor(String id) => _tileKeys.putIfAbsent(id, () => GlobalKey());
+
   @override
   void dispose() {
+    _highlightOff?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -956,10 +986,133 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
     );
   }
 
+  /// Double-tap on the bottom-nav bell: scroll to the TOPMOST UNREAD
+  /// notification (and flash it) so the user sees which one is unread. Falls
+  /// back to [_scrollToTop] when nothing is unread.
+  void _requestJump() {
+    _jumpGen++;
+    _jumpRetries = 0;
+    _tryJump(_jumpGen);
+  }
+
+  void _tryJump(int gen) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || gen != _jumpGen) return;
+      final myPubkey = ref.read(identityProvider).value?.pubkeyHex;
+      if (myPubkey == null) return;
+      final all = ref.read(notificationsProvider(myPubkey)).value;
+      if (all == null) {
+        // Still loading — retry for up to ~5s of frames.
+        if (_jumpRetries++ < 300) _tryJump(gen);
+        return;
+      }
+      _jumpToFirstUnread(myPubkey, all, gen);
+    });
+  }
+
+  List<NotificationItem> _itemsForTab(String tab, List<NotificationItem> all) =>
+      tab == 'mentions'
+      ? all
+            .where(
+              (i) =>
+                  i.type == NotificationType.mention ||
+                  i.type == NotificationType.reply,
+            )
+            .toList()
+      : all;
+
+  int? _firstUnreadIndex(String myPubkey, List<NotificationItem> items) {
+    final read = ref.read(notificationReadProvider(myPubkey));
+    final watermark = ref.read(notificationWatermarkProvider(myPubkey));
+    for (var i = 0; i < items.length; i++) {
+      if (notificationIsUnread(items[i], read, watermark)) return i;
+    }
+    return null;
+  }
+
+  void _jumpToFirstUnread(
+    String myPubkey,
+    List<NotificationItem> all,
+    int gen,
+  ) {
+    var items = _itemsForTab(_tab, all);
+    var index = _firstUnreadIndex(myPubkey, items);
+    if (index == null) {
+      // Nothing unread on this tab — try the other one before giving up.
+      final other = _tab == 'all' ? 'mentions' : 'all';
+      final otherItems = _itemsForTab(other, all);
+      if (_firstUnreadIndex(myPubkey, otherItems) != null) {
+        setState(() => _tab = other);
+        _tryJump(gen);
+        return;
+      }
+      _scrollToTop(); // nothing unread anywhere — classic back-to-top
+      return;
+    }
+    final target = items[index];
+    _flash(target.id);
+    _scrollToItem(index, target.id, items.length, gen, 0);
+  }
+
+  void _scrollToItem(
+    int index,
+    String id,
+    int itemCount,
+    int gen,
+    int attempt,
+  ) {
+    if (!mounted || gen != _jumpGen) return;
+    if (!_controller.hasClients) {
+      if (attempt < 5) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _scrollToItem(index, id, itemCount, gen, attempt + 1),
+        );
+      }
+      return;
+    }
+    final ctx = _tileKeys[id]?.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.15,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
+      );
+      return;
+    }
+    // Target tile not built yet (far down the list): estimate the offset
+    // proportionally, jump there so the tile builds, then re-locate.
+    if (attempt == 0 && _controller.position.maxScrollExtent > 0) {
+      final est =
+          _controller.position.maxScrollExtent *
+          index /
+          math.max(1, itemCount - 1);
+      _controller.jumpTo(est.clamp(0.0, _controller.position.maxScrollExtent));
+    }
+    if (attempt < 5) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToItem(index, id, itemCount, gen, attempt + 1),
+      );
+    }
+  }
+
+  void _flash(String id) {
+    setState(() => _highlightId = id);
+    _highlightOff?.cancel();
+    _highlightOff = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _highlightId = null);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final identity = ref.watch(identityProvider).value;
     final myPubkey = identity?.pubkeyHex;
+    // Double-tap-bell jump requests arrive via this counter (AppShell
+    // increments it). Listen in build so the subscription tracks rebuilds.
+    ref.listen(notificationJumpProvider, (prev, next) {
+      if (prev != next) _requestJump();
+    });
     if (myPubkey == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('通知')),
@@ -971,15 +1124,7 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
     // Lifted out of `.when` so the AppBar action can mark-all-read without
     // rebuilding the body. `filtered` follows the current _tab.
     final allItems = async.value ?? const <NotificationItem>[];
-    final filtered = _tab == 'mentions'
-        ? allItems
-              .where(
-                (i) =>
-                    i.type == NotificationType.mention ||
-                    i.type == NotificationType.reply,
-              )
-              .toList()
-        : allItems;
+    final filtered = _itemsForTab(_tab, allItems);
     return ImmersiveScaffold(
       topBar: AppBar(
         title: const Text('通知'),
@@ -1080,8 +1225,10 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
                     controller: _controller,
                     itemCount: filtered.length,
                     itemBuilder: (_, i) => _NotificationTile(
+                      key: _keyFor(filtered[i].id),
                       item: filtered[i],
                       myPubkey: myPubkey,
+                      highlight: filtered[i].id == _highlightId,
                     ),
                   );
                 },
@@ -1175,9 +1322,18 @@ class _InteractPreview extends ConsumerWidget {
 }
 
 class _NotificationTile extends ConsumerWidget {
-  const _NotificationTile({required this.item, required this.myPubkey});
+  const _NotificationTile({
+    super.key,
+    required this.item,
+    required this.myPubkey,
+    this.highlight = false,
+  });
   final NotificationItem item;
   final String myPubkey;
+
+  /// Flash-tint after the double-tap-bell jump located this tile as the
+  /// topmost unread one ("方便知道是哪条通知").
+  final bool highlight;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -1202,9 +1358,9 @@ class _NotificationTile extends ConsumerWidget {
     return InkWell(
       onTap: () {
         // Mark this item read (per-item; stable unread styling until tap).
-        ref
-            .read(notificationReadProvider(myPubkey).notifier)
-            .markRead([item.id]);
+        ref.read(notificationReadProvider(myPubkey).notifier).markRead([
+          item.id,
+        ]);
         // Reading the LAST unread item collapses the whole list into the
         // watermark — evictions from the capped read set can then never
         // resurrect this history (the "已读通知反复复活" fix).
@@ -1232,8 +1388,14 @@ class _NotificationTile extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         // Subtle background tint on unread items (X-style); read items stay
         // plain. Combined with the dot below for a stable read/unread split.
+        // [highlight] (just jumped to via the bottom-nav bell double-tap)
+        // flashes a brand tint over either.
         decoration: BoxDecoration(
-          color: unread ? CostrColors.of(context).bg2 : null,
+          color: highlight
+              ? CostrColors.of(context).brand.withValues(alpha: 0.12)
+              : unread
+              ? CostrColors.of(context).bg2
+              : null,
           border: Border(
             bottom: BorderSide(color: CostrColors.of(context).border),
           ),
@@ -1305,7 +1467,8 @@ class _NotificationTile extends ConsumerWidget {
                             style: headStyle,
                           )
                         else
-                          for (final (i, pk) in item.pubkeys.take(3).indexed) ...[
+                          for (final (i, pk)
+                              in item.pubkeys.take(3).indexed) ...[
                             if (i > 0) TextSpan(text: '、', style: headStyle),
                             ...displayNameSpans(
                               pubkey: pk,

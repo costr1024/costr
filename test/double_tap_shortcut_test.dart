@@ -125,4 +125,76 @@ void main() {
     await tester.pumpAndSettle();
     expect(fires, 0, reason: 'drag + single tap is not a double tap');
   });
+
+  testWidgets('onDoubleTapAt reports the second tap-down position',
+      (tester) async {
+    final positions = <Offset>[];
+    var clock = Duration.zero;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: DoubleTapShortcut(
+              onDoubleTapAt: positions.add,
+              now: () => clock,
+              child: const SizedBox(height: 64, width: 300),
+            ),
+          ),
+        ),
+      ),
+    );
+    final shortcutTopLeft = tester.getTopLeft(find.byType(DoubleTapShortcut));
+    final first = tester.getCenter(find.byType(DoubleTapShortcut));
+    await tap(tester, first);
+    clock += const Duration(milliseconds: 100);
+    // Second tap slightly off — the callback must carry the SECOND tap's
+    // position (the first tap may have hit a different target within the
+    // 100px double-tap slop).
+    final second = first + const Offset(20, 4);
+    await tap(tester, second);
+    await tester.pumpAndSettle();
+    expect(positions, hasLength(1));
+    expect(positions.single, second - shortcutTopLeft);
+  });
+
+  testWidgets('onDoubleTapAt-only shortcut fires; child keeps both taps',
+      (tester) async {
+    var fires = 0;
+    var childTaps = 0;
+    var clock = Duration.zero;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: DoubleTapShortcut(
+              onDoubleTapAt: (_) => fires++,
+              now: () => clock,
+              child: SizedBox(
+                height: 64,
+                width: 300,
+                child: ElevatedButton(
+                  onPressed: () => childTaps++,
+                  child: const Text('TAP'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final at = tester.getCenter(find.byType(ElevatedButton));
+    await tap(tester, at);
+    clock += const Duration(milliseconds: 120);
+    await tap(tester, at);
+    await tester.pumpAndSettle();
+    expect(childTaps, 2);
+    expect(fires, 1);
+  });
+
+  test('constructing without any callback asserts', () {
+    expect(
+      () => DoubleTapShortcut(child: const SizedBox()),
+      throwsAssertionError,
+    );
+  });
 }

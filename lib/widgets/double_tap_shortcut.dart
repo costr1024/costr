@@ -10,7 +10,10 @@
 /// which is also when the platform's own double-tap recognizers fire).
 ///
 /// Used for the "double-tap the page tab row to jump back to the newest
-/// post/notification" shortcut (首页 全球/关注、通知 全部/提及).
+/// post/notification" shortcut (首页 全球/关注、通知 全部/提及) and for the
+/// bottom-nav bell (double-tap → jump to the first unread notification;
+/// that one needs the second tap's position via [onDoubleTapAt] to tell
+/// WHICH destination was hit).
 library;
 
 import 'package:flutter/gestures.dart';
@@ -20,12 +23,22 @@ class DoubleTapShortcut extends StatefulWidget {
   const DoubleTapShortcut({
     super.key,
     required this.child,
-    required this.onDoubleTap,
+    this.onDoubleTap,
+    this.onDoubleTapAt,
     this.now,
-  });
+  }) : assert(onDoubleTap != null || onDoubleTapAt != null);
 
   final Widget child;
-  final VoidCallback onDoubleTap;
+
+  /// Fired on the second tap-down. Position-less variant.
+  final VoidCallback? onDoubleTap;
+
+  /// Fired on the second tap-down with the tap's position LOCAL to this
+  /// widget's box. Lets a shortcut that spans several tap targets (the
+  /// bottom nav bar) tell which one was hit. kDoubleTapSlop is 100px, so the
+  /// two taps of a double-tap may land on DIFFERENT targets — callers decide
+  /// by the SECOND tap's position (the one that actually fired).
+  final ValueChanged<Offset>? onDoubleTapAt;
 
   /// Test seam: widget tests synthesize pointer events with a zero
   /// [PointerEvent.timeStamp] (the fake clock doesn't stamp them), so tests
@@ -71,7 +84,8 @@ class _DoubleTapShortcutState extends State<DoubleTapShortcut> {
         t - prev <= kDoubleTapTimeout &&
         (e.localPosition - prevPos).distance <= kDoubleTapSlop) {
       _firedPointer = e.pointer;
-      widget.onDoubleTap();
+      widget.onDoubleTapAt?.call(e.localPosition);
+      widget.onDoubleTap?.call();
     }
   }
 
