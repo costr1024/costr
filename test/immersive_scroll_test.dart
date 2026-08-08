@@ -113,41 +113,56 @@ void main() {
     expect(action, ImmersiveBarAction.hide, reason: 'net down crosses 40');
   });
 
-  group('immersiveIsCorrectivePullback', () {
-    test('drag-less negative update → corrective', () {
+  group('immersiveIsNonUserBackscroll', () {
+    test('drag-less negative update mid-list → non-user backscroll', () {
       expect(
-        immersiveIsCorrectivePullback(
+        immersiveIsNonUserBackscroll(
           isScrollUpdate: true,
           dragDetails: null,
           scrollDelta: -42,
+          pixels: 300,
         ),
         isTrue,
       );
     });
-    test('a real finger drag (dragDetails != null) is NEVER corrective', () {
+    test('a real finger drag (dragDetails != null) is NEVER suppressed', () {
       expect(
-        immersiveIsCorrectivePullback(
+        immersiveIsNonUserBackscroll(
           isScrollUpdate: true,
           dragDetails: DragUpdateDetails(globalPosition: Offset.zero),
           scrollDelta: -42,
+          pixels: 300,
         ),
         isFalse,
       );
     });
-    test('positive or non-update → not corrective', () {
+    test('at the top (pixels <= 0) → not suppressed (show rule owns)', () {
       expect(
-        immersiveIsCorrectivePullback(
+        immersiveIsNonUserBackscroll(
+          isScrollUpdate: true,
+          dragDetails: null,
+          scrollDelta: -7,
+          pixels: 0,
+        ),
+        isFalse,
+      );
+    });
+    test('positive or non-update → not suppressed', () {
+      expect(
+        immersiveIsNonUserBackscroll(
           isScrollUpdate: true,
           dragDetails: null,
           scrollDelta: 7,
+          pixels: 300,
         ),
         isFalse,
       );
       expect(
-        immersiveIsCorrectivePullback(
+        immersiveIsNonUserBackscroll(
           isScrollUpdate: false,
           dragDetails: null,
           scrollDelta: -7,
+          pixels: 300,
         ),
         isFalse,
       );
@@ -172,10 +187,9 @@ void main() {
       // A hard, SHORT fling down the list (the 关注 pattern): the chrome
       // hides mid-drag, then the ballistic races the 220ms collapse and hits
       // the bottom while the viewport grows — Flutter pulls the offset back
-      // with a corrective spring (negative drag-less deltas). Before the fix
-      // that pull-back was misread as a user scroll-up and the bars popped
-      // back. The small drag distance keeps the drag phase shorter than the
-      // collapse so the two actually overlap.
+      // with corrective, drag-LESS updates. Those must never read as a
+      // scroll-up, no matter when they arrive (media loads keep emitting
+      // them long after any fixed window would expire).
       await tester.fling(find.byType(ListView), const Offset(0, -60), 8000);
       for (var i = 0; i < 25; i++) {
         await tester.pump(const Duration(milliseconds: 40));

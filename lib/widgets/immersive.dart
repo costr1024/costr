@@ -29,37 +29,41 @@ const double _kHideThreshold = 40;
 /// as an intentional scroll-up made the chrome pop back in the middle of
 /// browsing DOWN ("沉浸式…时不时会显示出来上下菜单栏"). A deliberate
 /// scroll-back is far more than 20px net; a jitter burst never nets that
-/// much. (Image loads that push content down were suspected, but resize
-/// dispatches no ScrollNotification at all — verified by probe test — so the
-/// jittering finger was the true trigger.)
+/// much. (Image/video loads were long suspected; the resize itself dispatches
+/// no ScrollNotification, but the CORRECTIVE physics that follow — springs
+/// and dimension adjustments, all drag-less — used to be misread as upward
+/// scrolls; see [immersiveIsNonUserBackscroll].)
 const double _kShowThreshold = 20;
 
-/// After a HIDE flip, ignore non-drag negative scroll updates for this long.
-/// The hide animation GROWS the list's viewport (~200px over 220ms: top
-/// chrome + bottom nav collapse). A ballistic fling near the list end then
-/// lands out of range (RangeMaintainingScrollPhysics skips the silent clamp
-/// for animating positions on purpose), and ClampingScrollPhysics pulls the
-/// offset back with a spring — that pull-back arrives as
-/// [ScrollUpdateNotification]s with NEGATIVE [ScrollUpdateNotification.scrollDelta]
-/// and NO [ScrollUpdateNotification.dragDetails], which the show-hysteresis
-/// logic misreads as "the user scrolled UP" → the chrome pops back while the
-/// user is still scrolling DOWN → hide again → grow again → oscillation
-/// ("关注 tab 快速下滑经常闪出上下菜单栏"; slow drags are unaffected because
-/// DragScrollActivity clamps dimension changes silently via correctPixels,
-/// which dispatches no notifications). 500ms covers the 220ms collapse
-/// animation + the ballistic restart + the corrective spring. Real upward
-/// DRAGS (dragDetails != null) are never suppressed.
-const Duration immersivePostHideSuppress = Duration(milliseconds: 500);
-
-/// True when the update is a corrective spring pull-back (or any non-drag
-/// backward scroll): a [ScrollUpdateNotification] with no drag details and a
-/// negative delta. While inside the post-hide suppression window these are
-/// ignored ENTIRELY (neither shown for nor accumulated) by the detector.
-bool immersiveIsCorrectivePullback({
+/// True when the update is a NON-USER back-scroll: a
+/// [ScrollUpdateNotification] with NO drag details and a NEGATIVE delta,
+/// while not at the top ([pixels] > 0). These are corrective/physics
+/// adjustments, never a deliberate scroll-up:
+///
+/// - the spring pull-back after a fling lands out of range when the chrome
+///   collapse grew the viewport (RangeMaintainingScrollPhysics skips the
+///   silent clamp for animating positions on purpose; ClampingScrollPhysics
+///   then pulls the offset back to the boundary),
+/// - dimension-change adjustments while media (images/videos) LOAD — the
+///   deterministic repro: scrolling DOWN through several not-yet-loaded media
+///   posts pops the bars back every time, while text-only posts never do
+///   (each load re-runs the layout / ballistic with fresh metrics and emits
+///   drag-less corrective updates),
+/// - ballistic settle steps in general.
+///
+/// The detector ignores these ENTIRELY (no show, no accumulation): the only
+/// ways back to visible chrome are a real finger DRAG up (dragDetails != null,
+/// net ≥ show-threshold) or reaching the top (pixels <= 0). Desktop mouse-
+/// wheel scroll-up mid-list is the one deliberate gesture this rule doesn't
+/// cover (wheel events carry no drag details) — accepted trade for a
+/// touch-first client; wheel users still get chrome at the top.
+bool immersiveIsNonUserBackscroll({
   required bool isScrollUpdate,
   required DragUpdateDetails? dragDetails,
   required double scrollDelta,
-}) => isScrollUpdate && dragDetails == null && scrollDelta < 0;
+  required double pixels,
+}) =>
+    isScrollUpdate && dragDetails == null && scrollDelta < 0 && pixels > 0;
 
 /// What a scroll notification means for bar visibility.
 enum ImmersiveBarAction { show, hide, none }
@@ -135,10 +139,6 @@ class _ImmersiveScrollDetectorState
     extends ConsumerState<ImmersiveScrollDetector> {
   double _accumulated = 0;
 
-  /// Corrective pull-backs are ignored until this instant (set on every HIDE
-  /// flip — see [immersivePostHideSuppress]).
-  DateTime _suppressCorrectiveUntil = DateTime.fromMillisecondsSinceEpoch(0);
-
   @override
   Widget build(BuildContext context) {
     // watch so the detector rewraps when the user toggles immersive on/off.
@@ -153,20 +153,19 @@ class _ImmersiveScrollDetectorState
         if (axis != AxisDirection.down && axis != AxisDirection.up) {
           return false;
         }
-        final now = DateTime.now();
         final update = n is ScrollUpdateNotification ? n : null;
-        // While the chrome is collapsing (viewport growing), a fling near the
-        // list end is pulled back by a corrective spring; its negative
-        // drag-less deltas must not count as a user scroll-up, or the bars
-        // oscillate back into view during a fast DOWN scroll. Ignore them
-        // entirely — no show, no accumulation. Real finger drags carry
-        // dragDetails and are never suppressed.
-        if (now.isBefore(_suppressCorrectiveUntil) &&
-            immersiveIsCorrectivePullback(
-              isScrollUpdate: update != null,
-              dragDetails: update?.dragDetails,
-              scrollDelta: update?.scrollDelta ?? 0,
-            )) {
+        // Non-user back-scrolls (corrective springs, media-load dimension
+        // adjustments, ballistic settles) must never read as a scroll-up, or
+        // the bars oscillate back into view during a fast DOWN scroll. Ignore
+        // them entirely — no show, no accumulation. Real finger drags carry
+        // dragDetails and are never suppressed; reaching the top still shows
+        // via pixels <= 0.
+        if (immersiveIsNonUserBackscroll(
+          isScrollUpdate: update != null,
+          dragDetails: update?.dragDetails,
+          scrollDelta: update?.scrollDelta ?? 0,
+          pixels: n.metrics.pixels,
+        )) {
           return false;
         }
         final action = immersiveBarAction(
@@ -182,7 +181,6 @@ class _ImmersiveScrollDetectorState
           case ImmersiveBarAction.hide:
             _accumulated = 0;
             ref.read(appBarsVisibleProvider.notifier).setVisible(false);
-            _suppressCorrectiveUntil = now.add(immersivePostHideSuppress);
           case ImmersiveBarAction.none:
             if (n is ScrollUpdateNotification && n.scrollDelta != null) {
               _accumulated = _accumulated + n.scrollDelta!;
