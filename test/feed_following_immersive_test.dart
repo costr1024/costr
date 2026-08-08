@@ -77,6 +77,7 @@ class _MutableMode extends FeedModeNotifier {
 /// Store with synchronous, externally-triggerable ingestion (mimics the
 /// 200ms-batched live flush of the real EventStoreNotifier).
 class _LiveStore extends EventStoreNotifier {
+  @override
   final EventStore store = EventStore();
 
   @override

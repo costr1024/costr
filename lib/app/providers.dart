@@ -576,6 +576,26 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   // (test stubs) never block awaiters of [hydrated].
   Completer<void> _hydrated = Completer<void>()..complete();
 
+  /// The backing store. Test stubs that drive [build] from their own
+  /// store/list override this so the revision getters + [byId] see the same
+  /// events the UI does.
+  @visibleForTesting
+  EventStore get store => _store;
+
+  /// kind-1/6 content revision of the held set — see
+  /// [EventStore.contentRevision]. The revision providers below re-read it on
+  /// every flush but only NOTIFY dependents when it actually changed, so
+  /// kind-7 firehose churn stops rebuilding the feed.
+  int get contentRevision => store.contentRevision;
+
+  /// kind-1/6/7 interaction revision — see [EventStore.interactionRevision].
+  int get interactionRevision => store.interactionRevision;
+
+  /// O(1) live-store lookup (delegates to [EventStore.byId]). Replaces the
+  /// O(n) list scans call sites used to fall back on while an async
+  /// event-by-id lookup was still in flight (feed reply-context headers).
+  Event? byId(String id) => store.byId(id);
+
   /// Resolves when the cold-start SQLite hydration has finished (or failed).
   /// Awaiters (notification classification) must not judge events before the
   /// own-post snapshot lands — judging against an empty store yields different
@@ -1786,7 +1806,15 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   // does. Both are watched unconditionally (each is a no-op when inactive).
   ref.watch(feedSubscriptionProvider);
   ref.watch(followingOutboxProvider);
-  final all = ref.watch(eventStoreProvider);
+  // GATE: rebuild only when the kind-1/6 feed content actually changes — the
+  // revision provider re-emits on every store flush but only notifies when the
+  // int changed. On 全球 (a live firehose) the store flushes every 200ms, but
+  // reaction (kind-7) churn does NOT bump the content revision, so the feed
+  // list + every visible card stop rebuilding on reaction churn ("全球 tab
+  // 下滑卡顿" fix). The store is then READ (not watched) — the revision
+  // dependency already arranges a rebuild whenever its content changed.
+  ref.watch(feedContentRevisionProvider);
+  final all = ref.read(eventStoreProvider);
   final mode = ref.watch(feedModeProvider);
   final lang = ref.watch(languageFilterProvider);
   final tag = ref.watch(tagFilterProvider);
@@ -3104,6 +3132,168 @@ final searchPostsProvider = StreamProvider.family<List<Event>, String>((
   yield* ctrl.stream;
 });
 
+/// The event store's [EventStore.contentRevision] re-emitted as a provider
+/// value: recomputed on every store flush but dependents are only NOTIFIED
+/// when the int actually changed — i.e. when the kind-1/6 feed content
+/// changed. kind-7 (reaction) firehose churn flushes the store every 200ms
+/// but does not bump this revision, so providers gated on it (the feed list)
+/// stop rebuilding on reaction churn ("全球 tab 下滑卡顿" fix).
+final feedContentRevisionProvider = Provider<int>((ref) {
+  ref.watch(eventStoreProvider); // subscribe to flushes
+  return ref.read(eventStoreProvider.notifier).contentRevision;
+});
+
+/// Same gate for the kind-1/6/7 interaction set (replies + reposts +
+/// reactions) — bumps on reaction arrivals too, since counts must update
+/// live, but NOT on kind-0 metadata bursts.
+final interactionRevisionProvider = Provider<int>((ref) {
+  ref.watch(eventStoreProvider);
+  return ref.read(eventStoreProvider.notifier).interactionRevision;
+});
+
+/// Per-target interaction stats over the held store: reply/repost counts,
+/// reaction tallies and the user's own reaction, keyed by the referenced
+/// e-tag target id.
+class PostInteractionStats {
+  const PostInteractionStats({
+    this.replies = 0,
+    this.reposts = 0,
+    this.reactions = const {},
+    this.myReaction,
+  });
+  final int replies;
+  final int reposts;
+  final Map<String, ({int count, String? emojiUrl})> reactions;
+  final Event? myReaction;
+}
+
+/// ONE store-wide pass over kind-1/6/7 events, shared by every per-post
+/// provider below ([postCountsProvider] / [reactionsProvider] /
+/// [myReactionProvider]). Previously each of those family providers re-scanned
+/// the ENTIRE store (up to 20000 events × tag loops) for EVERY visible card
+/// on EVERY 200ms firehose flush — the dominant cost of the 全球 scroll jank
+/// (≈ 3 × visible-cards × O(store) per flush, plus once per newly-built card
+/// mid-fling). Now: one O(store) pass per interaction-relevant change, then
+/// O(1) lookups per card.
+///
+/// Unchanged per-target [PostInteractionStats] are carried over BY IDENTITY
+/// from the previous index, so the per-card family providers return the same
+/// object and Riverpod skips their dependents entirely when "their" post's
+/// interactions didn't change.
+final interactionIndexProvider =
+    NotifierProvider<InteractionIndexNotifier, Map<String, PostInteractionStats>>(
+      InteractionIndexNotifier.new,
+    );
+
+class InteractionIndexNotifier
+    extends Notifier<Map<String, PostInteractionStats>> {
+  /// Previous index, for instance-reuse of unchanged entries.
+  Map<String, PostInteractionStats> _prev = const {};
+
+  @override
+  Map<String, PostInteractionStats> build() {
+    // Rebuild only when the interaction-relevant store content changes.
+    ref.watch(interactionRevisionProvider);
+    final store = ref.read(eventStoreProvider); // read: no extra subscription
+    final me = ref.watch(identityProvider).value?.pubkeyHex;
+
+    final replies = <String, int>{};
+    final reposts = <String, int>{};
+    final reactions = <String, Map<String, ({int count, String? emojiUrl})>>{};
+    final myReactions = <String, Event>{};
+    final targets = <String>{}; // per-event distinct e-tag targets (buffer)
+
+    for (final e in store) {
+      if (e.kind != 1 && e.kind != 6 && e.kind != 7) continue;
+      targets.clear();
+      for (final t in e.tags) {
+        if (t.length >= 2 && t[0] == 'e' && t[1] is String) {
+          targets.add(t[1] as String);
+        }
+      }
+      if (targets.isEmpty) continue;
+      if (e.kind == 1 || e.kind == 6) {
+        for (final t in targets) {
+          // Skip the post itself (a kind-1 with a self-referential e tag,
+          // rare) — same guard the old per-provider scan had.
+          if (t == e.id) continue;
+          if (e.kind == 1) {
+            replies[t] = (replies[t] ?? 0) + 1;
+          } else {
+            reposts[t] = (reposts[t] ?? 0) + 1;
+          }
+        }
+      } else {
+        // kind-7 reaction. NIP-25: empty content OR literal "+" = default
+        // like → normalized to 👍 (the old reactionsProvider did the same).
+        final raw = e.content;
+        final key = (raw.isEmpty || raw == '+') ? '👍' : raw;
+        String? emojiUrl;
+        for (final et in e.tags) {
+          if (et.length >= 3 && et[0] == 'emoji' && et[2] is String) {
+            emojiUrl = et[2] as String;
+            break;
+          }
+        }
+        final isMine = me != null && e.pubkey == me;
+        for (final t in targets) {
+          final tallies = reactions.putIfAbsent(t, () => {});
+          final prevTally = tallies[key];
+          // First event for an emoji key supplies the NIP-30 url (matches
+          // the old `prev?.emojiUrl` behavior).
+          tallies[key] = (
+            count: (prevTally?.count ?? 0) + 1,
+            emojiUrl: prevTally?.emojiUrl ?? emojiUrl,
+          );
+          // Store order is newest-first: the first hit per target is the
+          // user's newest own reaction (old myReactionProvider semantics).
+          if (isMine && !myReactions.containsKey(t)) myReactions[t] = e;
+        }
+      }
+    }
+
+    final next = <String, PostInteractionStats>{};
+    final ids = <String>{
+      ...replies.keys,
+      ...reposts.keys,
+      ...reactions.keys,
+      ...myReactions.keys,
+    };
+    for (final id in ids) {
+      final candidate = PostInteractionStats(
+        replies: replies[id] ?? 0,
+        reposts: reposts[id] ?? 0,
+        reactions: reactions[id] ?? const {},
+        myReaction: myReactions[id],
+      );
+      final prevStats = _prev[id];
+      // Carry over the OLD instance when content is unchanged so downstream
+      // providers hand Riverpod an identical object (no rebuild).
+      next[id] =
+          (prevStats != null && _statsEqual(prevStats, candidate))
+          ? prevStats
+          : candidate;
+    }
+    _prev = next;
+    return next;
+  }
+
+  static bool _statsEqual(PostInteractionStats a, PostInteractionStats b) {
+    if (a.replies != b.replies || a.reposts != b.reposts) return false;
+    if (!identical(a.myReaction, b.myReaction)) return false;
+    if (a.reactions.length != b.reactions.length) return false;
+    for (final entry in a.reactions.entries) {
+      final other = b.reactions[entry.key];
+      if (other == null ||
+          other.count != entry.value.count ||
+          other.emojiUrl != entry.value.emojiUrl) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
 /// Per-post interaction counts the client has OBSERVED so far (replies +
 /// reposts), derived client-side from the in-memory [EventStore]. This is a
 /// lower bound — only events that have streamed in via the global feed, a
@@ -3111,27 +3301,12 @@ final searchPostsProvider = StreamProvider.family<List<Event>, String>((
 /// load-more page are counted; relays aren't queried for a total. Matches
 /// Amethyst's "what I've seen" approach. The count populates reliably once
 /// the user has opened the post's thread; on the feed it stays ~0 until then.
+/// O(1) lookup into [interactionIndexProvider] (was: full-store scan per
+/// card per flush).
 final postCountsProvider =
     Provider.family<({int replies, int reposts}), String>((ref, eventId) {
-      final all = ref.watch(eventStoreProvider);
-      var replies = 0;
-      var reposts = 0;
-      for (final e in all) {
-        if (e.kind != 1 && e.kind != 6) continue;
-        // Skip the post itself (a kind-1 with a self-referential e tag, rare).
-        if (e.id == eventId) continue;
-        for (final t in e.tags) {
-          if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
-            if (e.kind == 1) {
-              replies++;
-            } else {
-              reposts++;
-            }
-            break;
-          }
-        }
-      }
-      return (replies: replies, reposts: reposts);
+      final stats = ref.watch(interactionIndexProvider)[eventId];
+      return (replies: stats?.replies ?? 0, reposts: stats?.reposts ?? 0);
     });
 
 /// Global user search (NIP-50 `search` filter, kind 0 metadata) via the
@@ -3229,42 +3404,16 @@ final searchUsersProvider = StreamProvider.family<List<UserResult>, String>((
 /// Reactions (NIP-25 kind-7) for an event. Reads from the EventStore (kind-7
 /// events arrive as part of the global feed REQ {kinds:[1,7]}). No separate
 /// #e parameterized query needed (most relays don't support #e anyway).
+/// O(1) lookup into [interactionIndexProvider] (was: full-store scan per card
+/// per flush). The map instance is carried over unchanged from the previous
+/// index, so cards whose reactions didn't change skip their rebuild.
 final reactionsProvider =
     Provider.family<Map<String, ({int count, String? emojiUrl})>, String>((
       ref,
       eventId,
     ) {
-      final store = ref.watch(eventStoreProvider);
-      final tallies = <String, ({int count, String? emojiUrl})>{};
-      for (final e in store) {
-        if (e.kind != 7) continue;
-        for (final t in e.tags) {
-          if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) {
-            // NIP-25: empty content OR literal "+" = the default "like".
-            // Normalize to 👍 so the chip shows a real glyph instead of a bare
-            // "+" (which users mistook for an unknown UI control). Clients that
-            // send emoji content (🔥 / :shortcode:) keep their own key.
-            final raw = e.content;
-            final key = (raw.isEmpty || raw == '+') ? '👍' : raw;
-            final prev = tallies[key];
-            // For NIP-30 custom-emoji reactions (content `:shortcode:`), surface
-            // the image URL from the kind-7 `["emoji", shortcode, url]` tag so the
-            // chip can render the image instead of the raw `:shortcode:` text.
-            var url = prev?.emojiUrl;
-            if (url == null) {
-              for (final et in e.tags) {
-                if (et.length >= 3 && et[0] == 'emoji' && et[2] is String) {
-                  url = et[2] as String;
-                  break;
-                }
-              }
-            }
-            tallies[key] = (count: (prev?.count ?? 0) + 1, emojiUrl: url);
-            break;
-          }
-        }
-      }
-      return tallies;
+      final stats = ref.watch(interactionIndexProvider)[eventId];
+      return stats?.reactions ?? const {};
     });
 
 /// Raw kind-7 reactions + kind-6/16 reposts referencing [eventId],
@@ -3327,17 +3476,12 @@ final interactorsProvider = FutureProvider.family<List<Event>, String>((
 /// in-memory store (their just-published reaction is echoed locally by
 /// [RelayPool.publish] and stored). Used to highlight the reaction icon + let
 /// a second tap cancel (NIP-09 kind-5 delete of the reaction event).
+/// O(1) lookup into [interactionIndexProvider] (was: full-store scan per card
+/// per flush). When logged out the index never records a myReaction, so this
+/// correctly stays null.
 final myReactionProvider = Provider.family<Event?, String>((ref, eventId) {
-  final me = ref.watch(identityProvider).value?.pubkeyHex;
-  if (me == null) return null;
-  final store = ref.watch(eventStoreProvider);
-  for (final e in store) {
-    if (e.kind != 7 || e.pubkey != me) continue;
-    for (final t in e.tags) {
-      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) return e;
-    }
-  }
-  return null;
+  final stats = ref.watch(interactionIndexProvider)[eventId];
+  return stats?.myReaction;
 });
 
 /// True if [e] is a kind-1 text note that directly references [eventId] via an

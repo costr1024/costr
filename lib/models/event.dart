@@ -222,7 +222,15 @@ class Event {
   /// Hashtags from NIP-12 `["t", "value"]` tags AND inline `#hashtag` patterns
   /// found in the content body. Values are lowercased and deduped (NIP-12
   /// recommends lowercase). Order: t-tags first, then content matches.
+  /// Memoized per instance (same pattern as [language]): the Unicode regex
+  /// pass ran on EVERY visible-card build and on every event during mute
+  /// filtering — on the 全球 firehose that re-ran it for the whole store on
+  /// each 200ms flush ("下滑卡顿"). Events are deduped by id and shared
+  /// across rebuilds, so computing once per event is safe.
+  List<String>? _hashtags;
   List<String> get hashtags {
+    final cached = _hashtags;
+    if (cached != null) return cached;
     final out = <String>[];
     final seen = <String>{};
     for (final tag in tags) {
@@ -241,7 +249,7 @@ class Event {
       final v = m.group(1)!.toLowerCase();
       if (v.isNotEmpty && seen.add(v)) out.add(v);
     }
-    return out;
+    return _hashtags = List.unmodifiable(out);
   }
 
   /// Pubkeys referenced by `p` tags (NIP-02 follows). Values only — relay
@@ -264,8 +272,13 @@ class Event {
   /// Each imeta tag is
   /// `["imeta", "url <u>", "m <mimetype>", "x <w>", "y <h>", "dim WxH", ...]`.
   /// `blurhash`/`alt` are parsed but not surfaced in v1. Attachments are
-  /// deduped by URL across both tag forms.
+  /// deduped by URL across both tag forms. Memoized per instance (same
+  /// pattern as [language] / [hashtags]): MarkdownContent consults this
+  /// several times per build, on every visible card, on every rebuild.
+  List<MediaAttachment>? _mediaAttachments;
   List<MediaAttachment> get mediaAttachments {
+    final cached = _mediaAttachments;
+    if (cached != null) return cached;
     final out = <MediaAttachment>[];
     final seen = <String>{};
     for (final tag in tags) {
@@ -326,7 +339,7 @@ class Event {
         out.add(MediaAttachment(url: url, mimeType: mimeType));
       }
     }
-    return out;
+    return _mediaAttachments = List.unmodifiable(out);
   }
 
   /// Verify the Schnorr signature against `pubkey` and `id` (hook; v1 leaves

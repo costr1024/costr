@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _LiveStore extends EventStoreNotifier {
+  @override
   final EventStore store = EventStore();
 
   @override

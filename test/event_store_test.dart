@@ -126,4 +126,79 @@ void main() {
       expect(s.length, 2);
     });
   });
+
+  group('revision counters (feed-rebuild gating)', () {
+    test('kind-1/6 bump content+interaction; kind-7 interaction only; '
+        'kind-0 neither', () {
+      final s = EventStore();
+      expect(s.contentRevision, 0);
+      expect(s.interactionRevision, 0);
+      s.add(_e('m0', 5, kind: 0)); // metadata
+      expect(s.contentRevision, 0);
+      expect(s.interactionRevision, 0);
+      s.add(_e('r1', 10, kind: 7)); // reaction
+      expect(s.contentRevision, 0);
+      expect(s.interactionRevision, 1);
+      s.add(_e('p1', 20)); // post
+      expect(s.contentRevision, 1);
+      expect(s.interactionRevision, 2);
+      s.add(_e('rp1', 30, kind: 6)); // repost
+      expect(s.contentRevision, 2);
+      expect(s.interactionRevision, 3);
+      // Duplicates change nothing.
+      s.add(_e('p1', 20));
+      expect(s.contentRevision, 2);
+      expect(s.interactionRevision, 3);
+    });
+
+    test('remove and clear bump; self-eviction bumps the pair', () {
+      final s = EventStore(maxEvents: 2);
+      s.add(_e('p1', 100));
+      s.add(_e('p2', 110));
+      final c0 = s.contentRevision;
+      final i0 = s.interactionRevision;
+      // Self-evicting add: the held set is unchanged, but the add+evict pair
+      // still bumps twice (revisions are change-detectors; one harmless extra
+      // rebuild downstream in this rare case).
+      s.add(_e('ancient', 1));
+      expect(s.contentRevision, c0 + 2);
+      expect(s.interactionRevision, i0 + 2);
+      s.remove('p1');
+      expect(s.contentRevision, c0 + 3);
+      expect(s.interactionRevision, i0 + 3);
+      s.clear();
+      expect(s.contentRevision, greaterThan(c0 + 3));
+    });
+
+    test('eviction with the O(1) hint matches the old full-scan order', () {
+      // Mixed interleaved kinds over a small cap; the hinted victim picker must
+      // evict exactly what the legacy "scan from the tail" picker would have:
+      // oldest kind-7 first, then kind-6, then kind-1, never kind-0.
+      final s = EventStore(maxEvents: 6);
+      s.add(_e('meta', 1, kind: 0));
+      s.add(_e('r1', 2, kind: 7));
+      s.add(_e('p1', 3));
+      s.add(_e('r2', 4, kind: 7));
+      s.add(_e('rp1', 5, kind: 6));
+      s.add(_e('p2', 6));
+      // Saturation churn: each new event evicts one. Expected victims in
+      // order: r1 (oldest 7), r2 (next 7), rp1 (oldest 6), p1 (oldest 1).
+      s.add(_e('p3', 7));
+      expect(s.byId('r1'), isNull);
+      s.add(_e('p4', 8));
+      expect(s.byId('r2'), isNull);
+      s.add(_e('p5', 9));
+      expect(s.byId('rp1'), isNull);
+      s.add(_e('p6', 10));
+      expect(s.byId('p1'), isNull);
+      // metadata survives everything
+      expect(s.byId('meta'), isNotNull);
+      expect(s.length, 6);
+      expect(
+        s.events.map((e) => e.id),
+        ['p6', 'p5', 'p4', 'p3', 'p2', 'meta'],
+        reason: 'held set matches the legacy eviction result',
+      );
+    });
+  });
 }

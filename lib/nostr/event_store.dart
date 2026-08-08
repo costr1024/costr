@@ -20,6 +20,38 @@ class EventStore {
   final Map<String, Event> _byId = {};
   final List<Event> _sorted = [];
 
+  /// Bumped whenever the held kind-1/6 (feed-content) set changes — an
+  /// add/evict/remove of a kind-1 or kind-6 event. Derived providers gate on
+  /// this int so kind-7 (reaction) firehose churn does NOT rebuild the feed
+  /// ("全球 tab 下滑卡顿": the store flushes every 200ms while any events
+  /// arrive, and reactions are the highest-volume kind).
+  int _contentRevision = 0;
+  int get contentRevision => _contentRevision;
+
+  /// Bumped whenever the held kind-1/6/7 set changes (superset of
+  /// [contentRevision]) — gates the per-post interaction index.
+  int _interactionRevision = 0;
+  int get interactionRevision => _interactionRevision;
+
+  /// Cached index into [_sorted] of the OLDEST event per evictable kind, so
+  /// over-cap eviction picks its victim in O(1) instead of up to three
+  /// full-store scans per ingested event (at firehose saturation those scans
+  /// ran continuously on the UI isolate — part of the 全球 scroll jank).
+  /// Maintained incrementally on insert/remove; a kind's entry is dropped
+  /// when its hinted event is evicted and lazily re-scanned on demand (the
+  /// next-oldest kind-7 sits ~1 slot from the tail, so the rescan is short).
+  final Map<int, int> _oldestHint = {};
+
+  void _bumpForAdd(int kind) {
+    if (kind == 1 || kind == 6) _contentRevision++;
+    if (kind == 1 || kind == 6 || kind == 7) _interactionRevision++;
+  }
+
+  void _bumpForRemove(int kind) {
+    if (kind == 1 || kind == 6) _contentRevision++;
+    if (kind == 1 || kind == 6 || kind == 7) _interactionRevision++;
+  }
+
   /// Returns true if the event is held in the store after the call (false on
   /// duplicate id, unsupported kind, or immediate eviction — a fetch of
   /// content OLDER than everything held can still self-evict once the cap is
@@ -32,11 +64,17 @@ class EventStore {
     if (_byId.containsKey(e.id)) return false;
     _byId[e.id] = e;
     _insertSorted(e);
+    _bumpForAdd(e.kind);
     if (_sorted.length > maxEvents) {
-      final victim = _pickEvictionVictim();
-      if (victim != null) {
-        _sorted.remove(victim);
-        _byId.remove(victim.id);
+      final vi = _pickEvictionVictimIndex();
+      if (vi != null) {
+        final victim = _sorted[vi];
+        _removeAt(vi);
+        // Even a self-evicting add (new event older than everything held,
+        // held set unchanged) bumps twice (add + evict): revisions are
+        // change-detectors, and one harmless extra downstream rebuild beats
+        // non-monotonic counters missing real changes.
+        _bumpForRemove(victim.kind);
       }
     }
     return _byId.containsKey(e.id);
@@ -44,7 +82,7 @@ class EventStore {
 
   /// Binary-search insert into the newest-first list (a full re-sort per add
   /// was O(n log n) — a load-more burst of hundreds of events re-sorted the
-  /// whole cap-sized list every time).
+  /// whole cap-sized list every time). Maintains [_oldestHint].
   void _insertSorted(Event e) {
     var lo = 0;
     var hi = _sorted.length;
@@ -57,6 +95,30 @@ class EventStore {
       }
     }
     _sorted.insert(lo, e);
+    // Everything at/after the insert point shifted one slot right.
+    for (final k in _oldestHint.keys.toList()) {
+      final h = _oldestHint[k]!;
+      if (h >= lo) _oldestHint[k] = h + 1;
+    }
+    // An event older than the current oldest of its kind becomes the hint.
+    if (e.kind == 1 || e.kind == 6 || e.kind == 7) {
+      final cur = _oldestHint[e.kind];
+      if (cur == null || lo > cur) _oldestHint[e.kind] = lo;
+    }
+  }
+
+  void _removeAt(int r) {
+    final e = _sorted[r];
+    _byId.remove(e.id);
+    _sorted.removeAt(r);
+    for (final k in _oldestHint.keys.toList()) {
+      final h = _oldestHint[k]!;
+      if (h == r) {
+        _oldestHint.remove(k); // lazily re-scanned on the next eviction
+      } else if (h > r) {
+        _oldestHint[k] = h - 1;
+      }
+    }
   }
 
   /// Over-cap eviction priority: OLDEST kind-7 reactions first, then kind-6
@@ -75,20 +137,24 @@ class EventStore {
   /// Reactions are the cheapest to lose (counts on old posts degrade to what
   /// is held; live counts on recent posts are unaffected), metadata the most
   /// expensive (every avatar/name in the UI reads it).
-  Event? _pickEvictionVictim() {
-    // Oldest kind-7 first…
-    for (var i = _sorted.length - 1; i >= 0; i--) {
-      if (_sorted[i].kind == 7) return _sorted[i];
-    }
-    // …then kind-6 reposts before kind-1 originals (a repost's source note
-    // stays fetchable by id; the timeline of originals matters more)…
-    for (var i = _sorted.length - 1; i >= 0; i--) {
-      if (_sorted[i].kind == 6) return _sorted[i];
-    }
-    for (var i = _sorted.length - 1; i >= 0; i--) {
-      if (_sorted[i].kind == 1) return _sorted[i];
+  int? _pickEvictionVictimIndex() {
+    for (final kind in const [7, 6, 1]) {
+      final idx = _oldestIndexFor(kind);
+      if (idx != null) return idx;
     }
     return null; // only kind-0 left — never evict metadata
+  }
+
+  int? _oldestIndexFor(int kind) {
+    final hint = _oldestHint[kind];
+    if (hint != null) return hint;
+    for (var i = _sorted.length - 1; i >= 0; i--) {
+      if (_sorted[i].kind == kind) {
+        _oldestHint[kind] = i;
+        return i;
+      }
+    }
+    return null;
   }
 
   /// Newest-first: higher createdAt first; ties broken by id ascending so the
@@ -112,14 +178,22 @@ class EventStore {
   /// Remove an event by id (e.g. after a NIP-09 kind-5 deletion). Returns true
   /// if it was present.
   bool remove(String id) {
-    final e = _byId.remove(id);
+    final e = _byId[id];
     if (e == null) return false;
-    _sorted.remove(e);
+    final r = _sorted.indexOf(e);
+    assert(r >= 0, 'byId/store index out of sync');
+    _removeAt(r);
+    _bumpForRemove(e.kind);
     return true;
   }
 
   void clear() {
+    if (_sorted.isNotEmpty) {
+      _contentRevision++;
+      _interactionRevision++;
+    }
     _byId.clear();
     _sorted.clear();
+    _oldestHint.clear();
   }
 }

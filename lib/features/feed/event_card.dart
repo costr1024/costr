@@ -417,18 +417,11 @@ class _ReplyContext extends ConsumerWidget {
     final parentEvent = ref.watch(eventByIdProvider(parent)).value;
 
     // Parent author for the header line: prefer the resolved event, fall back
-    // to an in-memory scan so "回复 @name" renders before the async lookup
-    // settles (the old behavior, kept as the fast path).
+    // to an O(1) live-store lookup so "回复 @name" renders before the async
+    // lookup settles (the old behavior, kept as the fast path — it used to be
+    // a full linear scan of the store on EVERY card build).
     String? parentPubkey = parentEvent?.pubkey;
-    if (parentPubkey == null) {
-      final store = ref.read(eventStoreProvider);
-      for (final e in store) {
-        if (e.id == parent) {
-          parentPubkey = e.pubkey;
-          break;
-        }
-      }
-    }
+    parentPubkey ??= ref.read(eventStoreProvider.notifier).byId(parent)?.pubkey;
     if (parentPubkey == null) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),
