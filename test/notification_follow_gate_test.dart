@@ -119,6 +119,28 @@ class _HistoryRelay implements RelayConnection {
   void emit(Event e) => _events.add(e);
 }
 
+/// Relay that NEVER answers the gate's historical-contact-list REQ — no
+/// events, no EOSE — simulating a dead/slow relay. Everything else EOSEs.
+class _SilentGateRelay extends _HistoryRelay {
+  _SilentGateRelay() : super(const []);
+
+  @override
+  void request(String subId, Map<String, dynamic> filter) {
+    final kinds = filter['kinds'];
+    final authors = filter['authors'];
+    final isGateReq =
+        kinds is List &&
+        kinds.length == 1 &&
+        kinds[0] == 3 &&
+        authors is List &&
+        authors.isNotEmpty;
+    if (isGateReq) return; // stay silent: no events, no EOSE → gate times out
+    eoseForTest(subId);
+  }
+
+  void eoseForTest(String subId) => _eose.add(subId);
+}
+
 Event _ev({
   required int kind,
   required String id,
@@ -262,5 +284,109 @@ void main() {
         .toList();
     expect(follows, hasLength(1));
     expect(follows.single.pubkeys, [newFollower]);
+  });
+
+  group('previousContactListContainsMe tri-state', () {
+    test('timeout → null (unknown), NOT false', () async {
+      // No relays at all → nothing EOSEs → the gate must resolve null via
+      // the timeout, never false (false would re-notify old followers).
+      final result = await previousContactListContainsMe(
+        RelayPool(const []),
+        'f' * 64,
+        1000,
+        'a' * 64,
+        timeout: const Duration(milliseconds: 50),
+      );
+      expect(result, isNull);
+    });
+
+    test('all relays EOSE empty → false (genuinely new follow)', () async {
+      final relay = _HistoryRelay(const []);
+      final pool = RelayPool([relay]);
+      await pool.connect();
+      final result = await previousContactListContainsMe(
+        pool,
+        'f' * 64,
+        1000,
+        'a' * 64,
+        timeout: const Duration(seconds: 2),
+      );
+      expect(result, isFalse);
+      await pool.dispose();
+    });
+
+    test('previous list contains me → true (revision)', () async {
+      final me = Identity.fromPrivkeyHex(_priv).pubkeyHex;
+      const follower =
+          'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+      final oldList = _ev(
+        kind: 3,
+        id: 'k3_prev',
+        pubkey: follower,
+        createdAt: 900,
+        tags: [
+          ['p', me],
+        ],
+      );
+      final relay = _HistoryRelay([oldList]);
+      final pool = RelayPool([relay]);
+      await pool.connect();
+      final result = await previousContactListContainsMe(
+        pool,
+        follower,
+        1000,
+        me,
+        timeout: const Duration(seconds: 2),
+      );
+      expect(result, isTrue);
+      await pool.dispose();
+    });
+  });
+
+  test('gate TIMEOUT does not surface a follow notification', () async {
+    final me = Identity.fromPrivkeyHex(_priv).pubkeyHex;
+    const follower =
+        'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+    final relay = _SilentGateRelay();
+    final container = ProviderContainer(
+      overrides: [
+        relayPoolProvider.overrideWith((ref) => RelayPool([relay])),
+        identityProvider.overrideWith(() => _Id()),
+        eventStoreProvider.overrideWith(() => _FixedStore(const [])),
+        myMuteSetProvider.overrideWith((ref) => const MuteSet()),
+      ],
+    );
+    addTearDown(container.dispose);
+    final oldTimeout = followGateTimeout;
+    followGateTimeout = const Duration(milliseconds: 100);
+    addTearDown(() => followGateTimeout = oldTimeout);
+    await container.read(relayPoolProvider).connect();
+    final sub = container.listen(notificationsProvider(me), (_, _) {});
+    addTearDown(sub.close);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // A kind-3 revision arrives but no relay can confirm/deny the previous
+    // list within the timeout → the gate resolves null → NO notification
+    // (a slow relay must not re-surface old followers as "开始关注你").
+    relay.emit(
+      _ev(
+        kind: 3,
+        id: 'k3_silent',
+        pubkey: follower,
+        createdAt: 1700200000,
+        tags: [
+          ['p', me],
+        ],
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+
+    final list = container.read(notificationsProvider(me)).value;
+    expect(list, isNotNull);
+    expect(
+      list!.where((n) => n.type == NotificationType.follow),
+      isEmpty,
+      reason: 'an undecidable gate must skip, not notify',
+    );
   });
 }

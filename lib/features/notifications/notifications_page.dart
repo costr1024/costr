@@ -79,6 +79,11 @@ class NotificationItem {
 
 // --- Notification subscription provider ---
 
+/// Test seam: the follow gate's verdict timeout (6s in production). Tests
+/// shorten it so the timeout→skip path is verifiable without a 6s wait.
+@visibleForTesting
+Duration followGateTimeout = const Duration(seconds: 6);
+
 /// Subscribes to notifications: #p mentions + #e interactions on the user's
 /// recent 200 posts. Collects and aggregates into NotificationItem list.
 final notificationsProvider =
@@ -118,6 +123,30 @@ final notificationsProvider =
           .map((e) => e.id)
           .toList();
       myEventIds.addAll(myRecentEvents);
+      // Persistent own-post ids from SQLite. The in-memory store snapshot only
+      // carries the global newest-1000 feed window (queryFeed), so WHICH old
+      // own posts are in myEventIds varies with global activity between
+      // launches — reply/mention classification (and therefore item keys:
+      // `reply:<myPostId>` vs `mention:<eventId>`) flipped across cold starts
+      // and the persisted read-set missed ("已读通知复活" RC2: v0.8.7 fixed the
+      // hydration TIMING race, not the snapshot CONTENT divergence). The DB
+      // copy is stable across launches. Ordering at the store/DB boundary is
+      // only approximate (store eviction is kind-priority, not per-author) —
+      // harmless: take(200) below still targets ~the newest own posts, and
+      // gating membership is order-agnostic.
+      try {
+        final db = await ref.read(localCacheProvider.future);
+        final rows = await db.queryUserPosts(myPubkey, limit: 500);
+        if (ref.mounted) {
+          for (final row in rows) {
+            myEventIds.add(row.id);
+          }
+        }
+      } catch (_) {
+        // DB unavailable (open failure / test environment without a cache
+        // override) — the store snapshot alone still classifies recent posts.
+      }
+      if (!ref.mounted) return;
       // Reactively grow myEventIds when the user's own new posts arrive —
       // WITHOUT restarting the generator (which would clear the list). Re-fetch
       // interactions on just the newly-seen ids.
@@ -278,8 +307,12 @@ final notificationsProvider =
               e.pubkey,
               e.createdAt,
               myPubkey,
+              timeout: followGateTimeout,
             ).then((already) {
-              if (!already) addOrUpdate();
+              // TRI-STATE: only a CONFIRMED new follow (== false) emits.
+              // true = contact-list revision (skip); null = gate timed out
+              // (skip — a slow relay must not re-notify old followers).
+              if (already == false) addOrUpdate();
             }),
           );
           return;
@@ -400,18 +433,25 @@ bool contactListContains(Event contactList, String pubkeyHex) {
 /// followers re-publish kind 3 whenever they follow anyone, and the #p
 /// subscription surfaced every revision as "开始关注你").
 ///
-/// One-shot REQ {kinds:[3], authors:[author], until: until-1, limit:1}:
-/// first hit wins; resolves false once every relay EOSEs empty (author has
-/// no older list → genuinely new follow) or on the 6s cap (unknown → err on
-/// the side of showing the notification).
+/// One-shot REQ {kinds:[3], authors:[author], until: until-1, limit:1}.
+/// TRI-STATE result:
+/// - `true` — previous list contains me → contact-list revision, skip.
+/// - `false` — every relay EOSEd empty → the author has NO older list →
+///   genuinely new follow (notify).
+/// - `null` — unknown within [timeout] (slow/dead relays) → SKIP. Erring on
+///   NOT notifying: a slow relay must not resurface an old follower as
+///   "开始关注你" (false-positive resurrection was the reported bug); a
+///   genuinely new follower missed here still appears in the followers list.
 @visibleForTesting
-Future<bool> previousContactListContainsMe(
+Future<bool?> previousContactListContainsMe(
   RelayPool pool,
   String author,
   int untilCreatedAt,
-  String me,
-) async {
+  String me, {
+  Duration timeout = const Duration(seconds: 6),
+}) async {
   final completer = Completer<Event?>();
+  var timedOut = false;
   final relayCount = pool.states.length;
   var eoses = 0;
   final sub = pool.rawEvents.listen((e) {
@@ -434,15 +474,16 @@ Future<bool> previousContactListContainsMe(
   }, closeOnEose: true);
   Event? prev;
   try {
-    prev = await completer.future.timeout(
-      const Duration(seconds: 6),
-      onTimeout: () => null,
-    );
+    prev = await completer.future.timeout(timeout, onTimeout: () {
+      timedOut = true;
+      return null;
+    });
   } finally {
     await sub.cancel();
     await eoseSub.cancel();
     pool.closeSubscription(subId);
   }
+  if (timedOut) return null;
   return prev != null && contactListContains(prev, me);
 }
 
@@ -564,23 +605,56 @@ String flattenPreview(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
 
 // --- Read state (persisted) -----------------------------------------------
 
-/// Config-table key holding the JSON array of read notification item-ids.
-const _readKey = 'read_notifications';
+/// Config-table key prefix holding the JSON array of read notification
+/// item-ids, per account (`<prefix><pubkey>`). Pre-per-account builds wrote a
+/// single global key ([_legacyReadKey]); that key seeds the migration and is
+/// NEVER deleted (a second account logging in on this device migrates from it
+/// too).
+const _readKeyPrefix = 'read_notifications:';
+const _legacyReadKey = 'read_notifications';
 
-/// The set of notification item-ids the user has already seen (read).
-/// Persisted to SQLite so the unread badge survives across sessions /
-/// cold starts. Hydrated asynchronously from the config table on build.
+/// Config-table key prefix holding the per-account read watermark (decimal
+/// seconds). Everything at/below the watermark is read regardless of the
+/// item-id set — see [notificationWatermarkProvider].
+const _watermarkKeyPrefix = 'read_notifications_watermark:';
+
+/// True when [item] should still display as unread.
 ///
-/// A notification item is "unread" iff its id is NOT in this set. The set is
-/// capped (oldest evicted) to bound growth — notification ids are short
-/// stable strings (`type:target`), and only the recent ~1500 matter for
-/// distinguishing unread; older interactions are long gone from the live list.
+/// An item is unread iff it is NEWER than the account's read watermark AND
+/// its id is absent from the persisted read set. The watermark makes read
+/// state survive read-set eviction and item-key churn across launches — the
+/// "已读通知反复复活" fix (a set-only model resurrected ancient notifications
+/// whenever their id was evicted from the capped set, or re-classified into a
+/// different key between cold start and a long session).
+bool notificationIsUnread(
+  NotificationItem item,
+  Set<String> read,
+  int watermark,
+) => item.time > watermark && !read.contains(item.id);
+
+/// The set of notification item-ids the user has already seen (read),
+/// PER ACCOUNT. Persisted to SQLite so the unread badge survives across
+/// sessions / cold starts. Hydrated asynchronously from the config table on
+/// build.
+///
+/// A notification item is "unread" iff [notificationIsUnread] says so (id
+/// not in this set AND newer than the watermark). The set is capped (oldest
+/// evicted) to bound growth — eviction no longer resurrects old items because
+/// the watermark covers everything fully read; the cap only bounds
+/// partially-read history since the last watermark advance.
 final notificationReadProvider =
-    NotifierProvider<NotificationReadNotifier, Set<String>>(
+    NotifierProvider.family<NotificationReadNotifier, Set<String>, String>(
       NotificationReadNotifier.new,
     );
 
 class NotificationReadNotifier extends Notifier<Set<String>> {
+  NotificationReadNotifier(this.pubkey);
+
+  /// The account this read-set belongs to (family arg). Two accounts on one
+  /// device keep separate sets — a follow notification marked read by one
+  /// must not vanish for the other.
+  final String pubkey;
+
   Timer? _save;
   bool _dirty = false;
   cache.LocalCache? _db;
@@ -614,16 +688,17 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
       // Flush a pending debounced write instead of dropping it — killing the
       // app right after 全部已读 must not lose the marks. No state/ref access
       // here (Riverpod forbids both inside life-cycles); the DB-write future
-      // was cached at build.
+      // was cached at build. Instance fields (pubkey/_snapshot) ARE readable.
       if (_dirty) {
         _dirty = false;
         final encoded = jsonEncode(_snapshot);
+        final key = '$_readKeyPrefix$pubkey';
         final db = _db;
         if (db != null) {
-          db.writeConfig(_readKey, encoded);
+          db.writeConfig(key, encoded);
         } else {
           _dbFuture.then(
-            (d) => d.writeConfig(_readKey, encoded),
+            (d) => d.writeConfig(key, encoded),
             onError: (_) {},
           );
         }
@@ -634,7 +709,16 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
 
   Future<void> _hydrate(cache.LocalCache db) async {
     try {
-      final raw = await db.readConfig(_readKey);
+      final key = '$_readKeyPrefix$pubkey';
+      var raw = await db.readConfig(key);
+      var migratedFromLegacy = false;
+      if (raw == null || raw.isEmpty) {
+        // Migration: seed from the legacy GLOBAL key (pre-per-account
+        // builds). Never deleted — the device's second account migrates
+        // from it too.
+        raw = await db.readConfig(_legacyReadKey);
+        migratedFromLegacy = raw != null && raw.isNotEmpty;
+      }
       if (raw != null && raw.isNotEmpty) {
         final list = (jsonDecode(raw) as List).cast<String>();
         // UNION with the in-memory set: markRead may have run BEFORE hydration
@@ -644,6 +728,11 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
         final merged = LinkedHashSet<String>.from(list)..addAll(state);
         _snapshot = merged.toList();
         state = merged;
+        if (migratedFromLegacy) {
+          // Persist the migrated set under the per-account key right away so
+          // it survives even if the user never marks anything read again.
+          db.writeConfig(key, jsonEncode(_snapshot));
+        }
       }
     } catch (_) {
       // Corrupt JSON — start fresh (next markRead rewrites a clean array).
@@ -654,8 +743,11 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
   void markRead(Iterable<String> ids) {
     if (ids.isEmpty) return;
     final next = LinkedHashSet<String>.from(state)..addAll(ids);
-    // Cap: evict oldest-inserted ids beyond 1500 (linked iteration order).
-    while (next.length > 1500) {
+    // Cap: evict oldest-inserted ids beyond 5000 (linked iteration order).
+    // Eviction no longer resurrects notifications: everything fully read is
+    // covered by the watermark (see notificationWatermarkProvider); the cap
+    // only bounds partially-read history since the last watermark advance.
+    while (next.length > 5000) {
       next.remove(next.first);
     }
     // Only dirty + schedule a write if the set actually grew.
@@ -676,16 +768,17 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
   void _persist() {
     _dirty = false;
     final encoded = jsonEncode(state.toList());
+    final key = '$_readKeyPrefix$pubkey';
     final db = _db;
     if (db != null) {
-      db.writeConfig(_readKey, encoded);
+      db.writeConfig(key, encoded);
       return;
     }
     try {
       ref.read(localCacheProvider.future).then(
         (d) {
           _db ??= d;
-          return d.writeConfig(_readKey, encoded);
+          return d.writeConfig(key, encoded);
         },
         onError: (_) {},
       );
@@ -695,6 +788,117 @@ class NotificationReadNotifier extends Notifier<Set<String>> {
   }
 
   bool isUnread(String id) => !state.contains(id);
+}
+
+/// Per-account read WATERMARK (seconds): every notification at/below this
+/// time is read, full stop. The anti-resurrection anchor:
+///
+/// - The capped read set evicts old ids; a set-only model re-counted the
+///   evicted items' (ancient) notifications as unread every launch — and
+///   marking them read evicted OTHER old ids, rotating the resurrection
+///   ("很早之前就通知过的信息反复重新通知").
+/// - Reply/mention item keys can churn across launches (own-post snapshot
+///   divergence) — the watermark is key-independent.
+///
+/// Advanced by 全部已读 (over every tab) and by [compactIfFullyRead] when the
+/// user has read the last unread item; per-item taps do NOT move it (DESIGN
+/// §5.2 per-item semantics).
+final notificationWatermarkProvider =
+    NotifierProvider.family<NotificationWatermarkNotifier, int, String>(
+      NotificationWatermarkNotifier.new,
+    );
+
+class NotificationWatermarkNotifier extends Notifier<int> {
+  NotificationWatermarkNotifier(this.pubkey);
+  final String pubkey;
+
+  cache.LocalCache? _db;
+  late Future<cache.LocalCache> _dbFuture;
+
+  String get _key => '$_watermarkKeyPrefix$pubkey';
+
+  @override
+  int build() {
+    _db = ref.read(localCacheProvider).value;
+    _dbFuture = ref.read(localCacheProvider.future);
+    if (_db == null) {
+      // Cache not ready yet (cold start) — hydrate once it resolves.
+      ref.listen(localCacheProvider, (_, next) {
+        if (next.hasValue && next.value != null) {
+          _db = next.value;
+          _hydrate(next.value!);
+        }
+      });
+    } else {
+      _hydrate(_db!);
+    }
+    return 0;
+  }
+
+  Future<void> _hydrate(cache.LocalCache db) async {
+    try {
+      final raw = await db.readConfig(_key);
+      if (raw == null || raw.isEmpty) return;
+      final parsed = int.tryParse(raw);
+      if (parsed == null) return;
+      // MAX-merge: advance() may have run BEFORE hydration completed —
+      // replacing would roll the watermark back and resurrect items.
+      final merged = parsed > state ? parsed : state;
+      state = merged;
+    } catch (_) {
+      // Corrupt value — keep the in-memory watermark.
+    }
+  }
+
+  /// Advance the watermark to [t] (monotonic). WRITE-THROUGH (no debounce):
+  /// this is the anti-resurrection anchor — losing it to a hard kill would
+  /// bring the bug straight back. Capped at wall-clock NOW so a future-dated
+  /// event (author clock skew) can never push the watermark into the future
+  /// and silently mark legitimate later notifications read.
+  void advance(int t) {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final capped = t > now ? now : t;
+    if (capped <= state) return;
+    state = capped;
+    final encoded = '$capped';
+    final db = _db;
+    if (db != null) {
+      db.writeConfig(_key, encoded);
+      return;
+    }
+    try {
+      _dbFuture.then(
+        (d) {
+          _db ??= d;
+          return d.writeConfig(_key, encoded);
+        },
+        onError: (_) {},
+      );
+    } catch (_) {
+      // Container already gone — nothing to persist to.
+    }
+  }
+}
+
+/// When the LAST unread item has just been read, collapse the entire current
+/// list into the watermark: future evictions from the capped read set (or
+/// item-key churn across launches) can never resurrect this history.
+///
+/// MUST be called from the widget layer (a [WidgetRef] is outside the
+/// provider graph): the unread count watches the watermark, so reading it
+/// from INSIDE the watermark notifier trips Riverpod's circular-dependency
+/// assert.
+void compactNotificationWatermarkIfFullyRead(WidgetRef ref, String myPubkey) {
+  if (ref.read(unreadNotificationCountProvider(myPubkey)) != 0) return;
+  final items =
+      ref.read(notificationsProvider(myPubkey)).value ??
+      const <NotificationItem>[];
+  if (items.isEmpty) return;
+  var maxTime = items.first.time;
+  for (final i in items) {
+    if (i.time > maxTime) maxTime = i.time;
+  }
+  ref.read(notificationWatermarkProvider(myPubkey).notifier).advance(maxTime);
 }
 
 /// Number of currently-unread notifications for [myPubkey]. Watching this
@@ -709,10 +913,11 @@ final unreadNotificationCountProvider = Provider.family<int, String>((
   final items =
       ref.watch(notificationsProvider(myPubkey)).value ??
       const <NotificationItem>[];
-  final read = ref.watch(notificationReadProvider);
+  final read = ref.watch(notificationReadProvider(myPubkey));
+  final watermark = ref.watch(notificationWatermarkProvider(myPubkey));
   var count = 0;
   for (final i in items) {
-    if (!read.contains(i.id)) count++;
+    if (notificationIsUnread(i, read, watermark)) count++;
   }
   return count;
 });
@@ -779,23 +984,39 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
       topBar: AppBar(
         title: const Text('通知'),
         actions: [
-          // Mark all currently-shown notifications as read. First login can
-          // surface a large backlog of historical unread (DESIGN §5.2) —
-          // tapping one-by-one isn't practical, so this clears the visible
-          // tab in one shot. Hidden when there's nothing unread.
+          // Mark ALL notifications read (both tabs). First login can surface a
+          // large backlog of historical unread (DESIGN §5.2) — tapping
+          // one-by-one isn't practical, so this clears everything in one
+          // shot. Also advances the read watermark over the whole list so
+          // read-set eviction / item-key churn can never resurrect these
+          // items (the "已读通知反复复活" fix). Hidden when nothing unread.
           if (unreadCount > 0)
             IconButton(
               icon: const Icon(Icons.done_all),
               tooltip: '全部标记已读',
               onPressed: () {
-                final ids = filtered
-                    .where(
-                      (i) => !ref.read(notificationReadProvider).contains(i.id),
-                    )
+                final read = ref.read(notificationReadProvider(myPubkey));
+                final watermark = ref.read(
+                  notificationWatermarkProvider(myPubkey),
+                );
+                final ids = allItems
+                    .where((i) => notificationIsUnread(i, read, watermark))
                     .map((i) => i.id)
                     .toList();
-                if (ids.isEmpty) return;
-                ref.read(notificationReadProvider.notifier).markRead(ids);
+                if (ids.isNotEmpty) {
+                  ref
+                      .read(notificationReadProvider(myPubkey).notifier)
+                      .markRead(ids);
+                }
+                var maxTime = 0;
+                for (final i in allItems) {
+                  if (i.time > maxTime) maxTime = i.time;
+                }
+                if (maxTime > 0) {
+                  ref
+                      .read(notificationWatermarkProvider(myPubkey).notifier)
+                      .advance(maxTime);
+                }
               },
             ),
           IconButton(
@@ -962,10 +1183,16 @@ class _NotificationTile extends ConsumerWidget {
     final theme = Theme.of(context);
     final icon = _iconForType(item.type);
     final iconColor = _colorForType(item.type, CostrColors.of(context));
-    // Unread is derived from the persisted read-set (not the vestigial
-    // item.unread flag, which is always true at creation). Per-item: stays
-    // unread until the user taps it (stable styling — no whole-page clear).
-    final unread = !ref.watch(notificationReadProvider).contains(item.id);
+    // Unread is derived from the persisted read-set + watermark (not the
+    // vestigial item.unread flag, which is always true at creation).
+    // Per-item: stays unread until the user taps it (stable styling — no
+    // whole-page clear); the watermark additionally keeps fully-read history
+    // read across launches (see notificationWatermarkProvider).
+    final unread = notificationIsUnread(
+      item,
+      ref.watch(notificationReadProvider(myPubkey)),
+      ref.watch(notificationWatermarkProvider(myPubkey)),
+    );
     // Bold style for the "who" part of the title; name spans carry it
     // explicitly (custom-emoji names render inline images — see
     // [displayNameSpans]).
@@ -975,7 +1202,13 @@ class _NotificationTile extends ConsumerWidget {
     return InkWell(
       onTap: () {
         // Mark this item read (per-item; stable unread styling until tap).
-        ref.read(notificationReadProvider.notifier).markRead([item.id]);
+        ref
+            .read(notificationReadProvider(myPubkey).notifier)
+            .markRead([item.id]);
+        // Reading the LAST unread item collapses the whole list into the
+        // watermark — evictions from the capped read set can then never
+        // resurrect this history (the "已读通知反复复活" fix).
+        compactNotificationWatermarkIfFullyRead(ref, myPubkey);
         // Follow → open the follower's profile. MUST be checked before the
         // target-event fallback below: a follow item carries sourceEventId
         // (the kind-3 event's own id) but that is NOT a post to open —

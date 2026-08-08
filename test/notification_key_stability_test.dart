@@ -16,6 +16,7 @@ import 'package:costr/models/mute_set.dart';
 import 'package:costr/nostr/identity.dart';
 import 'package:costr/nostr/relay_client.dart';
 import 'package:costr/nostr/relay_pool.dart';
+import 'package:costr/services/local_cache.dart' as cache;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -54,6 +55,13 @@ class _ReadyStore extends EventStoreNotifier {
 
   @override
   List<Event> build() => [myPost];
+}
+
+/// Store holding NO events at all — the DB own-post snapshot is the only
+/// source of myEventIds.
+class _EmptyStore extends EventStoreNotifier {
+  @override
+  List<Event> build() => const [];
 }
 
 /// Relay that pushes the served events once on connect (the cold-start push,
@@ -216,4 +224,89 @@ void main() {
       expect(late.single.id, ready.single.id);
     },
   );
+
+  test(
+    'own post known ONLY from SQLite still classifies reply (stable key)',
+    () async {
+      // RC2 regression: the in-memory store snapshot only carries the global
+      // newest-1000 feed window, so an OLD own post can be absent from
+      // myEventIds at cold start. Without the stable SQLite own-post snapshot
+      // the reply would classify as mention:<eventId> — a different key than a
+      // warm session produces (reply:<myPostId>) — and the persisted read-set
+      // would miss on the next launch (resurrection). The generator must seed
+      // myEventIds from queryUserPosts.
+      final me = Identity.fromPrivkeyHex(_priv).pubkeyHex;
+      final oldPostRow = cache.EventRow(
+        id: 'my_old_post',
+        pubkey: me,
+        kind: 1,
+        createdAt: 500,
+        content: '很旧的帖子',
+        sig: 's' * 64,
+        raw: '{}',
+        tagsJson: '[]',
+        receivedAt: 0,
+      );
+      final stub = _PostsCache([oldPostRow]);
+      final replyMention = _ev(
+        kind: 1,
+        id: 'their_reply2',
+        pubkey: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        createdAt: 2000,
+        content: '回复你的旧帖',
+        tags: [
+          ['e', 'my_old_post', '', 'reply'],
+          ['p', me],
+        ],
+      );
+      final relay = _ServingRelay([replyMention]);
+      final container = ProviderContainer(
+        overrides: [
+          relayPoolProvider.overrideWith((ref) => RelayPool([relay])),
+          identityProvider.overrideWith(() => _Id()),
+          // Store holds NO own posts — the DB snapshot is the only source.
+          eventStoreProvider.overrideWith(() => _EmptyStore()),
+          myMuteSetProvider.overrideWith((ref) => const MuteSet()),
+          localCacheProvider.overrideWith((ref) async => stub),
+        ],
+      );
+      addTearDown(container.dispose);
+      await container.read(relayPoolProvider).connect();
+      final sub = container.listen(notificationsProvider(me), (_, _) {});
+      addTearDown(sub.close);
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      final items =
+          container.read(notificationsProvider(me)).value ??
+          const <NotificationItem>[];
+
+      expect(
+        items.where((i) => i.id == 'mention:their_reply2'),
+        isEmpty,
+        reason: 'own post from SQLite must gate the reply classification',
+      );
+      expect(items, hasLength(1));
+      expect(items.single.id, 'reply:my_old_post');
+    },
+  );
+}
+
+/// Minimal LocalCache stand-in for the own-post snapshot read.
+class _PostsCache implements cache.LocalCache {
+  _PostsCache(this.posts);
+  final List<cache.EventRow> posts;
+
+  @override
+  Future<List<cache.EventRow>> queryUserPosts(
+    String pubkey, {
+    int limit = 100,
+  }) async => posts;
+
+  @override
+  Future<String?> readConfig(String key) async => null;
+
+  @override
+  Future<void> writeConfig(String key, String value) async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
