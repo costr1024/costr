@@ -341,6 +341,64 @@ void main() {
       expect(result, isTrue);
       await pool.dispose();
     });
+
+    test('no older list + a NEWER latest list → null (stale re-serve, skip)',
+        () async {
+      // The real repro: a follower churned list versions then UNfollowed;
+      // relays kept re-serving an old lists-me=true revision on cold starts
+      // while the author's NEWEST list no longer held me. No relay has a list
+      // OLDER than the incoming one, but the latest is newer → the incoming
+      // event is stale → skip, do NOT notify.
+      final me = Identity.fromPrivkeyHex(_priv).pubkeyHex;
+      const follower =
+          'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+      final newerList = _ev(
+        kind: 3,
+        id: 'k3_newer',
+        pubkey: follower,
+        createdAt: 2000, // newer than the incoming (1000)
+        tags: const [], // latest no longer lists me
+      );
+      final relay = _HistoryRelay([newerList]);
+      final pool = RelayPool([relay]);
+      await pool.connect();
+      final result = await previousContactListContainsMe(
+        pool,
+        follower,
+        1000,
+        me,
+        timeout: const Duration(seconds: 2),
+      );
+      expect(result, isNull);
+      await pool.dispose();
+    });
+
+    test('no older list + incoming IS the latest → false (notify)', () async {
+      final me = Identity.fromPrivkeyHex(_priv).pubkeyHex;
+      const follower =
+          'abababababababababababababababababababababababababababababababab';
+      final latest = _ev(
+        kind: 3,
+        id: 'k3_latest',
+        pubkey: follower,
+        createdAt: 1000, // same as the incoming → it is the latest
+        tags: [
+          ['p', me],
+        ],
+      );
+      final relay = _HistoryRelay([latest]);
+      final pool = RelayPool([relay]);
+      await pool.connect();
+      final result = await previousContactListContainsMe(
+        pool,
+        follower,
+        1000,
+        me,
+        timeout: const Duration(seconds: 2),
+      );
+      expect(result, isFalse);
+      await pool.dispose();
+    });
   });
 
   test('gate TIMEOUT does not surface a follow notification', () async {

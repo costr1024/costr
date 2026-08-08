@@ -428,28 +428,16 @@ bool contactListContains(Event contactList, String pubkeyHex) {
   return false;
 }
 
-/// Whether [author]'s newest contact list OLDER than [untilCreatedAt] already
-/// lists [me] — i.e. the incoming kind-3 is a contact-list REVISION by an
-/// existing follower, NOT a new follow ("重复关注通知" bug: long-time
-/// followers re-publish kind 3 whenever they follow anyone, and the #p
-/// subscription surfaced every revision as "开始关注你").
-///
-/// One-shot REQ {kinds:[3], authors:[author], until: until-1, limit:1}.
-/// TRI-STATE result:
-/// - `true` — previous list contains me → contact-list revision, skip.
-/// - `false` — every relay EOSEd empty → the author has NO older list →
-///   genuinely new follow (notify).
-/// - `null` — unknown within [timeout] (slow/dead relays) → SKIP. Erring on
-///   NOT notifying: a slow relay must not resurface an old follower as
-///   "开始关注你" (false-positive resurrection was the reported bug); a
-///   genuinely new follower missed here still appears in the followers list.
-@visibleForTesting
-Future<bool?> previousContactListContainsMe(
+/// One-shot kind-3 fetch for the follow gate: the newest kind-3 by [author]
+/// (optionally older than [until]), first hit wins. `timedOut` distinguishes
+/// "no relay answered" from "every relay EOSEd empty" (author has no such
+/// list).
+Future<({bool timedOut, Event? event})> _fetchAuthorContactList(
   RelayPool pool,
-  String author,
-  int untilCreatedAt,
-  String me, {
-  Duration timeout = const Duration(seconds: 6),
+  String author, {
+  int? until,
+  required Duration timeout,
+  required String subIdPrefix,
 }) async {
   final completer = Completer<Event?>();
   var timedOut = false;
@@ -457,10 +445,10 @@ Future<bool?> previousContactListContainsMe(
   var eoses = 0;
   final sub = pool.rawEvents.listen((e) {
     if (e.kind != 3 || e.pubkey != author) return;
-    if (e.createdAt >= untilCreatedAt) return; // the incoming revision itself
+    if (until != null && e.createdAt >= until) return;
     if (!completer.isCompleted) completer.complete(e);
   });
-  final subId = nextSubId('notif-prev');
+  final subId = nextSubId(subIdPrefix);
   final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
     eoses++;
     if (relayCount > 0 && eoses >= relayCount && !completer.isCompleted) {
@@ -470,25 +458,72 @@ Future<bool?> previousContactListContainsMe(
   pool.request(subId, <String, dynamic>{
     'kinds': [3],
     'authors': [author],
-    'until': untilCreatedAt - 1,
+    'until': ?until,
     'limit': 1,
   }, closeOnEose: true);
-  Event? prev;
+  Event? hit;
   try {
-    prev = await completer.future.timeout(
-      timeout,
-      onTimeout: () {
-        timedOut = true;
-        return null;
-      },
-    );
+    hit = await completer.future.timeout(timeout, onTimeout: () {
+      timedOut = true;
+      return null;
+    });
   } finally {
     await sub.cancel();
     await eoseSub.cancel();
     pool.closeSubscription(subId);
   }
-  if (timedOut) return null;
-  return prev != null && contactListContains(prev, me);
+  return (timedOut: timedOut, event: hit);
+}
+
+/// Whether the incoming kind-3 (by [author], created at [untilCreatedAt]) is
+/// a genuine NEW follow of [me] — the gate behind every "开始关注你"
+/// notification ("重复关注通知" bug: followers re-publish kind 3 whenever
+/// they follow anyone, and the #p subscription surfaced every revision).
+///
+/// Decision tree (tri-state; null always means SKIP):
+/// 1. Previous list (REQ until: created-1) found → it decides:
+///    contains me → `true` (contact-list REVISION by an existing follower,
+///    skip); doesn't → `false` (new follow, notify).
+/// 2. No older list anywhere: might be a genuinely new follow, OR a STALE
+///    re-serve of an old revision whose successors the relays already hold
+///    (real case: a follower churned 10 list versions in minutes, then
+///    UNfollowed — the old lists-me=true versions kept being re-served on
+///    cold starts while the newest list no longer held me). Compare the
+///    author's LATEST list: strictly newer than the incoming event → the
+///    incoming one is stale → `null` (skip); otherwise the incoming event is
+///    itself the latest → `false` (notify).
+/// 3. Any timeout (slow/dead relays) → `null` (skip): a slow relay must not
+///    resurface an old follower as "开始关注你"; a genuinely new follower
+///    missed here still appears in the followers list.
+@visibleForTesting
+Future<bool?> previousContactListContainsMe(
+  RelayPool pool,
+  String author,
+  int untilCreatedAt,
+  String me, {
+  Duration timeout = const Duration(seconds: 6),
+}) async {
+  final prev = await _fetchAuthorContactList(
+    pool,
+    author,
+    until: untilCreatedAt - 1,
+    timeout: timeout,
+    subIdPrefix: 'notif-prev',
+  );
+  if (prev.timedOut) return null;
+  if (prev.event != null) return contactListContains(prev.event!, me);
+  // No older list found — check whether the incoming event is still the
+  // author's latest list before declaring a new follow.
+  final latest = await _fetchAuthorContactList(
+    pool,
+    author,
+    timeout: timeout,
+    subIdPrefix: 'notif-latest',
+  );
+  if (latest.timedOut) return null;
+  final l = latest.event;
+  if (l != null && l.createdAt > untilCreatedAt) return null; // stale
+  return false; // genuinely new (or the incoming IS the latest)
 }
 
 /// Aggregation key for an incoming event — two events that should collapse
