@@ -392,16 +392,25 @@ class RelayPool {
   /// Publish and wait for relay OK verdicts, retrying per the project spec:
   /// - Send EVENT to every connected relay, wait for each relay's OK (per-round
   ///   timeout).
-  /// - If **any** relay accepts → resolve success immediately; the remaining
-  ///   transiently-failed relays keep retrying in the BACKGROUND (delays
-  ///   1s/2s/3s, up to 3 more attempts) so the caller isn't blocked.
+  /// - If **any** relay accepts → resolve success immediately; relays still
+  ///   silent (or stuck in NIP-42 auth) when the round window closes keep
+  ///   retrying in the BACKGROUND (delays 1s/2s/3s) so the caller isn't
+  ///   blocked. Relays that merely answered SLOWER than the fastest are NOT
+  ///   re-sent — their late OK still lands in the verdict window (re-sending
+  ///   stored events is duplicate spam and, on relays that answer duplicates
+  ///   with ok:false, produced spurious write-failure statistics).
   /// - If **all** relays fail a round → retry in the FOREGROUND (blocking)
   ///   with delays 1s/2s/3s. Give up on a relay only when it's confirmed
   ///   unreachable (disconnects) or returns an unrecoverable rejection (OK
   ///   false with a non-`auth` reason). A timeout (no ack) is always retried.
   /// - NIP-42: relays that reject with `auth-required` are retried (the
   ///   pool auto-signs kind-22242 on AUTH challenges); the retry lands after
-  ///   the auth round-trip.
+  ///   the auth round-trip. The auth rejection itself is a protocol
+  ///   handshake, NOT a write failure — it is never counted in the
+  ///   write-success statistics (only the post-auth verdict is).
+  /// - Duplicates: a relay answering ok:false with a `duplicate:` reason
+  ///   already HAS the event — that is a successful publish outcome for both
+  ///   statistics and retry (NIP-20).
   /// - If background retries are exhausted with relays still failing, the
   ///   optional [onPublishExhausted] hook is invoked (the app saves the event
   ///   to the drafts table for a next-launch retry to the missing relays).
@@ -430,47 +439,59 @@ class RelayPool {
       return RelayOk(expected, false, 'no connected relay');
     }
 
-    bool isAuthRejection(String? reason) =>
-        (reason ?? '').toLowerCase().contains('auth');
-
     for (var attempt = 0; attempt <= delays.length; attempt++) {
-      final verdicts = await _collectOks(event, targets, perRound);
-      final accepted = verdicts.values.where((v) => v.ok).toList();
+      final round = _PublishRound(this, event, targets, perRound);
+      final verdicts = await round.early;
+      final accepted = verdicts.values.where(_effectiveOk).toList();
       if (accepted.isNotEmpty) {
-        // Some relays accepted → return success + background-retry the rest.
-        final transient = <RelayConnection>[];
-        for (final c in targets) {
-          final v = verdicts[c.url];
-          // No verdict (timeout) but still connected → transient.
-          // Auth-required rejection → transient (retry after auth).
-          if (v == null) {
-            if (c.isConnected) transient.add(c);
-          } else if (!v.ok && isAuthRejection(v.reason)) {
-            transient.add(c);
+        // Some relays accepted → return success now. Detached, keep
+        // collecting verdicts until the round window closes: slower relays'
+        // OKs still reach the write statistics, and ONLY relays with no
+        // verdict at all (or still stuck in NIP-42 auth) get a background
+        // retry — never the ones that simply answered late.
+        final roundTargets = targets;
+        unawaited(() async {
+          final all = await round.settled;
+          final missing = <RelayConnection>[];
+          for (final c in roundTargets) {
+            final v = all[c.url];
+            if (v == null) {
+              if (c.isConnected) missing.add(c); // silent → real retry
+            } else if (!_effectiveOk(v) && _isAuthRejection(v)) {
+              missing.add(c); // auth in flight → retry after AUTH
+            }
           }
-        }
-        if (transient.isNotEmpty) {
-          _backgroundRetryPublish(event, transient, delays, perRound);
-        }
+          if (missing.isNotEmpty) {
+            _backgroundRetryPublish(event, missing, delays, perRound);
+          }
+        }());
         // Echo locally ONLY now that at least one relay accepted — so the
         // author sees the post instantly (relays only ack OK, they don't
         // echo EVENT back on publish) WITHOUT leaving a phantom for
         // publishes that failed on every relay.
         if (!_merged.isClosed) _merged.add(event);
-        return accepted.first;
+        // Report success as a raw ok:true verdict whenever one exists. When
+        // the ONLY acceptance is a NIP-20 duplicate (ok:false, event already
+        // stored — e.g. a draft re-publish), synthesize ok:true so callers
+        // never misread a stored-event publish as a failure.
+        final rawTrue = accepted.where((v) => v.ok);
+        return rawTrue.isNotEmpty
+            ? rawTrue.first
+            : RelayOk(expected, true, 'duplicate');
       }
       // All failed this round. Keep only transiently-failed relays for the
       // next round; drop unrecoverable (explicit non-auth rejection) and
       // disconnected ones.
+      final all = await round.settled;
       final next = <RelayConnection>[];
       for (final c in targets) {
-        final v = verdicts[c.url];
+        final v = all[c.url];
         if (v == null) {
           if (c.isConnected) next.add(c); // timeout, still connected
-        } else if (!v.ok && isAuthRejection(v.reason)) {
+        } else if (!_effectiveOk(v) && _isAuthRejection(v)) {
           next.add(c);
         }
-        // else: explicit non-auth rejection OR accepted (n/a here) → drop.
+        // else: explicit unrecoverable rejection OR accepted (n/a here) → drop.
       }
       if (next.isEmpty) break; // all unrecoverable — no point retrying
       targets = next;
@@ -485,58 +506,21 @@ class RelayPool {
     );
   }
 
-  /// Collect per-relay OK verdicts for [event] from [relays] within [perRound].
-  /// Sends EVENT to each relay, then waits for OKs (or [perRound]). Relays
-  /// with no verdict within the window are timeouts (transient).
-  ///
-  /// Completes EARLY the moment ANY relay returns `ok: true` — the publish is
-  /// a success once one relay has the event; the rest are handled by
-  /// background retries. Previously this waited for ALL relays to verdict (or
-  /// the full [perRound] cap), so a single slow/hung relay made every send
-  /// take 1–5s even when a fast relay acked in ~100ms (the reported
-  /// "发帖要等 1～3s" latency).
-  Future<Map<String, RelayOk>> _collectOks(
-    Event event,
-    List<RelayConnection> relays,
-    Duration perRound,
-  ) async {
-    final pending = relays.map((c) => c.url).toSet();
-    final verdicts = <String, RelayOk>{};
-    if (pending.isEmpty) return verdicts;
-    final completer = Completer<void>();
-    late StreamSubscription<RelayOk> sub;
-    sub = oks.listen((RelayOk ok) {
-      if (ok.id != event.id || ok.url == null) return;
-      if (!pending.contains(ok.url!)) return;
-      verdicts[ok.url!] = ok;
-      pending.remove(ok.url!);
-      if (completer.isCompleted) return;
-      // First acceptance → done waiting (success path); otherwise wait until
-      // every relay has verdicted.
-      if (ok.ok || pending.isEmpty) completer.complete();
-    });
-    for (final c in relays) {
-      c.publish(event);
-    }
-    await completer.future.timeout(perRound, onTimeout: () {});
-    await sub.cancel();
-    // Write success-rate statistics: record ONLY explicit verdicts. A relay
-    // without a verdict was usually just SLOWER than the first relay to
-    // accept (this method returns early on the first ok:true) — counting
-    // that as a failure would frame every healthy-but-slow relay as broken.
-    // Genuinely dead relays surface as 离线 on the node page instead; relays
-    // that keep REJECTING writes accumulate ok=false here, which is exactly
-    // the "suggest replacing this relay" signal.
-    final verdictHook = onWriteVerdict;
-    if (verdictHook != null) {
-      for (final entry in verdicts.entries) {
-        verdictHook(entry.key, entry.value.ok);
-      }
-    }
-    return verdicts;
-  }
+  /// NIP-42 `auth-required` rejection — a transient protocol step, not a
+  /// write failure (the pool answers the AUTH challenge and retries).
+  static bool _isAuthRejection(RelayOk v) =>
+      (v.reason ?? '').toLowerCase().contains('auth');
 
-  /// Background (detached) retry of transiently-failed relays after a publish
+  /// NIP-20 duplicate answer: the relay ALREADY STORED the event (ok:false +
+  /// `duplicate:` happens on relays that refuse to re-ack a stored event with
+  /// ok:true). The publish goal — the event being stored — is achieved.
+  static bool _isDuplicateOk(RelayOk v) =>
+      !v.ok && (v.reason ?? '').toLowerCase().contains('duplicate');
+
+  /// Did this verdict achieve the publish goal (accepted OR already stored)?
+  static bool _effectiveOk(RelayOk v) => v.ok || _isDuplicateOk(v);
+
+  /// Background (detached) retry of still-missing relays after a publish
   /// already resolved success elsewhere. Retries with [delays], dropping
   /// relays that disconnect or return an unrecoverable rejection. On
   /// exhaustion, invokes [onPublishExhausted] if set (app saves a draft).
@@ -556,16 +540,17 @@ class RelayPool {
         await Future.delayed(delays[attempt]);
         targets = targets.where((c) => c.isConnected).toList();
         if (targets.isEmpty) break;
-        final verdicts = await _collectOks(event, targets, perRound);
+        final round = _PublishRound(this, event, targets, perRound);
+        final verdicts = await round.settled;
         final still = <RelayConnection>[];
         for (final c in targets) {
           final v = verdicts[c.url];
           if (v == null) {
             if (c.isConnected) still.add(c);
-          } else if (!v.ok && (v.reason ?? '').toLowerCase().contains('auth')) {
+          } else if (!_effectiveOk(v) && _isAuthRejection(v)) {
             still.add(c);
           }
-          // accepted or unrecoverable → drop.
+          // accepted (incl. duplicate) or unrecoverable → drop.
         }
         targets = still;
       }
@@ -585,12 +570,16 @@ class RelayPool {
 
   /// Per-relay WRITE verdict hook for send success-rate statistics (the
   /// 服务器节点 page flags relays whose writes keep failing). Invoked once per
-  /// relay that returns an EXPLICIT verdict in a publish round: true = OK
-  /// accepted, false = rejected. Relays with no verdict in the window are
-  /// NOT reported — see [_collectOks] for why a timeout here is not evidence
-  /// of failure. Read paths are deliberately never measured: a relay that
-  /// accepts writes can almost always be read from.
-  void Function(String url, bool ok)? onWriteVerdict;
+  /// relay that returns an EXPLICIT verdict in a publish round: `ok` is the
+  /// EFFECTIVE outcome (accepted, or a NIP-20 `duplicate:` answer — the event
+  /// is stored either way) and [reason] is the relay's raw OK reason string
+  /// (for diagnostics, e.g. "blocked: …" / "rate-limited: …"). NIP-42
+  /// `auth-required` rejections are NEVER reported — they are a transient
+  /// handshake retried automatically, not a write failure. Relays with no
+  /// verdict in the window are NOT reported — a timeout is not evidence of
+  /// failure (see [_PublishRound]). Read paths are deliberately never
+  /// measured: a relay that accepts writes can almost always be read from.
+  void Function(String url, bool ok, String? reason)? onWriteVerdict;
 
   void _emitStatus() {
     if (!_status.isClosed) {
@@ -607,5 +596,71 @@ class RelayPool {
     await _oks.close();
     await _eose.close();
     await _status.close();
+  }
+}
+
+/// One publish round: sends [event] to [relays] and collects their OK
+/// verdicts into [verdicts].
+///
+/// [early] resolves the moment the outcome is decided — the FIRST effective
+/// acceptance, every relay verdicted, or the per-round window elapsing — so
+/// the caller (the user's send button) never waits on the slowest relay (the
+/// «发帖要等 1～3s» fix). [settled] resolves when every relay has verdicted
+/// or the window elapsed: it keeps collecting AFTER [early] so a slower
+/// relay's genuine verdict still lands in the write statistics and decides
+/// whether that relay really needs a retry — instead of re-sending to every
+/// relay that was merely slower than the fastest one (the old immediate
+/// retry re-sent the event to all of them ~1s later: duplicate spam, plus
+/// spurious failure samples from relays that answer duplicates with ok:false
+/// — the «发帖成功率很低» false alarm on healthy relays).
+///
+/// Write statistics ([RelayPool.onWriteVerdict]) are recorded HERE, once per
+/// relay per round, as verdicts arrive — including the late ones — and never
+/// for NIP-42 `auth-required` rejections (a transient handshake retried
+/// automatically; only the post-auth verdict is a real sample).
+class _PublishRound {
+  _PublishRound(this._pool, this.event, this.relays, Duration perRound) {
+    _pending = relays.map((c) => c.url).toSet();
+    _sub = _pool.oks.listen(_onOk);
+    _timer = Timer(perRound, _settle);
+    for (final c in relays) {
+      c.publish(event);
+    }
+  }
+
+  final RelayPool _pool;
+  final Event event;
+  final List<RelayConnection> relays;
+  final Map<String, RelayOk> verdicts = {};
+  final Completer<Map<String, RelayOk>> _early = Completer();
+  final Completer<Map<String, RelayOk>> _settled = Completer();
+  late final StreamSubscription<RelayOk> _sub;
+  late final Timer _timer;
+  late final Set<String> _pending;
+
+  Future<Map<String, RelayOk>> get early => _early.future;
+  Future<Map<String, RelayOk>> get settled => _settled.future;
+
+  void _onOk(RelayOk ok) {
+    if (ok.id != event.id || ok.url == null) return;
+    if (!_pending.contains(ok.url!)) return;
+    verdicts[ok.url!] = ok;
+    _pending.remove(ok.url!);
+    final hook = _pool.onWriteVerdict;
+    if (hook != null && !RelayPool._isAuthRejection(ok)) {
+      hook(ok.url!, RelayPool._effectiveOk(ok), ok.reason);
+    }
+    if (!_early.isCompleted &&
+        (RelayPool._effectiveOk(ok) || _pending.isEmpty)) {
+      _early.complete(Map.of(verdicts));
+    }
+    if (_pending.isEmpty) _settle();
+  }
+
+  void _settle() {
+    _timer.cancel();
+    _sub.cancel();
+    if (!_early.isCompleted) _early.complete(Map.of(verdicts));
+    if (!_settled.isCompleted) _settled.complete(Map.of(verdicts));
   }
 }

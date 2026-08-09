@@ -1,12 +1,15 @@
 // Regression: after ADDING an account via /login?add=1 (multi-account flow),
-// the user must land back on the settings page — not stay on the login page.
-// Covers both paths: nsec import and the create-account wizard (which is
-// pushed as an imperative MaterialPageRoute on top of the router).
+// the user must land on the HOME page (feed, inside the shell) — not stay on
+// the login page, and not sit on a shell-less /settings page whose back
+// button exits the app ("新增账号后无法返回主页" bug). Covers both paths: nsec
+// import and the create-account wizard (which is pushed as an imperative
+// MaterialPageRoute on top of the router).
 
 import 'package:costr/app/app.dart';
 import 'package:costr/app/providers.dart';
 import 'package:costr/app/router.dart';
 import 'package:costr/features/auth/login_page.dart';
+import 'package:costr/features/feed/feed_page.dart';
 import 'package:costr/features/settings/settings_page.dart';
 import 'package:costr/nostr/identity.dart';
 import 'package:costr/nostr/relay_pool.dart';
@@ -111,7 +114,7 @@ void main() {
     });
   }
 
-  testWidgets('nsec import via /login?add=1 returns to the settings page', (
+  testWidgets('nsec import via /login?add=1 lands on the home page', (
     tester,
   ) async {
     final (_, identity, container, dispose) = await pumpApp(tester);
@@ -138,16 +141,18 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '添加账号'));
     await tester.pumpAndSettle();
 
-    // Must be back on the settings page, NOT stuck on the login page.
+    // Must be on the home page inside the shell, NOT stuck on the login page
+    // and NOT stranded on a shell-less /settings (back button would exit).
     expect(find.byType(LoginPage), findsNothing);
-    expect(find.byType(SettingsPage), findsOneWidget);
+    expect(find.byType(SettingsPage), findsNothing);
+    expect(find.byType(FeedPage), findsOneWidget);
     expect(identity.current?.pubkeyHex, _idSecond.pubkeyHex);
     // Dispose the container (cancels provider-owned timers, e.g. the
     // muteListProvider EOSE watchdog) before the binding's timer audit.
     dispose();
   });
 
-  testWidgets('create-account wizard via /login?add=1 returns to settings', (
+  testWidgets('create-account wizard via /login?add=1 lands on home page', (
     tester,
   ) async {
     final (_, identity, container, dispose) = await pumpApp(tester);
@@ -172,9 +177,11 @@ void main() {
     await tester.tap(find.text('开始使用'));
     await tester.pumpAndSettle();
 
-    // Must be back on the settings page, NOT stuck on the login page/wizard.
+    // Must be on the home page inside the shell, NOT stuck on login/wizard
+    // and NOT stranded on a shell-less /settings.
     expect(find.byType(LoginPage), findsNothing);
-    expect(find.byType(SettingsPage), findsOneWidget);
+    expect(find.byType(SettingsPage), findsNothing);
+    expect(find.byType(FeedPage), findsOneWidget);
     expect(identity.current, isNot(equals(_idMain)));
     dispose();
   });

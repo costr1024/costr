@@ -543,6 +543,38 @@ class LocalCache extends _$LocalCache {
     await writeConfig('relay_write_stats:$url', jsonEncode(kept));
   }
 
+  /// Store the relay's most recent WRITE rejection reason (raw OK reason
+  /// string, e.g. "blocked: pubkey is blacklisted" / "rate-limited: …") so
+  /// the 服务器节点 page can show WHY a relay keeps failing. Empty string
+  /// clears it (a subsequent accepted write resets the relay to healthy).
+  /// Capped so a verbose relay can't bloat the config row.
+  Future<void> setWriteRejectReason(String url, String reason) async {
+    final trimmed = reason.trim();
+    final capped = trimmed.length > 120 ? trimmed.substring(0, 120) : trimmed;
+    await writeConfig('relay_write_reject:$url', capped);
+  }
+
+  /// The most recent stored rejection reason for [url], or null when none /
+  /// empty (relay healthy or never rejected).
+  Future<String?> readWriteRejectReason(String url) async {
+    final raw = await readConfig('relay_write_reject:$url');
+    return (raw == null || raw.isEmpty) ? null : raw;
+  }
+
+  /// Drop ALL write-verdict samples + rejection reasons. One-shot upgrade
+  /// cleanup: samples recorded before the NIP-42/duplicate normalization
+  /// counted auth handshakes and slow-relay races as failures — stale data
+  /// that would keep flagging healthy relays after the fix ships.
+  Future<void> clearWriteStats() async {
+    await (delete(configTable)
+          ..where(
+            (c) =>
+                c.key.like('relay_write_stats:%') |
+                c.key.like('relay_write_reject:%'),
+          ))
+        .go();
+  }
+
   // --- Drafts (outbox: events that failed to publish, for retry) ---
 
   /// Save a draft event (failed to publish) for later retry. Returns the

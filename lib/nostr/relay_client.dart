@@ -87,8 +87,25 @@ class RelayClient implements RelayConnection {
   Timer? _reconnectTimer;
   bool _connected = false;
   bool _disposed = false;
+  // True once the current channel's WS/TLS handshake completed (ready fired).
+  // A channel whose handshake NEVER completed (GFW-blackholed relay) has a
+  // pending connect future, and its sink.close() would block forever on that
+  // future — dispose() uses this to abandon such sockets instantly instead of
+  // waiting out [_closeTimeout].
+  bool _channelReady = false;
   int _backoffMs = 1000;
   int _rttCounter = 0;
+
+  /// Cap for the WS/TLS handshake in [connect]. A relay whose handshake never
+  /// completes (GFW-blackholed foreign relays — SYN dropped or TLS stalled
+  /// mid-handshake — common from mainland China) must fail fast instead of
+  /// sitting on the OS-level connect timeout. Kept configurable so tests can
+  /// shorten it.
+  Duration connectTimeout = const Duration(seconds: 10);
+
+  /// Cap for the graceful close in [dispose]. See [dispose] — a handshake
+  /// that never completes would otherwise make dispose() hang forever.
+  static const Duration _closeTimeout = Duration(seconds: 2);
 
   void Function()? _onConnected;
   void Function()? _onDisconnected;
@@ -135,19 +152,22 @@ class RelayClient implements RelayConnection {
     if (_disposed || _connected) return;
     final channel = WebSocketChannel.connect(Uri.parse(url));
     _channel = channel;
+    _channelReady = false;
     // WebSocketChannel.connect is lazy — the WS/TLS handshake isn't done when
     // it returns. Await `ready` so `_connected` reflects a TRULY open socket.
     // Without this, GFW-blocked relays (handshake never completes) were marked
-    // "connected" (green/在线) while RTT probes timed out with no data. A 10s
-    // timeout lets silent black-holes fail fast instead of hanging.
+    // "connected" (green/在线) while RTT probes timed out with no data. The
+    // [connectTimeout] cap (default 10s) lets silent black-holes fail fast
+    // instead of hanging on the OS-level connect timeout.
     try {
-      await channel.ready.timeout(const Duration(seconds: 10));
+      await channel.ready.timeout(connectTimeout);
     } catch (_) {
       if (_disposed) return;
       _scheduleReconnect();
       return;
     }
     if (_disposed) return;
+    _channelReady = true;
     _sub = channel.stream.listen(
       _onData,
       onError: (Object _) => _handleDisconnect(),
@@ -315,7 +335,25 @@ class RelayClient implements RelayConnection {
     _disposed = true;
     _reconnectTimer?.cancel();
     await _sub?.cancel();
-    await _channel?.sink.close();
+    final channel = _channel;
+    if (channel != null) {
+      if (_channelReady) {
+        // Graceful WS close, capped: even an established socket must never be
+        // allowed to hang dispose (a dead peer that never acks the close).
+        try {
+          await channel.sink.close().timeout(_closeTimeout);
+        } catch (_) {
+          // Timed out or errored — the socket is abandoned; the OS reaps it.
+        }
+      } else {
+        // The handshake NEVER completed (GFW-blackholed SYN / stalled TLS):
+        // sink.close() would block forever on the still-pending connect
+        // future. Don't await it. Fire-and-forget so that IF the handshake
+        // does eventually finish, the pending close still tears the socket
+        // down (no leaked half-open connection) — but dispose returns now.
+        unawaited(channel.sink.close().catchError((Object _) {}));
+      }
+    }
     await _events.close();
     await _eose.close();
     await _notices.close();

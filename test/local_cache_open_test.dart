@@ -88,4 +88,47 @@ void main() {
         .toList();
     expect(corrupt, hasLength(1), reason: 'stale backups must be pruned');
   });
+
+  group('relay write-stats persistence', () {
+    test('write samples + reject reason round-trip', () async {
+      final dir = await Directory.systemTemp.createTemp('costr_cache_ws');
+      addTearDown(() => dir.delete(recursive: true));
+      final db = await openLocalCache('${dir.path}/costr.db');
+      addTearDown(db.close);
+
+      const url = 'wss://relay.example';
+      await db.pushWriteSample(url, true);
+      await db.pushWriteSample(url, false);
+      await db.setWriteRejectReason(url, 'blocked: pubkey is blacklisted');
+
+      expect(await db.readWriteSamples(url), [true, false]);
+      expect(
+        await db.readWriteRejectReason(url),
+        'blocked: pubkey is blacklisted',
+      );
+      // An accepted write clears the reason.
+      await db.setWriteRejectReason(url, '');
+      expect(await db.readWriteRejectReason(url), isNull);
+    });
+
+    test('clearWriteStats drops samples + reasons, keeps other config',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('costr_cache_clear');
+      addTearDown(() => dir.delete(recursive: true));
+      final db = await openLocalCache('${dir.path}/costr.db');
+      addTearDown(db.close);
+
+      await db.pushWriteSample('wss://a', true);
+      await db.pushWriteSample('wss://b', false);
+      await db.setWriteRejectReason('wss://b', 'rate-limited');
+      await db.writeConfig('unrelated_key', 'keep me');
+
+      await db.clearWriteStats();
+
+      expect(await db.readWriteSamples('wss://a'), isEmpty);
+      expect(await db.readWriteSamples('wss://b'), isEmpty);
+      expect(await db.readWriteRejectReason('wss://b'), isNull);
+      expect(await db.readConfig('unrelated_key'), 'keep me');
+    });
+  });
 }

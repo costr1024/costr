@@ -119,7 +119,7 @@ lib/
 ### 信息流拉取（关键设计）
 
 - **全球 tab**：`feedSubscriptionProvider` → `pool.request({kinds:[0,1,6,7], limit:200})`
-  广播到 8 台默认中继，**live 不 close-on-EOSE**（实时 reaction/metadata 持续到达）。
+  广播到 9 台默认中继，**live 不 close-on-EOSE**（实时 reaction/metadata 持续到达）。
 - **关注 tab**：`followingOutboxProvider` → `OutboxRouter` 按 followee 的 kind-10002 outbox
   分组定向拉取（详见上面的 SVG）。事件经 `EventStoreNotifier.ingest` 入内存库，`currentFeedEventsProvider`
   既有 `follows.contains(pubkey)` 过滤复用，UI 零改动。
@@ -244,9 +244,9 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 
 ## 默认中继
 
-主池（8 台，广播用）：`damus.bostr.online/`（damus 反代，便于大陆直连）·`relay.gulugulu.moe/`·
+主池（9 台，广播用）：`damus.bostr.online/`（damus 反代，便于大陆直连）·`relay.gulugulu.moe/`·
 `relay.ditto.pub/`（接受写入、被广泛订阅）·`relay.bostr.online/`（写入需 NIP-42 认证 + 白名单）·
-`wheat.happytavern.co/`·`relay.nostr.net/`·`relay.0xchat.com/`·`top.testrelay.top/`。
+`nostr.data.haus/`·`relay.momostr.pink/`·`relay.nostr.net/`·`relay.0xchat.com/`·`top.testrelay.top/`。
 
 搜索专用（NIP-50，独立 `searchPoolProvider`）：`relay.ditto.pub/`·`search.nos.today/`。
 索引中继（陌生用户资料补漏）：`indexer.coracle.social/`·`user.kindpag.es/`。

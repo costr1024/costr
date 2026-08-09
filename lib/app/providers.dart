@@ -42,7 +42,8 @@ const List<String> defaultRelays = <String>[
   'wss://relay.gulugulu.moe/',
   'wss://relay.ditto.pub/',
   'wss://relay.bostr.online/',
-  'wss://wheat.happytavern.co/',
+  'wss://nostr.data.haus/',
+  'wss://relay.momostr.pink/',
   'wss://relay.nostr.net/',
   'wss://relay.0xchat.com/',
   'wss://top.testrelay.top/',
@@ -666,9 +667,63 @@ final bootstrapProvider = FutureProvider<void>((ref) async {
   }
 });
 
+/// Pure list transform behind [_migrateWheatRelayOnce]: returns [stored]
+/// UNCHANGED (same instance) when it has no wheat, else a repaired copy with
+/// wheat swapped for nostr.data.haus in place and relay.momostr.pink appended
+/// when there is room. Kept pure + `@visibleForTesting` so the swap is
+/// unit-testable without a DB/Riverpod container.
+@visibleForTesting
+List<String> migrateWheatRelayList(List<String> stored) {
+  const wheat = 'wss://wheat.happytavern.co';
+  const dataHaus = 'wss://nostr.data.haus';
+  const momostr = 'wss://relay.momostr.pink';
+  final relays = stored.map(normalizeServerUrl).toList();
+  final i = relays.indexOf(wheat);
+  if (i < 0) return stored; // nothing to repair
+  relays[i] = dataHaus;
+  if (!relays.contains(momostr) && relays.length < maxServersPerCategory) {
+    relays.add(momostr);
+  }
+  return relays;
+}
+
+/// One-shot repair of a stored relay list that still contains the dead relay
+/// `wss://wheat.happytavern.co` (it now rejects this device's writes with
+/// "blocked: pubkey is blacklisted"). Applies [migrateWheatRelayList]. Every
+/// other entry is preserved — a list the user customized (that no longer has
+/// wheat) is left untouched. Must run BEFORE [serverListsProvider] is first
+/// read so the pool connects to the repaired list; guarded so a failure can
+/// never wedge startup.
+Future<void> _migrateWheatRelayOnce(Ref ref) async {
+  const marker = 'relay_list_wheat_migrated_v1';
+  try {
+    final db = await ref.read(localCacheProvider.future);
+    if (await db.readConfig(marker) == '1') return;
+    final key = serverListKeys[ServerCategory.relay]!;
+    final stored = await db.readServerList(key);
+    if (stored != null) {
+      final migrated = migrateWheatRelayList(stored);
+      if (!identical(migrated, stored)) {
+        await db.writeServerList(key, migrated);
+        // Drop the cached value (if any) so the next read sees the repair.
+        ref.invalidate(serverListsProvider);
+      }
+    }
+    await db.writeConfig(marker, '1');
+  } catch (_) {
+    // Best-effort: never block startup on the migration.
+  }
+}
+
 Future<void> _runBootstrap(Ref ref) async {
   await ref.watch(identityProvider.future);
   final pool = ref.read(relayPoolProvider);
+  // One-shot relay-list repair, BEFORE the persisted list is read below:
+  // wheat.happytavern.co started rejecting this device's writes
+  // ("blocked: pubkey is blacklisted"), so swap it for nostr.data.haus and
+  // add relay.momostr.pink (both verified read+write). Existing installs keep
+  // their stored list otherwise — this only touches the dead relay.
+  await _migrateWheatRelayOnce(ref);
   // Apply the user's persisted server lists BEFORE the first connect:
   // updateUrls on a never-connected pool is a pure list swap, so the pool
   // then connects to exactly what the user configured. Reading the pools here
@@ -692,15 +747,39 @@ Future<void> _runBootstrap(Ref ref) async {
   };
   // Per-relay WRITE success-rate statistics (服务器节点 page flags relays
   // whose writes keep failing and suggests replacing them): persist every
-  // explicit publish verdict. Reads are deliberately never measured — a relay
-  // that accepts writes can almost always be read from. Only the main pool
-  // publishes (search/indexer pools are REQ-only).
-  pool.onWriteVerdict = (url, ok) {
+  // explicit publish verdict. `ok` is the EFFECTIVE outcome (accepted, or a
+  // NIP-20 duplicate — the event is stored either way); NIP-42 auth-required
+  // rejections never arrive here (transient handshake, retried automatically).
+  // Reads are deliberately never measured — a relay that accepts writes can
+  // almost always be read from. Only the main pool publishes (search/indexer
+  // pools are REQ-only). The raw rejection reason is also kept so the node
+  // page can show WHY a relay keeps failing (blocked / rate-limited / …).
+  pool.onWriteVerdict = (url, ok, reason) {
     final db = ref.read(localCacheProvider).value;
     if (db != null) {
       unawaited(db.pushWriteSample(url, ok).catchError((Object _) {}));
+      // Keep the freshest rejection reason for diagnostics; an accepted
+      // write clears it so a recovered relay isn't shown a stale «why».
+      unawaited(
+        db
+            .setWriteRejectReason(url, ok ? '' : (reason ?? ''))
+            .catchError((Object _) {}),
+      );
     }
   };
+  // One-shot upgrade cleanup: write samples recorded before the NIP-42 /
+  // duplicate normalization fix counted auth handshakes as failures
+  // (healthy auth-gated relays showed a falsely-low 发帖成功率). Clear them
+  // once so the stale false alarm doesn't survive into the fixed build.
+  try {
+    final db = await ref.read(localCacheProvider.future);
+    if (await db.readConfig('write_stats_v2_cleared') != '1') {
+      await db.clearWriteStats();
+      await db.writeConfig('write_stats_v2_cleared', '1');
+    }
+  } catch (_) {
+    // No DB → nothing to migrate.
+  }
   // NIP-65: publish our relay list (kind 10002) in the background so other
   // clients can discover the author's relays (outbox/inbox model). Fire-and-
   // forget — must not block the router. kind 10002 is replaceable, so

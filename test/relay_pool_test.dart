@@ -470,10 +470,11 @@ void main() {
     test(
       'success returns on the FIRST relay ack, not after the slowest',
       () async {
-        // Regression for the "发帖/回帖要等 1～3s" latency: _collectOks used to
-        // wait for EVERY relay's verdict (or the full per-round cap), so one
-        // slow/silent relay made the whole send wait even after a fast relay
-        // acked within ~RTT. Now the success path returns on the first ok:true.
+        // Regression for the "发帖/回帖要等 1～3s" latency: the verdict round
+        // used to wait for EVERY relay's verdict (or the full per-round cap),
+        // so one slow/silent relay made the whole send wait even after a fast
+        // relay acked within ~RTT. Now `_PublishRound.early` resolves on the
+        // first effective ok.
         final fast = _FakeRelay('wss://fast');
         final slow = _FakeRelay('wss://slow'); // never acks
         final pool = RelayPool([fast, slow]);
@@ -539,16 +540,18 @@ void main() {
     test('onWriteVerdict records explicit accept/reject; silent relays NOT '
         'recorded', () async {
       // Write success-rate statistics must only count EXPLICIT verdicts:
-      // _collectOks returns early on the first accept, so a relay without a
-      // verdict was usually just slower — recording it as a failure would
-      // frame every healthy-but-slow relay as broken.
+      // publishAndWait returns early on the first accept, so a relay without
+      // a verdict was usually just slower — recording it as a failure would
+      // frame every healthy-but-slow relay as broken. Verdicts are recorded
+      // as they arrive (_PublishRound), including ones landing just before
+      // the first accept closes the round.
       final a = _FakeRelay('wss://a');
       final b = _FakeRelay('wss://b');
       final silent = _FakeRelay('wss://silent');
       final pool = RelayPool([a, b, silent]);
       await pool.connect();
       final verdicts = <String, bool>{};
-      pool.onWriteVerdict = (url, ok) => verdicts[url] = ok;
+      pool.onWriteVerdict = (url, ok, reason) => verdicts[url] = ok;
       final ev = _event('wv1');
       final fut = pool.publishAndWait(
         ev,
@@ -581,7 +584,7 @@ void main() {
       final pool = RelayPool([a]);
       await pool.connect();
       final verdicts = <String, bool>{};
-      pool.onWriteVerdict = (url, ok) => verdicts[url] = ok;
+      pool.onWriteVerdict = (url, ok, reason) => verdicts[url] = ok;
       final ev = _event('wv2');
       final ok = await pool.publishAndWait(
         ev,
@@ -590,6 +593,105 @@ void main() {
       );
       expect(ok.ok, isFalse);
       expect(verdicts, isEmpty);
+      await pool.dispose();
+    });
+
+    test('onWriteVerdict: NIP-42 auth-required is NOT recorded (transient)',
+        () async {
+      // An auth-required rejection is the NIP-42 handshake, not a write
+      // failure: the pool answers the AUTH challenge and retries. Counting it
+      // against the relay is what made healthy auth-gated relays (e.g. the
+      // user's own relay.bostr.online) show a falsely-low 发帖成功率.
+      final fast = _FakeRelay('wss://fast');
+      final auth = _FakeRelay('wss://auth');
+      final pool = RelayPool([fast, auth]);
+      await pool.connect();
+      final verdicts = <String, bool>{};
+      pool.onWriteVerdict = (url, ok, reason) => verdicts[url] = ok;
+      final ev = _event('wv3');
+      final fut = pool.publishAndWait(
+        ev,
+        retryDelays: const [Duration(milliseconds: 30)],
+        perRoundTimeout: const Duration(milliseconds: 60),
+      );
+      await Future<void>.delayed(Duration.zero);
+      // fast accepts (success); auth rejects with auth-required (transient).
+      fast.emitOk(RelayOk(ev.id, true, '', url: 'wss://fast'));
+      auth.emitOk(
+        RelayOk(ev.id, false, 'auth-required: please auth', url: 'wss://auth'),
+      );
+      final ok = await fut;
+      expect(ok.ok, isTrue);
+      // Only fast's acceptance is recorded; the auth rejection is skipped.
+      expect(verdicts, {'wss://fast': true});
+      expect(verdicts.containsKey('wss://auth'), isFalse);
+      await pool.dispose();
+    });
+
+    test('onWriteVerdict: duplicate:false counts as success (event stored)',
+        () async {
+      // A relay answering ok:false with a `duplicate:` reason already HAS the
+      // event (NIP-20) — that is a successful publish outcome, not a failure,
+      // and must not be retried.
+      final fast = _FakeRelay('wss://fast');
+      final dup = _FakeRelay('wss://dup');
+      final pool = RelayPool([fast, dup]);
+      await pool.connect();
+      final verdicts = <String, bool>{};
+      pool.onWriteVerdict = (url, ok, reason) => verdicts[url] = ok;
+      final ev = _event('wv4');
+      final fut = pool.publishAndWait(
+        ev,
+        retryDelays: const [Duration(milliseconds: 30)],
+        perRoundTimeout: const Duration(milliseconds: 60),
+      );
+      await Future<void>.delayed(Duration.zero);
+      fast.emitOk(RelayOk(ev.id, true, '', url: 'wss://fast'));
+      dup.emitOk(
+        RelayOk(ev.id, false, 'duplicate: have this event', url: 'wss://dup'),
+      );
+      final ok = await fut;
+      expect(ok.ok, isTrue);
+      // dup's duplicate:false lands a hair after fast's accept closed the
+      // round early; flush the delivery chain so it is recorded.
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      // dup's duplicate:false is normalized to success (effectiveOk).
+      expect(verdicts, {'wss://fast': true, 'wss://dup': true});
+      // dup was published exactly once — a duplicate is never re-sent.
+      expect(dup.sent.where((m) => m[0] == 'EVENT').length, 1);
+      await pool.dispose();
+    });
+
+    test('slow relay late verdict is recorded and NOT re-sent', () async {
+      // After the first relay accepts, publishAndWait returns early but keeps
+      // collecting until the round window closes. A slower relay whose OK
+      // lands within that window must be recorded as a success and must NOT
+      // receive a duplicate background re-send (the old behavior re-sent to
+      // every relay that was merely slower than the fastest).
+      final fast = _FakeRelay('wss://fast');
+      final slow = _FakeRelay('wss://slow');
+      final pool = RelayPool([fast, slow]);
+      await pool.connect();
+      final verdicts = <String, bool>{};
+      pool.onWriteVerdict = (url, ok, reason) => verdicts[url] = ok;
+      final ev = _event('wv5');
+      final fut = pool.publishAndWait(
+        ev,
+        retryDelays: const [Duration(milliseconds: 10)],
+        perRoundTimeout: const Duration(milliseconds: 80),
+      );
+      await Future<void>.delayed(Duration.zero);
+      fast.emitOk(RelayOk(ev.id, true, '', url: 'wss://fast'));
+      final ok = await fut;
+      expect(ok.ok, isTrue);
+      // The slow relay answers a moment later, still inside the 80ms window.
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      slow.emitOk(RelayOk(ev.id, true, '', url: 'wss://slow'));
+      // Let the settled-window continuation run.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(verdicts, {'wss://fast': true, 'wss://slow': true});
+      // slow was published exactly once — NO duplicate background re-send.
+      expect(slow.sent.where((m) => m[0] == 'EVENT').length, 1);
       await pool.dispose();
     });
   });

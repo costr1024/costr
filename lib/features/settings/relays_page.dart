@@ -61,6 +61,10 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   // relay section only — publishing is the fragile direction, so read relays
   // (search/indexer) and blossom are deliberately not measured.
   final Map<String, List<bool>> _writeSamples = {};
+  // Per-relay most-recent WRITE rejection reason (raw relay OK reason), shown
+  // under the success-rate warning so the user sees WHY a relay keeps failing
+  // (blocked / rate-limited / auth…). Absent = healthy or never rejected.
+  final Map<String, String> _rejectReason = {};
   // Live relay connection status from the pool's status stream.
   final Map<String, RelayStatus> _relayStatus = {};
   final Map<String, RelayStatus> _searchStatus = {};
@@ -149,6 +153,8 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     for (final url in _relays) {
       _relayCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
       _writeSamples[url] = await cache.readWriteSamples(url);
+      final reason = await cache.readWriteRejectReason(url);
+      if (reason != null) _rejectReason[url] = reason;
     }
     for (final url in _blossom) {
       _blossomCache[url] = await cache.readRtt(url, prefix: 'blossom_rtt');
@@ -176,6 +182,12 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
         final cache = await ref.read(localCacheProvider.future);
         for (final url in _relays) {
           _writeSamples[url] = await cache.readWriteSamples(url);
+          final reason = await cache.readWriteRejectReason(url);
+          if (reason != null) {
+            _rejectReason[url] = reason;
+          } else {
+            _rejectReason.remove(url);
+          }
         }
       } catch (_) {}
     }
@@ -290,6 +302,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
           samples: _relayCache[url] ?? const <int>[],
           measuring: _measuring.contains('relay|$url'),
           warning: warning,
+          rejectReason: warning != null ? _rejectReason[url] : null,
           onTap: warning != null
               ? () => _openCustomize(ServerCategory.relay)
               : null,
@@ -481,6 +494,7 @@ class _ServerRow extends StatelessWidget {
     required this.samples,
     required this.measuring,
     this.warning,
+    this.rejectReason,
     this.onTap,
   });
 
@@ -494,6 +508,10 @@ class _ServerRow extends StatelessWidget {
   /// under the URL, e.g. 「近期发送 5 次仅成功 1 次，建议更换」.
   final String? warning;
 
+  /// The relay's most recent write-rejection reason, shown under [warning]
+  /// when present so the user sees WHY (e.g. "blocked: pubkey is blacklisted").
+  final String? rejectReason;
+
   /// Set (together with [warning]) when the row should tap through to the
   /// customize sheet to swap the failing relay.
   final VoidCallback? onTap;
@@ -505,6 +523,10 @@ class _ServerRow extends StatelessWidget {
         ? Colors.green
         : (connecting ? Colors.amber : Colors.red);
     final trailing = _trailing(theme, CostrColors.of(context).text3);
+    final errorStyle = theme.textTheme.bodySmall?.copyWith(
+      fontWeight: FontWeight.w600,
+      color: theme.colorScheme.error,
+    );
     return ListTile(
       dense: true,
       visualDensity: const VisualDensity(horizontal: 0, vertical: -3),
@@ -513,12 +535,18 @@ class _ServerRow extends StatelessWidget {
       title: Text(url, style: theme.textTheme.bodyMedium),
       subtitle: warning == null
           ? null
-          : Text(
-              warning!,
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: theme.colorScheme.error,
-              ),
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(warning!, style: errorStyle),
+                if (rejectReason != null && rejectReason!.isNotEmpty)
+                  Text(
+                    '原因：$rejectReason',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.error.withValues(alpha: 0.8),
+                    ),
+                  ),
+              ],
             ),
       trailing: trailing,
       onTap: onTap,

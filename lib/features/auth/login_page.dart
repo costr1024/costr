@@ -21,7 +21,7 @@ class LoginPage extends ConsumerStatefulWidget {
 
   /// Multi-account ADD flow (`/login?add=1`): reached from the settings page
   /// while already logged in. The new account becomes active on success and
-  /// the user is returned to settings instead of the feed.
+  /// the user lands on the home page (feed) — same as a normal login.
   final bool addMode;
 
   @override
@@ -51,19 +51,26 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     setState(() => _busy = true);
     try {
       if (widget.addMode) {
-        // Add-flow: leave /login BEFORE login() flips identityProvider. The
-        // flip fires the router refresh synchronously; refreshing while still
-        // on /login?add=1 replays a stale route state and strands the user on
-        // the login page ("添加账号后停留在登录页面" bug). From /settings the
-        // refresh re-evaluates a logged-in-valid location and stays put.
-        if (context.canPop()) {
-          context.pop();
-        } else {
-          context.go('/settings');
-        }
+        // Add-flow: leave /login BEFORE login() flips identityProvider (a
+        // refresh while still on /login?add=1 strands the user on the login
+        // page). Land on the HOME page inside the shell — staying on
+        // /settings (the old behavior) left the user without a bottom nav bar
+        // and a back button that exits the app ("新增账号后无法返回主页" bug).
+        final notifier = ref.read(identityProvider.notifier);
+        context.go('/feed');
+        // The shell route was paused (TickerMode off) while /login covered it.
+        // Let it finish resuming BEFORE the identity flip: flipping identity
+        // first and resuming the shell in the SAME frame flushes the pending
+        // invalidation inside the resume's build → "setState during build".
+        // The real login's storage await spans a frame anyway; make it
+        // deterministic. The notifier is captured above because this page is
+        // torn down by the navigation.
+        await WidgetsBinding.instance.endOfFrame;
+        await notifier.login(nsec);
+        return;
       }
       await ref.read(identityProvider.notifier).login(nsec);
-      if (mounted && !widget.addMode) context.go('/feed');
+      if (mounted) context.go('/feed');
     } catch (e) {
       _snack('登录失败：$e');
     } finally {
@@ -280,10 +287,13 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
       if (widget.addMode) {
         // Add-flow: leave the login route BEFORE login() flips
         // identityProvider — refreshing while still on /login?add=1 replays
-        // a stale route state and strands the user on the login page
-        // ("添加账号后停留在登录页面" bug). Publish the nick with the NEW
-        // (not yet active) identity first: the navigation below tears this
-        // page down, so the post-login publish path can't run from here.
+        // a stale route state and strands the user on the login page. Land on
+        // the HOME page inside the shell: the old go('/settings') replaced
+        // the route stack with a shell-less settings page — no bottom nav bar,
+        // back button exits the app ("新增账号后无法返回主页" bug). Publish the
+        // nick with the NEW (not yet active) identity first: the navigation
+        // below tears this page down, so the post-login publish path can't
+        // run from here.
         if (nick.isNotEmpty) {
           final newIdentity = Identity.fromNsec(_newNsec);
           final signed = NostrActions(
@@ -291,8 +301,12 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
           ).setMetadata('{"name":"$nick"}');
           ref.read(relayPoolProvider).publish(signed);
         }
-        GoRouter.of(context).go('/settings');
-        await ref.read(identityProvider.notifier).login(_newNsec);
+        final notifier = ref.read(identityProvider.notifier);
+        GoRouter.of(context).go('/feed');
+        // Let the paused shell finish resuming BEFORE the identity flip —
+        // see _importKey for the setState-during-build this avoids.
+        await WidgetsBinding.instance.endOfFrame;
+        await notifier.login(_newNsec);
         return;
       }
       await ref.read(identityProvider.notifier).login(_newNsec);

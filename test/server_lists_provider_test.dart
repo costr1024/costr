@@ -636,4 +636,56 @@ void main() {
       );
     });
   });
+
+  group('migrateWheatRelayList', () {
+    test('swaps wheat for data.haus in place and appends momostr', () {
+      final stored = [
+        'wss://relay.gulugulu.moe',
+        'wss://wheat.happytavern.co',
+        'wss://relay.ditto.pub',
+      ];
+      expect(migrateWheatRelayList(stored), [
+        'wss://relay.gulugulu.moe',
+        'wss://nostr.data.haus',
+        'wss://relay.ditto.pub',
+        'wss://relay.momostr.pink',
+      ]);
+    });
+
+    test('list without wheat is returned unchanged (same instance)', () {
+      final stored = ['wss://relay.gulugulu.moe', 'wss://relay.ditto.pub'];
+      final out = migrateWheatRelayList(stored);
+      expect(identical(out, stored), isTrue);
+    });
+
+    test('normalizes a trailing-slash wheat entry', () {
+      final stored = ['wss://wheat.happytavern.co/'];
+      expect(migrateWheatRelayList(stored), [
+        'wss://nostr.data.haus',
+        'wss://relay.momostr.pink',
+      ]);
+    });
+
+    test('does not exceed the per-category cap when adding momostr', () {
+      final stored = List<String>.generate(
+        maxServersPerCategory,
+        (i) => i == 0 ? 'wss://wheat.happytavern.co' : 'wss://r$i.example',
+      );
+      final out = migrateWheatRelayList(stored);
+      expect(out, hasLength(maxServersPerCategory));
+      expect(out, contains('wss://nostr.data.haus'));
+      expect(out, isNot(contains('wss://relay.momostr.pink')));
+    });
+
+    test('does not duplicate momostr if already present', () {
+      final stored = [
+        'wss://wheat.happytavern.co',
+        'wss://relay.momostr.pink',
+      ];
+      expect(migrateWheatRelayList(stored), [
+        'wss://nostr.data.haus',
+        'wss://relay.momostr.pink',
+      ]);
+    });
+  });
 }

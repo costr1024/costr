@@ -41,7 +41,10 @@ import 'local_cache.dart' as cache;
 
 const int maxRecommendations = 10;
 const int maxProbeCandidates = 20;
-const int discoveryConcurrency = 4;
+// Probing is mostly WAITING (WS handshake + NIP-11 fetch, both capped), so a
+// wider pool keeps the total wall time short even when many candidates are
+// GFW-blocked and each burns its full connect timeout.
+const int discoveryConcurrency = 8;
 const Duration discoveryCacheTtl = Duration(hours: 24);
 
 /// Config key holding the cached recommendation (`{"at":…, "urls":[…]}`).
@@ -253,10 +256,16 @@ Future<Nip11Info?> fetchNip11(
 /// frame within [timeout] after connect. Follows RelayPool.fetchFromUrls'
 /// transient-client discipline: subscriptions cancelled + client disposed on
 /// EVERY exit path. [makeClient] is injectable (tests use a fake).
+///
+/// [connectTimeout] is deliberately SHORT (default 5s): from mainland China a
+/// GFW-blocked foreign relay never completes its WS handshake, and every such
+/// candidate must fail fast so a recommendation run isn't dragged out by a
+/// long tail of unreachable relays (the "一直加载中" complaint).
 Future<bool> probeRelayAlive(
   String url, {
   RelayConnection Function(String url)? makeClient,
   Duration timeout = const Duration(seconds: 8),
+  Duration connectTimeout = const Duration(seconds: 5),
 }) async {
   final c = (makeClient ?? RelayClient.new)(url);
   final done = Completer<void>();
@@ -268,9 +277,10 @@ Future<bool> probeRelayAlive(
   });
   try {
     // RelayClient.connect never throws — it awaits the handshake (10s cap
-    // internally) and leaves isConnected false on failure; the extra timeout
-    // covers fakes/odd transports that could hang.
-    await c.connect().timeout(timeout);
+    // internally) and leaves isConnected false on failure; the [connectTimeout]
+    // wrapper fails fast on GFW-blackholed relays, and also covers fakes/odd
+    // transports that could hang.
+    await c.connect().timeout(connectTimeout);
     if (!c.isConnected) return false;
     c.request('costr:probe', const {
       'kinds': [1],
