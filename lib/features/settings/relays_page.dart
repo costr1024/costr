@@ -57,6 +57,10 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   final Map<String, List<int>> _blossomCache = {};
   final Map<String, List<int>> _searchCache = {};
   final Map<String, List<int>> _indexerCache = {};
+  // Per-relay WRITE success-rate samples (last 10 publish verdicts) for the
+  // relay section only — publishing is the fragile direction, so read relays
+  // (search/indexer) and blossom are deliberately not measured.
+  final Map<String, List<bool>> _writeSamples = {};
   // Live relay connection status from the pool's status stream.
   final Map<String, RelayStatus> _relayStatus = {};
   final Map<String, RelayStatus> _searchStatus = {};
@@ -144,6 +148,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     _blossom = lists.blossom;
     for (final url in _relays) {
       _relayCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
+      _writeSamples[url] = await cache.readWriteSamples(url);
     }
     for (final url in _blossom) {
       _blossomCache[url] = await cache.readRtt(url, prefix: 'blossom_rtt');
@@ -163,6 +168,17 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     final pool = ref.read(relayPoolProvider);
     final searchPool = ref.read(searchPoolProvider);
     final indexerPool = ref.read(indexerPoolProvider);
+    // Refresh write success-rate samples (one cheap config read per relay) so
+    // a relay that keeps failing publishes gets flagged while this page stays
+    // open — not only on entry.
+    if (_relays.isNotEmpty) {
+      try {
+        final cache = await ref.read(localCacheProvider.future);
+        for (final url in _relays) {
+          _writeSamples[url] = await cache.readWriteSamples(url);
+        }
+      } catch (_) {}
+    }
     // Relay targets: only connected relays.
     final relayTargets = _relays
         .where((u) => _relayStatus[u] == RelayStatus.connected)
@@ -191,6 +207,9 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
         searchTargets.isEmpty &&
         indexerTargets.isEmpty &&
         blossomTargets.isEmpty) {
+      // Still rebuild: the write success-rate samples above may have changed
+      // even when there is no RTT to measure (e.g. all relays offline).
+      if (mounted) setState(() {});
       return;
     }
     if (mounted) setState(() {});
@@ -257,6 +276,26 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // Relay rows are pre-built so each row computes its write-rate warning
+    // once (the warning also decides whether the row taps through to the
+    // customize sheet).
+    final relayRows = <Widget>[];
+    for (final url in _relays) {
+      final warning = writeRateWarning(_writeSamples[url] ?? const <bool>[]);
+      relayRows.add(
+        _ServerRow(
+          url: url,
+          online: _relayStatus[url] == RelayStatus.connected,
+          connecting: _relayStatus[url] == RelayStatus.connecting,
+          samples: _relayCache[url] ?? const <int>[],
+          measuring: _measuring.contains('relay|$url'),
+          warning: warning,
+          onTap: warning != null
+              ? () => _openCustomize(ServerCategory.relay)
+              : null,
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('服务器节点'),
@@ -276,7 +315,8 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               '下面每台服务器显示它对本机的响应速度（数字越小越快，单位毫秒）。'
               '保留最近 $_kKeep 次取平均，停留此页时每 '
               '${_kRefreshInterval.inSeconds} 秒自动重测一次。'
-              '绿色=快，黄色=较慢，红色=连不上。',
+              '绿色=快，黄色=较慢，红色=连不上。'
+              '中继服务器还会记录你的发帖成功率，反复发送失败会标红并建议更换。',
               style: theme.textTheme.bodySmall,
             ),
           ),
@@ -284,14 +324,7 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
             '中继服务器',
             onCustomize: () => _openCustomize(ServerCategory.relay),
           ),
-          for (final url in _relays)
-            _ServerRow(
-              url: url,
-              online: _relayStatus[url] == RelayStatus.connected,
-              connecting: _relayStatus[url] == RelayStatus.connecting,
-              samples: _relayCache[url] ?? const <int>[],
-              measuring: _measuring.contains('relay|$url'),
-            ),
+          ...relayRows,
           _SectionHeader(
             '搜索中继（NIP-50）',
             onCustomize: () => _openCustomize(ServerCategory.search),
@@ -447,6 +480,8 @@ class _ServerRow extends StatelessWidget {
     required this.connecting,
     required this.samples,
     required this.measuring,
+    this.warning,
+    this.onTap,
   });
 
   final String url;
@@ -454,6 +489,14 @@ class _ServerRow extends StatelessWidget {
   final bool connecting; // connecting / not-yet-probed (ambiguous → spinner)
   final List<int> samples;
   final bool measuring;
+
+  /// Write success-rate warning (relay section only): shown as a red subtitle
+  /// under the URL, e.g. 「近期发送 5 次仅成功 1 次，建议更换」.
+  final String? warning;
+
+  /// Set (together with [warning]) when the row should tap through to the
+  /// customize sheet to swap the failing relay.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -468,7 +511,17 @@ class _ServerRow extends StatelessWidget {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       leading: Icon(Icons.circle, color: dotColor, size: 12),
       title: Text(url, style: theme.textTheme.bodyMedium),
+      subtitle: warning == null
+          ? null
+          : Text(
+              warning!,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.error,
+              ),
+            ),
       trailing: trailing,
+      onTap: onTap,
     );
   }
 

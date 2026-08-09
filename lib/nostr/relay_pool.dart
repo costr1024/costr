@@ -520,6 +520,19 @@ class RelayPool {
     }
     await completer.future.timeout(perRound, onTimeout: () {});
     await sub.cancel();
+    // Write success-rate statistics: record ONLY explicit verdicts. A relay
+    // without a verdict was usually just SLOWER than the first relay to
+    // accept (this method returns early on the first ok:true) — counting
+    // that as a failure would frame every healthy-but-slow relay as broken.
+    // Genuinely dead relays surface as 离线 on the node page instead; relays
+    // that keep REJECTING writes accumulate ok=false here, which is exactly
+    // the "suggest replacing this relay" signal.
+    final verdictHook = onWriteVerdict;
+    if (verdictHook != null) {
+      for (final entry in verdicts.entries) {
+        verdictHook(entry.key, entry.value.ok);
+      }
+    }
     return verdicts;
   }
 
@@ -569,6 +582,15 @@ class RelayPool {
   void Function(Event event)? _onPublishExhausted;
   set onPublishExhausted(void Function(Event event)? fn) =>
       _onPublishExhausted = fn;
+
+  /// Per-relay WRITE verdict hook for send success-rate statistics (the
+  /// 服务器节点 page flags relays whose writes keep failing). Invoked once per
+  /// relay that returns an EXPLICIT verdict in a publish round: true = OK
+  /// accepted, false = rejected. Relays with no verdict in the window are
+  /// NOT reported — see [_collectOks] for why a timeout here is not evidence
+  /// of failure. Read paths are deliberately never measured: a relay that
+  /// accepts writes can almost always be read from.
+  void Function(String url, bool ok)? onWriteVerdict;
 
   void _emitStatus() {
     if (!_status.isClosed) {

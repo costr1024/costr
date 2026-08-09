@@ -556,7 +556,7 @@
       <button class="iconbtn" title="重新测速" onclick="alert('正在重新测速（demo 占位）')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
     </div>
     <div class="content">
-      <div style="padding:12px 16px 4px;color:var(--tx3);font-size:12px;line-height:1.5">下面每台服务器显示它对本机的响应速度（数字越小越快，单位毫秒）。保留最近 3 次取平均，停留此页时每 5 秒自动重测一次。绿色=快，黄色=较慢，红色=连不上。</div>
+      <div style="padding:12px 16px 4px;color:var(--tx3);font-size:12px;line-height:1.5">下面每台服务器显示它对本机的响应速度（数字越小越快，单位毫秒）。保留最近 3 次取平均，停留此页时每 5 秒自动重测一次。绿色=快，黄色=较慢，红色=连不上。中继服务器还会记录你的发帖成功率，反复发送失败会标红并建议更换。</div>
 
       <!-- 每类标题行：左侧类名 + 右侧「自定义」入口（高级功能） -->
       <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);padding:4px 8px 4px 16px;margin-top:10px">
@@ -566,7 +566,7 @@
       <div style="background:var(--bg);border-top:1px solid var(--bd)">
         <div style="display:flex;align-items:center;gap:10px;padding:7px 16px"><span style="width:9px;height:9px;border-radius:50%;background:#17bf63;flex:none"></span><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">wss://relay.ditto.pub</span><b style="font-size:13px;color:#17bf63">86ms</b></div>
         <div style="display:flex;align-items:center;gap:10px;padding:7px 16px;border-top:1px solid var(--bd)"><span style="width:9px;height:9px;border-radius:50%;background:#17bf63;flex:none"></span><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">wss://relay.gulugulu.moe</span><b style="font-size:13px;color:#17bf63">112ms</b></div>
-        <div style="display:flex;align-items:center;gap:10px;padding:7px 16px;border-top:1px solid var(--bd)"><span style="width:9px;height:9px;border-radius:50%;background:#ffad1f;flex:none"></span><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">wss://relay.nostr.net</span><b style="font-size:13px;color:#ffad1f">210ms</b></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:7px 16px;border-top:1px solid var(--bd)"><span style="width:9px;height:9px;border-radius:50%;background:#ffad1f;flex:none"></span><span style="flex:1;min-width:0"><span style="display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">wss://relay.nostr.net</span><span style="display:block;font-size:12px;color:#f4212e;font-weight:600">近期发送 5 次仅成功 1 次，建议更换</span></span><b style="font-size:13px;color:#ffad1f">210ms</b></div>
         <div style="display:flex;align-items:center;gap:10px;padding:7px 16px;border-top:1px solid var(--bd)"><span style="width:9px;height:9px;border-radius:50%;background:#f4212e;flex:none"></span><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">wss://top.testrelay.top</span><b style="font-size:13px;color:#f4212e">离线</b></div>
       </div>
 
@@ -765,6 +765,17 @@
           <button style="border:none;background:var(--brand);color:#fff;border-radius:999px;padding:0 18px;font:600 14px var(--font);cursor:pointer">添加</button>
         </div>
         <div style="color:var(--tx3);font-size:12px;margin-top:8px">共 3 台 · 最多 10 台 · 至少保留 3 台</div>
+        <!-- 为你推荐：去中心化探测结果（他人公开的服务器列表投票 + 实测通过），一键添加进草稿 -->
+        <div style="margin-top:14px;border-top:1px solid var(--bd);padding-top:10px">
+          <div style="display:flex;align-items:center">
+            <b style="font-size:14px">为你推荐</b>
+            <span style="flex:1"></span>
+            <button style="border:none;background:none;color:var(--brand);font:600 13px var(--font);cursor:pointer;padding:4px">换一批</button>
+          </div>
+          <div style="color:var(--tx3);font-size:12px;margin-top:2px">这些服务器经过检测：能连上、免费。推荐来自其他用户公开的服务器列表，不依赖任何中心服务器。</div>
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bd)"><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">wss://relay.damus.io</span><button style="border:1px solid var(--bd);background:none;color:var(--brand);border-radius:999px;padding:4px 14px;font:600 13px var(--font);cursor:pointer">添加</button></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">wss://nos.lol</span><button style="border:1px solid var(--bd);background:none;color:var(--tx3);border-radius:999px;padding:4px 14px;font:600 13px var(--font)">已添加</button></div>
+        </div>
         <div style="display:flex;align-items:center;gap:10px;margin-top:16px">
           <button style="border:none;background:none;color:var(--brand);font:600 14px var(--font);cursor:pointer;padding:8px">恢复默认</button>
           <span style="flex:1"></span>

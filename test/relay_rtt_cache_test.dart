@@ -53,6 +53,58 @@ void main() {
     });
   });
 
+  group('LocalCache write success-rate samples', () {
+    late LocalCache db;
+
+    setUp(() {
+      db = LocalCache(NativeDatabase.memory());
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    test('readWriteSamples returns empty when no samples', () async {
+      expect(await db.readWriteSamples('wss://a'), isEmpty);
+    });
+
+    test('pushWriteSample stores and reads back verdicts FIFO', () async {
+      await db.pushWriteSample('wss://a', true);
+      await db.pushWriteSample('wss://a', false);
+      await db.pushWriteSample('wss://a', true);
+      expect(await db.readWriteSamples('wss://a'), [true, false, true]);
+    });
+
+    test(
+      'pushWriteSample keeps only the most recent 10 (FIFO eviction)',
+      () async {
+        // 7 accepts then 5 rejects: the first 2 accepts get evicted.
+        for (var i = 0; i < 7; i++) {
+          await db.pushWriteSample('wss://a', true);
+        }
+        for (var i = 0; i < 5; i++) {
+          await db.pushWriteSample('wss://a', false);
+        }
+        final samples = await db.readWriteSamples('wss://a');
+        expect(samples.length, 10);
+        expect(samples.where((s) => s).length, 5);
+        expect(samples.last, isFalse);
+      },
+    );
+
+    test('samples are isolated per relay', () async {
+      await db.pushWriteSample('wss://a', true);
+      await db.pushWriteSample('wss://b', false);
+      expect(await db.readWriteSamples('wss://a'), [true]);
+      expect(await db.readWriteSamples('wss://b'), [false]);
+    });
+
+    test('corrupt stored value is treated as empty', () async {
+      await db.writeConfig('relay_write_stats:wss://a', 'not-json');
+      expect(await db.readWriteSamples('wss://a'), isEmpty);
+    });
+  });
+
   group('averageRtt', () {
     test('null when empty', () {
       expect(averageRtt(const <int>[]), isNull);

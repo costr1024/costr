@@ -29,6 +29,7 @@ import '../services/account_registry.dart';
 import '../services/local_cache.dart' as cache;
 import '../services/blossom_upload.dart';
 import '../services/secure_storage_service.dart';
+import '../services/server_discovery.dart';
 import 'server_list_rules.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -689,6 +690,17 @@ Future<void> _runBootstrap(Ref ref) async {
       unawaited(db.saveDraft(jsonEncode(event.toWireObject())));
     }
   };
+  // Per-relay WRITE success-rate statistics (服务器节点 page flags relays
+  // whose writes keep failing and suggests replacing them): persist every
+  // explicit publish verdict. Reads are deliberately never measured — a relay
+  // that accepts writes can almost always be read from. Only the main pool
+  // publishes (search/indexer pools are REQ-only).
+  pool.onWriteVerdict = (url, ok) {
+    final db = ref.read(localCacheProvider).value;
+    if (db != null) {
+      unawaited(db.pushWriteSample(url, ok).catchError((Object _) {}));
+    }
+  };
   // NIP-65: publish our relay list (kind 10002) in the background so other
   // clients can discover the author's relays (outbox/inbox model). Fire-and-
   // forget — must not block the router. kind 10002 is replaceable, so
@@ -840,6 +852,28 @@ Future<List<String>> currentBlossomServers(WidgetRef ref) async {
   } catch (_) {
     return blossomServersConst;
   }
+}
+
+/// Decentralized server recommendations for the customize sheet — candidates
+/// come from the user's own view of the network (cached/live kind-10002 +
+/// kind-10063 lists) and every candidate is probed before being recommended
+/// (see services/server_discovery.dart). Empty = nothing recommendable; the
+/// sheet hides the block. Indexer has no recommendations this iteration.
+Future<List<String>> recommendServers(
+  WidgetRef ref,
+  ServerCategory category, {
+  bool force = false,
+}) async {
+  final db = await ref.read(localCacheProvider.future);
+  final pool = ref.read(relayPoolProvider);
+  final identity = ref.read(identityProvider).value;
+  final discovery = ServerDiscovery(
+    db: db,
+    pool: pool,
+    identity: identity,
+    makeClient: pool.makeClient,
+  );
+  return discovery.recommend(category, force: force);
 }
 
 /// Retry publishing drafts — events that failed to publish in a prior
@@ -5022,7 +5056,11 @@ final userStatusProvider = StreamProvider.family<String?, String>((
         ),
       );
     }
-    ctrl.add(text);
+    // The controller CLOSES on EOSE / the 8s timer, but this listener
+    // deliberately stays alive to keep persisting fresher statuses — guard
+    // the add (this used to throw "Cannot add event after closing" whenever
+    // a status event arrived after the initial fetch window).
+    if (!ctrl.isClosed) ctrl.add(text);
   });
   final subId = nextSubId('status');
   pool.request(subId, <String, dynamic>{

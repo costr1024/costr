@@ -121,3 +121,33 @@ String? serverUrlError(
   }
   return null;
 }
+
+// --- Relay write success rate ----------------------------------------------
+// Only WRITE verdicts are measured: publishing is the fragile direction (a
+// relay that accepts writes can almost always be read from), so the 服务器
+// 节点 page warns about relays whose writes keep failing and suggests
+// replacing them. Samples live in the SQLite config table
+// (`relay_write_stats:<url>`, FIFO — see LocalCache.pushWriteSample).
+
+/// Minimum recorded publishes before a success-rate verdict is meaningful
+/// (fewer than this → no warning, avoids nagging after one bad attempt).
+const int minWriteSamples = 3;
+
+/// Whether a relay's recent write record is bad enough to suggest replacing
+/// it: at least [minWriteSamples] recorded verdicts AND fewer than half
+/// accepted. Null = not enough data yet.
+bool? lowWriteSuccessRate(List<bool> samples) {
+  if (samples.length < minWriteSamples) return null;
+  final ok = samples.where((s) => s).length;
+  return ok * 2 < samples.length; // success rate strictly below 50%
+}
+
+/// Plain-language warning shown under a relay row on the 服务器节点 page, or
+/// null when the relay has too little data or its success rate is fine. The
+/// counts are included so the suggestion is grounded ("近期发送 5 次仅成功 1
+/// 次"), not a mysterious red flag.
+String? writeRateWarning(List<bool> samples) {
+  if (lowWriteSuccessRate(samples) != true) return null;
+  final ok = samples.where((s) => s).length;
+  return '近期发送 ${samples.length} 次仅成功 $ok 次，建议更换';
+}

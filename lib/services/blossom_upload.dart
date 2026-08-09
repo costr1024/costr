@@ -81,6 +81,10 @@ bool isVideoMime(String m) => m.startsWith('video/');
 /// ICMP ping; this is the real upload-path HTTP round-trip the app uses.
 final http.Client _blossomRttClient = http.Client();
 
+/// Shared client for real uploads (connection reuse). Tests inject their own
+/// via [blossomUpload]'s `client` parameter.
+final http.Client _uploadClient = http.Client();
+
 Future<int?> measureBlossomRtt(
   String serverUrl, {
   Duration timeout = const Duration(seconds: 5),
@@ -98,12 +102,18 @@ Future<int?> measureBlossomRtt(
 /// Blossom list, falling back to [blossomServers]) in order, retrying on
 /// failure. Returns the public URL (with a file extension per BUD-01) or null
 /// if all servers fail.
+///
+/// [timeout] caps EACH per-server attempt (server discovery's test-upload
+/// probe passes a short one instead of the 90s real-upload cap). [client] is
+/// injectable for tests (MockClient); production shares [_uploadClient].
 Future<BlossomResult?> blossomUpload(
   Identity identity,
   List<int> bytes, {
   required String mimetype,
   String note = 'costr upload',
   List<String>? servers,
+  Duration timeout = const Duration(seconds: 90),
+  http.Client? client,
 }) async {
   final sha = crypto.sha256.convert(bytes).toString();
   final auth = _buildAuthEvent(identity, sha, bytes.length, mimetype, note);
@@ -115,10 +125,11 @@ Future<BlossomResult?> blossomUpload(
   final targets = (servers == null || servers.isEmpty)
       ? blossomServers
       : servers;
+  final uploader = client ?? _uploadClient;
   for (final server in targets) {
     final url = '${server.replaceAll(RegExp(r'/+$'), '')}/upload';
     try {
-      final res = await http
+      final res = await uploader
           .put(
             Uri.parse(url),
             headers: <String, String>{
@@ -129,7 +140,7 @@ Future<BlossomResult?> blossomUpload(
             },
             body: bytes,
           )
-          .timeout(const Duration(seconds: 90));
+          .timeout(timeout);
       if (res.statusCode == 200 || res.statusCode == 201) {
         final body = jsonDecode(res.body);
         if (body is Map && body['url'] is String) {

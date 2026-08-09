@@ -187,4 +187,40 @@ void main() {
       expect(categoryDisplayName(ServerCategory.blossom), 'Blossom 图床');
     });
   });
+
+  group('write success rate', () {
+    test('fewer than 3 samples → no verdict', () {
+      expect(lowWriteSuccessRate(const []), isNull);
+      expect(lowWriteSuccessRate(const [false]), isNull);
+      expect(lowWriteSuccessRate(const [false, false]), isNull);
+      expect(writeRateWarning(const [false, false]), isNull);
+    });
+
+    test('half or better accepted → healthy', () {
+      expect(lowWriteSuccessRate(const [true, false]), isNull);
+      expect(lowWriteSuccessRate(const [true, true, false]), isFalse);
+      expect(lowWriteSuccessRate(const [true, false, true, false]), isFalse);
+      expect(writeRateWarning(const [true, false, true, false]), isNull);
+    });
+
+    test('fewer than half accepted → low', () {
+      expect(lowWriteSuccessRate(const [false, false, false]), isTrue);
+      expect(lowWriteSuccessRate(const [true, false, false]), isTrue);
+      expect(
+        lowWriteSuccessRate(const [true, false, false, false, false]),
+        isTrue,
+      );
+    });
+
+    test('warning names the actual counts', () {
+      expect(
+        writeRateWarning(const [true, false, false, false, false]),
+        '近期发送 5 次仅成功 1 次，建议更换',
+      );
+      expect(
+        writeRateWarning(const [false, false, false]),
+        '近期发送 3 次仅成功 0 次，建议更换',
+      );
+    });
+  });
 }

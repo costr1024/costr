@@ -15,6 +15,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/providers.dart';
 import '../../app/server_list_rules.dart';
 import '../../app/theme.dart';
+import '../../services/server_discovery.dart' show discoverySupported;
+
+/// What the recommended servers were verified to do, per category (shown as
+/// a one-line caption under 「为你推荐」). Blossom mentions the tiny test upload
+/// the probe performs — transparency about what "实测" touched.
+String _recoCaptionFor(ServerCategory category) {
+  switch (category) {
+    case ServerCategory.relay:
+      return '这些服务器经过检测：能连上、免费。推荐来自其他用户公开的服务器列表，不依赖任何中心服务器。';
+    case ServerCategory.search:
+      return '这些服务器经过检测：能连上、免费、支持搜索。推荐来自其他用户公开的服务器列表，不依赖任何中心服务器。';
+    case ServerCategory.indexer:
+      return '';
+    case ServerCategory.blossom:
+      return '这些图床经过实测：可以免费上传（检测时上传了一个极小的测试文件）。';
+  }
+}
 
 /// Per-category warning shown at the top of the sheet.
 String _warningFor(ServerCategory category) {
@@ -59,6 +76,18 @@ Future<bool?> showServerListSheet({
   final controller = TextEditingController();
   String? fieldError;
   var saving = false;
+
+  // Decentralized recommendations (server_discovery.dart): start probing the
+  // moment the sheet opens. Null future = nothing to show (unsupported
+  // category, or blossom while logged out — the UI shows a hint instead).
+  // Reassigned by 「换一批」; the FutureBuilder below always reads the latest.
+  final blossomLoggedOut =
+      category == ServerCategory.blossom &&
+      ref.read(identityProvider).value == null;
+  Future<List<String>>? recoFuture =
+      (discoverySupported(category) && !blossomLoggedOut)
+      ? recommendServers(ref, category)
+      : null;
 
   return showModalBottomSheet<bool>(
     context: context,
@@ -193,6 +222,114 @@ Future<bool?> showServerListSheet({
                       ctx,
                     ).textTheme.bodySmall?.copyWith(color: colors.text3),
                   ),
+                  const SizedBox(height: 12),
+                  if (blossomLoggedOut)
+                    Text(
+                      '登录后可为你推荐可用的免费图床',
+                      style: Theme.of(
+                        ctx,
+                      ).textTheme.bodySmall?.copyWith(color: colors.text3),
+                    ),
+                  if (recoFuture != null)
+                    // Probed recommendations (or the probing spinner). No
+                    // error/no-result states render anything: per product
+                    // decision, "找不到可推荐的就什么都不显示".
+                    FutureBuilder<List<String>>(
+                      future: recoFuture,
+                      builder: (ctx, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return Row(
+                            children: [
+                              const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '正在为你寻找可用的服务器…',
+                                  style: Theme.of(ctx).textTheme.bodySmall
+                                      ?.copyWith(color: colors.text3),
+                                ),
+                              ),
+                            ],
+                          );
+                        }
+                        final urls = snapshot.data ?? const <String>[];
+                        if (urls.isEmpty) return const SizedBox.shrink();
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(
+                                  '为你推荐',
+                                  style: Theme.of(ctx).textTheme.bodyMedium
+                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                ),
+                                const Spacer(),
+                                TextButton(
+                                  onPressed: saving
+                                      ? null
+                                      : () => setState(() {
+                                          recoFuture = recommendServers(
+                                            ref,
+                                            category,
+                                            force: true,
+                                          );
+                                        }),
+                                  child: const Text('换一批'),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              _recoCaptionFor(category),
+                              style: Theme.of(ctx).textTheme.bodySmall
+                                  ?.copyWith(color: colors.text3),
+                            ),
+                            for (final url in urls)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 2,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        url,
+                                        style: Theme.of(
+                                          ctx,
+                                        ).textTheme.bodyMedium,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    TextButton(
+                                      onPressed:
+                                          (saving ||
+                                              draft.contains(url) ||
+                                              draft.length >=
+                                                  maxServersPerCategory)
+                                          ? null
+                                          : () => setState(() {
+                                              draft.add(url);
+                                              fieldError = null;
+                                            }),
+                                      child: Text(
+                                        draft.contains(url) ? '已添加' : '添加',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
                   const SizedBox(height: 12),
                   Row(
                     children: [

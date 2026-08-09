@@ -535,6 +535,63 @@ void main() {
       expect(echoed, contains(evOk.id));
       await pool.dispose();
     });
+
+    test('onWriteVerdict records explicit accept/reject; silent relays NOT '
+        'recorded', () async {
+      // Write success-rate statistics must only count EXPLICIT verdicts:
+      // _collectOks returns early on the first accept, so a relay without a
+      // verdict was usually just slower — recording it as a failure would
+      // frame every healthy-but-slow relay as broken.
+      final a = _FakeRelay('wss://a');
+      final b = _FakeRelay('wss://b');
+      final silent = _FakeRelay('wss://silent');
+      final pool = RelayPool([a, b, silent]);
+      await pool.connect();
+      final verdicts = <String, bool>{};
+      pool.onWriteVerdict = (url, ok) => verdicts[url] = ok;
+      final ev = _event('wv1');
+      final fut = pool.publishAndWait(
+        ev,
+        retryDelays: const [Duration(milliseconds: 20)],
+        perRoundTimeout: const Duration(milliseconds: 60),
+      );
+      await Future<void>.delayed(Duration.zero);
+      // Rejection FIRST so it lands in the round before a's accept closes
+      // it (the accept ends the round asynchronously; whatever is still in
+      // the delivery chain at that instant is a race the test must not
+      // depend on).
+      b.emitOk(RelayOk(ev.id, false, 'blocked', url: 'wss://b'));
+      a.emitOk(RelayOk(ev.id, true, '', url: 'wss://a'));
+      final ok = await fut;
+      expect(ok.ok, isTrue);
+      expect(verdicts, {'wss://a': true, 'wss://b': false});
+      expect(
+        verdicts.containsKey('wss://silent'),
+        isFalse,
+        reason: 'no verdict in the window ≠ failure',
+      );
+      await pool.dispose();
+    });
+
+    test('onWriteVerdict: timeout-only rounds record nothing', () async {
+      // A relay that never acks makes the publish fail, but the stats stay
+      // empty — unreachable relays surface as 离线 on the node page instead;
+      // the success-rate warning is for relays that REJECT writes.
+      final a = _FakeRelay('wss://a');
+      final pool = RelayPool([a]);
+      await pool.connect();
+      final verdicts = <String, bool>{};
+      pool.onWriteVerdict = (url, ok) => verdicts[url] = ok;
+      final ev = _event('wv2');
+      final ok = await pool.publishAndWait(
+        ev,
+        retryDelays: const [Duration(milliseconds: 10)],
+        perRoundTimeout: const Duration(milliseconds: 20),
+      );
+      expect(ok.ok, isFalse);
+      expect(verdicts, isEmpty);
+      await pool.dispose();
+    });
   });
 
   group('updateUrls (hot-swap of the relay set)', () {

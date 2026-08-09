@@ -389,6 +389,22 @@ class LocalCache extends _$LocalCache {
     return (select(replaceableEvents)..where((e) => e.kind.equals(0))).get();
   }
 
+  /// All cached replaceable events of [kind], across ALL authors — e.g. every
+  /// kind-10002 (NIP-65 relay list) or kind-10063 (Blossom server list) the
+  /// app has ever fetched. Server discovery aggregates candidate servers from
+  /// these (the user's own view of the network — no central directory).
+  /// Newest first, capped so a huge table can't stall a discovery run.
+  Future<List<ReplaceableEvent>> queryAllReplaceableOfKind(
+    int kind, {
+    int limit = 500,
+  }) {
+    return (select(replaceableEvents)
+          ..where((e) => e.kind.equals(kind))
+          ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
+          ..limit(limit))
+        .get();
+  }
+
   Future<List<EventRow>> queryRecentReactions({int limit = 500}) {
     return (select(events)
           ..where((e) => e.kind.equals(7))
@@ -495,6 +511,38 @@ class LocalCache extends _$LocalCache {
     await writeConfig('$prefix:$url', jsonEncode(kept));
   }
 
+  // --- Relay write success-rate samples (last N publish verdicts per relay).
+  // READ verdicts are deliberately not tracked: a relay that accepts writes
+  // can almost always be read from, so only the write path gets statistics.
+
+  static const int _writeSamplesKeep = 10;
+
+  /// Read the cached write-verdict samples for [url]: true = the relay
+  /// accepted the publish, false = it rejected. Empty when no samples /
+  /// corrupt value. FIFO, last [_writeSamplesKeep].
+  Future<List<bool>> readWriteSamples(String url) async {
+    final raw = await readConfig('relay_write_stats:$url');
+    if (raw == null || raw.isEmpty) return const <bool>[];
+    try {
+      final list = jsonDecode(raw);
+      if (list is List) {
+        return list.map((v) => v == true || v == 1).toList(growable: false);
+      }
+    } catch (_) {}
+    return const <bool>[];
+  }
+
+  /// Append a write verdict for [url] (true = accepted, false = rejected),
+  /// keeping only the most recent [_writeSamplesKeep] (FIFO eviction).
+  /// Persists immediately.
+  Future<void> pushWriteSample(String url, bool ok) async {
+    final samples = (await readWriteSamples(url)).toList()..add(ok);
+    final kept = samples.length > _writeSamplesKeep
+        ? samples.sublist(samples.length - _writeSamplesKeep)
+        : samples;
+    await writeConfig('relay_write_stats:$url', jsonEncode(kept));
+  }
+
   // --- Drafts (outbox: events that failed to publish, for retry) ---
 
   /// Save a draft event (failed to publish) for later retry. Returns the
@@ -527,13 +575,17 @@ class LocalCache extends _$LocalCache {
   }
 
   /// Load all pending drafts with their rowid (oldest first), so callers can
-  /// delete / bump attempts after a retry round.
+  /// delete / bump attempts after a retry round. The `id` column of an
+  /// AUTOINCREMENT table IS the SQLite rowid (alias), and reading it works
+  /// with drift's customSelect — a bare `SELECT rowid` column does NOT
+  /// resolve through QueryRow.read (null → type-cast crash, which silently
+  /// killed draft retries whenever a draft existed).
   Future<List<(int, String)>> getDraftsWithRowid() async {
     final results = await customSelect(
-      'SELECT rowid, raw_json FROM drafts ORDER BY created_at ASC',
+      'SELECT id, raw_json FROM drafts ORDER BY created_at ASC',
     ).get();
     return results
-        .map((r) => (r.read<int>('rowid'), r.read<String>('raw_json')))
+        .map((r) => (r.read<int>('id'), r.read<String>('raw_json')))
         .toList();
   }
 
