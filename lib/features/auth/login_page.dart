@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../nostr/actions.dart';
+import '../../nostr/identity.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/costr_logo.dart';
 
@@ -40,23 +41,29 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       _snack('请输入 nsec1 开头的私钥');
       return;
     }
-    setState(() => _busy = true);
+    // Validate up front so an invalid key never navigates away from the form.
     try {
-      await ref.read(identityProvider.notifier).login(nsec);
-      if (mounted) {
-        if (widget.addMode) {
-          // Return to wherever the add-flow was started (settings page).
-          if (context.canPop()) {
-            context.pop();
-          } else {
-            context.go('/settings');
-          }
-        } else {
-          context.go('/feed');
-        }
-      }
+      Identity.fromNsec(nsec);
     } on FormatException catch (e) {
       _snack('私钥格式无效：${e.message}');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      if (widget.addMode) {
+        // Add-flow: leave /login BEFORE login() flips identityProvider. The
+        // flip fires the router refresh synchronously; refreshing while still
+        // on /login?add=1 replays a stale route state and strands the user on
+        // the login page ("添加账号后停留在登录页面" bug). From /settings the
+        // refresh re-evaluates a logged-in-valid location and stays put.
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go('/settings');
+        }
+      }
+      await ref.read(identityProvider.notifier).login(nsec);
+      if (mounted && !widget.addMode) context.go('/feed');
     } catch (e) {
       _snack('登录失败：$e');
     } finally {
@@ -269,27 +276,40 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
   Future<void> _finish() async {
     setState(() => _busy = true);
     try {
+      final nick = _nickController.text.trim();
+      if (widget.addMode) {
+        // Add-flow: leave the login route BEFORE login() flips
+        // identityProvider — refreshing while still on /login?add=1 replays
+        // a stale route state and strands the user on the login page
+        // ("添加账号后停留在登录页面" bug). Publish the nick with the NEW
+        // (not yet active) identity first: the navigation below tears this
+        // page down, so the post-login publish path can't run from here.
+        if (nick.isNotEmpty) {
+          final newIdentity = Identity.fromNsec(_newNsec);
+          final signed = NostrActions(
+            newIdentity,
+          ).setMetadata('{"name":"$nick"}');
+          ref.read(relayPoolProvider).publish(signed);
+        }
+        GoRouter.of(context).go('/settings');
+        await ref.read(identityProvider.notifier).login(_newNsec);
+        return;
+      }
       await ref.read(identityProvider.notifier).login(_newNsec);
       if (mounted) {
         // Optionally set metadata (nick).
-        final nick = _nickController.text.trim();
         if (nick.isNotEmpty) {
           final identity = ref.read(identityProvider).value;
           if (identity != null) {
-            final content = '{"name":"$nick"}';
-            final signed = NostrActions(identity).setMetadata(content);
+            final signed = NostrActions(
+              identity,
+            ).setMetadata('{"name":"$nick"}');
             ref.read(relayPoolProvider).publish(signed);
           }
         }
         if (mounted) {
-          if (widget.addMode) {
-            // Add-flow: return to the settings page so the user sees the new
-            // account in the account list (already active).
-            context.go('/settings');
-          } else {
-            Navigator.popUntil(context, (route) => route.isFirst);
-            context.go('/feed');
-          }
+          Navigator.popUntil(context, (route) => route.isFirst);
+          context.go('/feed');
         }
       }
     } catch (e) {
