@@ -37,6 +37,48 @@ class ComposePage extends ConsumerStatefulWidget {
   ConsumerState<ComposePage> createState() => _ComposePageState();
 }
 
+/// In-flight media-upload state machine for the compose page. Pure (no
+/// Flutter dependency in the logic) so it is unit-testable.
+///
+/// Two bugs this replaces: (1) a bare `_uploading` bool could get STUCK true
+/// when an exception landed between the true/false writes — the send button
+/// was then permanently dead; (2) `_send` needs to AWAIT the running uploads
+/// (and then send automatically) instead of being silently ignored while an
+/// upload was in flight ("发送偶尔没反应，要再点一下才好").
+class UploadTracker {
+  int _inflight = 0;
+  Completer<void>? _idle;
+
+  /// An upload failed during the current in-flight round. A send tap that
+  /// waited on the uploads then refuses to auto-send: the failed media never
+  /// reached the editor, so silently posting without it would be wrong (the
+  /// failure snack already told the user; they retry or send as-is).
+  bool _failed = false;
+
+  bool get uploading => _inflight > 0;
+  bool get failed => _failed;
+
+  /// Completes when the in-flight count drops to zero; null when already
+  /// idle (nothing to wait for).
+  Completer<void>? get idle => _idle;
+
+  void started() {
+    if (_inflight == 0) _failed = false; // fresh round
+    _inflight++;
+    _idle ??= Completer<void>();
+  }
+
+  void finished({bool failed = false}) {
+    if (failed) _failed = true;
+    _inflight--;
+    if (_inflight > 0) return;
+    _inflight = 0; // clamp: a stray finish() must not go negative
+    final c = _idle;
+    _idle = null;
+    if (c != null && !c.isCompleted) c.complete();
+  }
+}
+
 class _Attachment {
   _Attachment({
     required this.url,
@@ -62,6 +104,20 @@ class _ComposePageState extends ConsumerState<ComposePage>
   final Set<String> _mentions = {};
   bool _uploading = false;
   bool _sending = false;
+
+  /// In-flight upload tracking — see [UploadTracker]. Every upload path
+  /// clears its slot via try/finally so `_uploading` can never get stuck.
+  final UploadTracker _uploads = UploadTracker();
+
+  void _uploadStarted() {
+    _uploads.started();
+    if (mounted) setState(() => _uploading = true);
+  }
+
+  void _uploadFinished({bool failed = false}) {
+    _uploads.finished(failed: failed);
+    if (mounted) setState(() => _uploading = _uploads.uploading);
+  }
   bool _nsfw = false;
 
   /// Auto-saved editor draft. Survives crash / back so the user doesn't lose
@@ -382,38 +438,53 @@ class _ComposePageState extends ConsumerState<ComposePage>
       return true;
     }).toList();
     if (files.isEmpty) return;
-    setState(() => _uploading = true);
-    // Concurrent upload.
-    final results = await Future.wait(
-      files.map((f) async {
-        final bytes = _bytesOf(f);
-        if (bytes == null) return null;
-        final mime = mimeForExt(f.extension ?? f.name);
-        final res = await blossomUpload(
-          identity,
-          bytes,
-          mimetype: mime,
-          note: 'costr image',
-        );
-        return res == null ? null : (f, mime, res);
-      }),
-    );
-    if (!mounted) return;
-    for (final r in results) {
-      if (r == null) continue;
-      final att = _Attachment(
-        url: r.$3.url,
-        sha256: r.$3.sha256,
-        mime: r.$2,
-        name: r.$1.name,
-        kind: 'image',
+    _uploadStarted();
+    var anyFailed = false;
+    try {
+      // Concurrent upload.
+      final results = await Future.wait(
+        files.map((f) async {
+          try {
+            final bytes = _bytesOf(f);
+            if (bytes == null) {
+              anyFailed = true;
+              return null;
+            }
+            final mime = mimeForExt(f.extension ?? f.name);
+            final res = await blossomUpload(
+              identity,
+              bytes,
+              mimetype: mime,
+              note: 'costr image',
+            );
+            if (res == null) anyFailed = true;
+            return res == null ? null : (f, mime, res);
+          } catch (_) {
+            // Unreadable file / unexpected error — count as failed, keep the
+            // rest of the batch going.
+            anyFailed = true;
+            return null;
+          }
+        }),
       );
-      setState(() {
-        _attachments.add(att);
-        _appendToEditor(att);
-      });
+      if (!mounted) return;
+      for (final r in results) {
+        if (r == null) continue;
+        final att = _Attachment(
+          url: r.$3.url,
+          sha256: r.$3.sha256,
+          mime: r.$2,
+          name: r.$1.name,
+          kind: 'image',
+        );
+        setState(() {
+          _attachments.add(att);
+          _appendToEditor(att);
+        });
+      }
+    } finally {
+      _uploadFinished(failed: anyFailed);
     }
-    if (mounted) setState(() => _uploading = false);
   }
 
   Future<void> _pickVideo() async {
@@ -437,15 +508,19 @@ class _ComposePageState extends ConsumerState<ComposePage>
     final bytes = _bytesOf(f);
     if (bytes == null) return;
     final mime = mimeForExt(f.extension ?? f.name);
-    setState(() => _uploading = true);
-    final res = await blossomUpload(
-      identity,
-      bytes,
-      mimetype: mime,
-      note: 'costr video',
-    );
+    _uploadStarted();
+    BlossomResult? res;
+    try {
+      res = await blossomUpload(
+        identity,
+        bytes,
+        mimetype: mime,
+        note: 'costr video',
+      );
+    } finally {
+      _uploadFinished(failed: res == null);
+    }
     if (!mounted) return;
-    setState(() => _uploading = false);
     if (res != null) {
       final att = _Attachment(
         url: res.url,
@@ -483,15 +558,19 @@ class _ComposePageState extends ConsumerState<ComposePage>
     final bytes = _bytesOf(f);
     if (bytes == null) return;
     final mime = mimeForExt(f.extension ?? f.name);
-    setState(() => _uploading = true);
-    final res = await blossomUpload(
-      identity,
-      bytes,
-      mimetype: mime,
-      note: 'costr file ${f.name}',
-    );
+    _uploadStarted();
+    BlossomResult? res;
+    try {
+      res = await blossomUpload(
+        identity,
+        bytes,
+        mimetype: mime,
+        note: 'costr file ${f.name}',
+      );
+    } finally {
+      _uploadFinished(failed: res == null);
+    }
     if (!mounted) return;
-    setState(() => _uploading = false);
     if (res != null) {
       final att = _Attachment(
         url: res.url,
@@ -545,15 +624,19 @@ class _ComposePageState extends ConsumerState<ComposePage>
       _snack('图片超过 10MB');
       return;
     }
-    setState(() => _uploading = true);
-    final res = await blossomUpload(
-      identity,
-      bytes,
-      mimetype: mime,
-      note: 'costr keyboard image',
-    );
+    _uploadStarted();
+    BlossomResult? res;
+    try {
+      res = await blossomUpload(
+        identity,
+        bytes,
+        mimetype: mime,
+        note: 'costr keyboard image',
+      );
+    } finally {
+      _uploadFinished(failed: res == null);
+    }
     if (!mounted) return;
-    setState(() => _uploading = false);
     if (res == null) {
       _snack('表情图片上传失败');
       return;
@@ -691,6 +774,24 @@ class _ComposePageState extends ConsumerState<ComposePage>
     if (text.isEmpty && widget.quoteOf == null) {
       _snack('内容不能为空');
       return;
+    }
+    // Upload in flight: wait for it, then send right away. Before this, the
+    // button was DISABLED during uploads and a tap did nothing — users saw
+    // "发送偶尔没反应，要再点一下才好". Now one tap always does one send:
+    // as soon as the media lands, the post goes out on its own.
+    if (_uploading) {
+      final idle = _uploads.idle;
+      setState(() => _sending = true); // show 发送中… while waiting
+      _snack('媒体上传中，完成后自动发送…');
+      if (idle != null) await idle.future;
+      if (!mounted) return;
+      if (_uploads.failed) {
+        // The failed upload was already reported; its media never reached
+        // the editor — don't auto-send without it, let the user decide.
+        setState(() => _sending = false);
+        return;
+      }
+      setState(() => _sending = false);
     }
     setState(() => _sending = true);
     try {
@@ -833,7 +934,10 @@ class _ComposePageState extends ConsumerState<ComposePage>
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: TextButton(
-              onPressed: (_sending || _uploading) ? null : _send,
+              // Deliberately enabled during uploads too: _send waits for the
+              // in-flight upload and then sends, instead of ignoring the tap
+              // (a disabled button there was the "偶尔没反应" bug).
+              onPressed: _sending ? null : _send,
               child: Text(_sending ? '发送中…' : '发送'),
             ),
           ),
