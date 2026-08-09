@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.10-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.10-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.11-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.11-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta）。
 
 ---
 
@@ -316,6 +316,27 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 **v0.6-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v0.11-beta 相对 v0.10-beta 的修复/新增**：
+**新增账号后正确回到主页**——此前添加账号（私钥导入/创建向导）完成后停在无底部导航的
+设置页、返回键直接退出 app。现完成后落在首页（shell 内、有底栏，可正常切换 tab/返回），
+与普通登录一致；同时规避了「切回 shell 路由」与「身份切换」同帧触发 Riverpod
+setState-during-build 的隐藏崩溃（导航后先让 shell 恢复再切身份）。
+**推荐中继「一直加载中」根治（GFW）**——根因是被墙境外中继的 WS 握手永不完成，
+`RelayClient.dispose()` 却在 `sink.close()` 上等这个永不就绪的连接 → 永久挂起，拖死
+探活与拉票（自定义面板的「为你推荐」一直转圈）。现 dispose 对未就绪连接直接放弃、对已
+建立连接限时关闭，绝不再挂起；探活连接超时收紧到 5s 让被墙中继快速出局、并发提到 8。
+推荐逻辑本就只推荐实测可连的中继，故修复后推荐结果天然是当前网络（含 GFW 环境）可连的。
+**写中继发送成功率统计修正**——三处口径错误：NIP-42 `auth-required` 是认证握手（会自动
+重试）而非写失败、NIP-20 `duplicate`（事件已存储）应是成功，旧实现都记为失败，把健康
+认证中继（如 bostr）成功率拉低；且首个中继接受后会给「只是响应慢」的中继重复重发、其
+迟到的真实裁决被丢弃。现认证/重复不再误计，慢中继在窗口内的真实裁决照常记录、不再重复
+重发，返回值恒为有效成功裁决；节点页在标红时追加显示「原因：<最近拒绝理由>」便于自查；
+升级一次性清空旧脏样本。
+**中继列表更新**——`wheat.happytavern.co` 已将本应用常见账号拉黑（写入恒被拒
+`blocked: pubkey is blacklisted`），替换为 `nostr.data.haus`，并新增 `relay.momostr.pink`
+（两者均实测可读可写），主池 8→9 台。存量设备下次冷启动一次性迁移：仅当列表仍含 wheat
+时原位替换并补 momostr，其余自定义项不动。
 
 **v0.10-beta 相对 v0.9-beta 的修复/新增**：
 **服务器节点自定义（高级功能）**——服务器节点页每类服务器标题行右侧新增「自定义」入口：
