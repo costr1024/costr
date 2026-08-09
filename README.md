@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.8.9-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.8.9-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.9-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.9-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta）。
 
 ---
 
@@ -304,7 +304,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 473 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 493 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、widget 渲染。新增功能请抽纯函数
 单测覆盖，避免依赖网络/UI。
@@ -573,7 +573,7 @@ content 里带 NIP-18 嵌入 JSON 的转发无需解析 e-tag 直接渲染原帖
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 473 个测试
+flutter test             # 493 个测试
 flutter build linux      # 桌面构建
 ```
 
