@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.9-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.9-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.10-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.10-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta）。
 
 ---
 
@@ -316,6 +316,29 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 **v0.6-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v0.10-beta 相对 v0.9-beta 的修复/新增**：
+**服务器节点自定义（高级功能）**——服务器节点页每类服务器标题行右侧新增「自定义」入口：
+四类服务器（中继/搜索中继/索引中继/Blossom 图床）可增删（每类最多 10 台，中继至少
+3 台、其余至少 1 台）、恢复默认；面板内先改草稿，点「保存」才一次提交（一次持久化、
+一次连接池热替换、至多一次发布）。列表设备级持久化、全账号共享；仅「中继服务器」变更
+以当前活跃账号名义发布 kind 10002 中继更新事件，非活跃账号下次切换过去时比对标记补发，
+失败自动重试；图床变更纯本地，发帖上传按新列表顺序重试。保存后连接池原地热替换（不
+重建池实例、不清信息流）。面板劝退警示先行，按类别说明配错后果，只有服务器长期离线
+才需要自定义。
+**服务器推荐（去中心化）**——自定义面板打开即探测。候选来自用户自己视图里他人发布的
+服务器列表事件（本地已缓存的 kind 10002 中继列表 / kind 10063 图床列表 + 有界现场
+REQ）聚合投票，不依赖任何中心目录服务器；每个候选实测通过才显示：中继 = 可连接 +
+免费（NIP-11），搜索中继另须自声明支持 NIP-50，图床 = 用当前账号实测上传极小测试
+文件（一次验证 Blossom 协议 + 免费 + 不限白名单，未登录不推荐图床），索引中继本期
+不推荐；找不到可推荐的不显示；结果缓存 24h，「换一批」强制重测，一键添加进草稿。
+**写中继发送成功率统计**——发布时记录每台中继的显式裁决（OK/拒绝；超时不计——早返回
+语义下拿不到裁决通常只是慢；读路径不测），最近 10 次 FIFO 持久化；成功不足一半时
+节点页标红「近期发送 N 次仅成功 M 次，建议更换」，点按进入自定义面板更换。
+**其他修复**：添加账号后正确回到设置页（此前停留在登录页）；上传进行中点发送会自动
+等待上传完成再发出（此前发送按钮偶发无响应）；修复 `getDraftsWithRowid` 读不出
+rowid 导致存在草稿即崩溃、草稿重试失效的问题（改读 AUTOINCREMENT id 列）；修复
+userStatus 向已关闭流继续 add 的竞态。
 
 **v0.9-beta 相对 v0.8.9-beta 的修复/新增**：
 **多账号切换管理（Amethyst 式）**——设置页新增账号区：可同时登录多个 Nostr 账号，
