@@ -94,7 +94,8 @@ Future<int?> measureBlossomRtt(
   }
 }
 
-/// Upload [bytes] as [mimetype]. Tries [blossomServers] in order, retrying on
+/// Upload [bytes] as [mimetype]. Tries [servers] (the user's configured
+/// Blossom list, falling back to [blossomServers]) in order, retrying on
 /// failure. Returns the public URL (with a file extension per BUD-01) or null
 /// if all servers fail.
 Future<BlossomResult?> blossomUpload(
@@ -102,6 +103,7 @@ Future<BlossomResult?> blossomUpload(
   List<int> bytes, {
   required String mimetype,
   String note = 'costr upload',
+  List<String>? servers,
 }) async {
   final sha = crypto.sha256.convert(bytes).toString();
   final auth = _buildAuthEvent(identity, sha, bytes.length, mimetype, note);
@@ -110,7 +112,10 @@ Future<BlossomResult?> blossomUpload(
   final authHeader =
       'Nostr ${base64Url.encode(utf8.encode(jsonEncode(auth.toWireObject())))}';
 
-  for (final server in blossomServers) {
+  final targets = (servers == null || servers.isEmpty)
+      ? blossomServers
+      : servers;
+  for (final server in targets) {
     final url = '${server.replaceAll(RegExp(r'/+$'), '')}/upload';
     try {
       final res = await http

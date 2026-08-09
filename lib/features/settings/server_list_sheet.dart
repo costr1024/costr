@@ -1,0 +1,242 @@
+/// Server customize sheet (服务器节点 page → 「自定义」, DESIGN.md §13). An
+/// explicit advanced feature: edit ONE category's server list — add/remove
+/// servers, restore the built-in defaults. Edits are staged in a local draft
+/// and committed in ONE shot on 「保存」 via [saveServerList] (persist +
+/// hot-swap the live pool + publish kind 10002 for the relay category).
+///
+/// The warning copy is deliberately plain (DESIGN.md §9 说人话): it spells out
+/// what the category does, that customization is only needed for a server
+/// that's been offline for a long time, and what breaks if the list is wrong.
+library;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../app/providers.dart';
+import '../../app/server_list_rules.dart';
+import '../../app/theme.dart';
+
+/// Per-category warning shown at the top of the sheet.
+String _warningFor(ServerCategory category) {
+  const onlyWhenOffline = '只有当某台服务器长期处于离线状态时，才需要来自定义。';
+  const fallback = '不确定怎么改的话，保持默认就好。';
+  switch (category) {
+    case ServerCategory.relay:
+      return '这是高级功能。这里的服务器决定你能刷到的帖子从哪来、你发的帖子发到哪去。'
+          '$onlyWhenOffline'
+          '如果列表配置错误，可能刷不出新帖子，或发帖失败。'
+          '$fallback';
+    case ServerCategory.search:
+      return '这是高级功能。这里的服务器专门负责搜索功能。'
+          '$onlyWhenOffline'
+          '如果列表配置错误，搜索时可能搜不到任何结果。'
+          '$fallback';
+    case ServerCategory.indexer:
+      return '这是高级功能。这里的服务器用来获取别人的昵称和头像。'
+          '$onlyWhenOffline'
+          '如果列表配置错误，部分人的昵称、头像可能显示不出来。'
+          '$fallback';
+    case ServerCategory.blossom:
+      return '这是高级功能。这里的服务器用来存放你上传的图片和视频，'
+          '只支持使用 Blossom 协议的图床。'
+          '$onlyWhenOffline'
+          '如果列表配置错误，图片和视频会上传失败。'
+          '$fallback';
+  }
+}
+
+/// Open the customize sheet for [category]. Resolves `true` when the user
+/// saved a new list (caller should reload), anything else means no change.
+Future<bool?> showServerListSheet({
+  required BuildContext context,
+  required WidgetRef ref,
+  required ServerCategory category,
+}) {
+  final name = categoryDisplayName(category);
+  final min = minServersFor(category);
+  final current = ref.read(serverListsProvider).value?.of(category);
+  final draft = List<String>.of(current ?? defaultServerListFor(category));
+  final controller = TextEditingController();
+  String? fieldError;
+  var saving = false;
+
+  return showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    builder: (ctx) {
+      final insets = MediaQuery.viewInsetsOf(ctx);
+      final colors = CostrColors.of(ctx);
+      return StatefulBuilder(
+        builder: (ctx, setState) {
+          void addUrl() {
+            final err = serverUrlError(
+              category,
+              controller.text,
+              existing: draft,
+            );
+            if (err != null) {
+              setState(() => fieldError = err);
+              return;
+            }
+            setState(() {
+              draft.add(normalizeServerUrl(controller.text));
+              fieldError = null;
+              controller.clear();
+            });
+          }
+
+          Future<void> save() async {
+            if (saving) return;
+            setState(() => saving = true);
+            final messenger = ScaffoldMessenger.of(ctx);
+            try {
+              await saveServerList(ref, category, draft);
+              if (ctx.mounted) Navigator.pop(ctx, true);
+              messenger.showSnackBar(const SnackBar(content: Text('已保存')));
+            } catch (_) {
+              if (ctx.mounted) {
+                setState(() {
+                  saving = false;
+                  fieldError = '保存失败，请重试';
+                });
+              }
+            }
+          }
+
+          return AnimatedPadding(
+            // Lift the sheet above the soft keyboard (ADD the keyboard height,
+            // don't copyWith — see mute_list_page._showAddSheet).
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + insets.bottom),
+            duration: const Duration(milliseconds: 120),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '自定义$name',
+                    style: Theme.of(ctx).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: colors.warnBg,
+                      border: Border.all(color: colors.warnBorder),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _warningFor(category),
+                      style: Theme.of(ctx).textTheme.bodySmall,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  for (var i = 0; i < draft.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              draft[i],
+                              style: Theme.of(ctx).textTheme.bodyMedium,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: draft.length <= min ? '至少保留 $min 台' : '删除',
+                            icon: const Icon(Icons.delete_outline),
+                            iconSize: 20,
+                            color: colors.text3,
+                            onPressed: draft.length <= min
+                                ? null
+                                : () => setState(() => draft.removeAt(i)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: controller,
+                          decoration: InputDecoration(
+                            isDense: true,
+                            hintText: category == ServerCategory.blossom
+                                ? 'https://…'
+                                : 'wss://…',
+                            errorText: fieldError,
+                          ),
+                          onSubmitted: (_) {
+                            if (draft.length < maxServersPerCategory) addUrl();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: draft.length >= maxServersPerCategory
+                            ? null
+                            : addUrl,
+                        child: const Text('添加'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '共 ${draft.length} 台 · 最多 $maxServersPerCategory 台 · '
+                    '至少保留 $min 台',
+                    style: Theme.of(
+                      ctx,
+                    ).textTheme.bodySmall?.copyWith(color: colors.text3),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: saving
+                            ? null
+                            : () => setState(() {
+                                draft
+                                  ..clear()
+                                  ..addAll(
+                                    normalizeServerList(
+                                      defaultServerListFor(category),
+                                    ),
+                                  );
+                                fieldError = null;
+                              }),
+                        child: const Text('恢复默认'),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: saving ? null : () => Navigator.pop(ctx),
+                        child: const Text('取消'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: saving ? null : save,
+                        child: saving
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('保存'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+}

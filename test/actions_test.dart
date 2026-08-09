@@ -81,15 +81,18 @@ void main() {
       expect(id.verifyEventSignature(id: r.id, sig: r.sig), isTrue);
     });
 
-    test('userStatus (NIP-38 kind 30315, d=general): content = status text', () {
-      final s = actions.userStatus('忙碌中');
-      expect(s.kind, 30315);
-      expect(s.content, '忙碌中');
-      expect(s.tags, _tag(['d', 'general']));
-      expect(id.verifyEventSignature(id: s.id, sig: s.sig), isTrue);
-      // Empty text clears the status.
-      expect(actions.userStatus('').content, '');
-    });
+    test(
+      'userStatus (NIP-38 kind 30315, d=general): content = status text',
+      () {
+        final s = actions.userStatus('忙碌中');
+        expect(s.kind, 30315);
+        expect(s.content, '忙碌中');
+        expect(s.tags, _tag(['d', 'general']));
+        expect(id.verifyEventSignature(id: s.id, sig: s.sig), isTrue);
+        // Empty text clears the status.
+        expect(actions.userStatus('').content, '');
+      },
+    );
 
     test('deleteEvent (NIP-09 kind 5): e tag points at target', () {
       final target = _ev('deadbeef');
@@ -114,9 +117,12 @@ void main() {
       const relay = 'wss://relay.example.com';
       final targetId = 'b' * 64;
       final rootId = 'a' * 64;
-      final target = _ev(targetId, tags: [
-        ['e', rootId, '', 'root'],
-      ]);
+      final target = _ev(
+        targetId,
+        tags: [
+          ['e', rootId, '', 'root'],
+        ],
+      );
       // reply
       final r = actions.reply(target, 'x', relay: relay);
       expect(r.tags, _tag(['e', rootId, relay, 'root']));
@@ -168,14 +174,14 @@ void main() {
 
     group('followCategory', () {
       Event k3(String evtId, {List<List<dynamic>> tags = const []}) => Event(
-            id: evtId,
-            pubkey: id.pubkeyHex,
-            createdAt: 1700000000,
-            kind: 30000,
-            tags: tags,
-            content: '',
-            sig: 's',
-          );
+        id: evtId,
+        pubkey: id.pubkeyHex,
+        createdAt: 1700000000,
+        kind: 30000,
+        tags: tags,
+        content: '',
+        sig: 's',
+      );
 
       test('new list: UUID d + name + p + client (Amethyst convention)', () {
         final r = actions.followCategory(null, 'new-pk', '真人用户');
@@ -184,47 +190,49 @@ void main() {
         // fork the list; name carries the human name.
         final d = r.tags.firstWhere((t) => t[0] == 'd');
         expect(d[1], isNot('真人用户'));
-        expect(d[1], matches(RegExp(
-            r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')));
+        expect(
+          d[1],
+          matches(
+            RegExp(
+              r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+            ),
+          ),
+        );
         expect(r.tags, _tag(['name', '真人用户']));
         expect(r.tags, _tag(['p', 'new-pk', '']));
         expect(r.tags, _tag(['client', 'Costr']));
         expect(id.verifyEventSignature(id: r.id, sig: r.sig), isTrue);
       });
 
-      test('edit Amethyst list: preserves UUID d + name + metadata, adds p',
-          () {
-        // An Amethyst-authored list: d=UUID, name="真人用户", plus alt/desc.
-        final amethyst = k3(
-          'amethyst-list',
-          tags: [
-            ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
-            ['alt', 'List of people'],
-            ['name', '真人用户'],
-            ['description', 'a group'],
-            ['p', 'existing-pk', 'wss://relay.damus.io/'],
-          ],
-        );
-        final r = actions.followCategory(amethyst, 'new-pk', '真人用户');
-        // Real d (UUID) preserved — NOT rewritten to the display name.
-        expect(
-          r.tags,
-          _tag(['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b']),
-        );
-        // Human name + other metadata preserved.
-        expect(r.tags, _tag(['name', '真人用户']));
-        expect(r.tags, _tag(['alt', 'List of people']));
-        expect(r.tags, _tag(['description', 'a group']));
-        // Existing p kept, new p added.
-        expect(r.tags, _tag(['p', 'existing-pk', 'wss://relay.damus.io/']));
-        expect(r.tags, _tag(['p', 'new-pk', '']));
-        expect(r.tags, _tag(['client', 'Costr']));
-        // No duplicate client.
-        expect(
-          r.tags.where((t) => t[0] == 'client').length,
-          1,
-        );
-      });
+      test(
+        'edit Amethyst list: preserves UUID d + name + metadata, adds p',
+        () {
+          // An Amethyst-authored list: d=UUID, name="真人用户", plus alt/desc.
+          final amethyst = k3(
+            'amethyst-list',
+            tags: [
+              ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
+              ['alt', 'List of people'],
+              ['name', '真人用户'],
+              ['description', 'a group'],
+              ['p', 'existing-pk', 'wss://relay.damus.io/'],
+            ],
+          );
+          final r = actions.followCategory(amethyst, 'new-pk', '真人用户');
+          // Real d (UUID) preserved — NOT rewritten to the display name.
+          expect(r.tags, _tag(['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b']));
+          // Human name + other metadata preserved.
+          expect(r.tags, _tag(['name', '真人用户']));
+          expect(r.tags, _tag(['alt', 'List of people']));
+          expect(r.tags, _tag(['description', 'a group']));
+          // Existing p kept, new p added.
+          expect(r.tags, _tag(['p', 'existing-pk', 'wss://relay.damus.io/']));
+          expect(r.tags, _tag(['p', 'new-pk', '']));
+          expect(r.tags, _tag(['client', 'Costr']));
+          // No duplicate client.
+          expect(r.tags.where((t) => t[0] == 'client').length, 1);
+        },
+      );
 
       test('edit list: adding an already-member pubkey dedups', () {
         final existing = k3(
@@ -240,6 +248,35 @@ void main() {
         // d + name still present exactly once.
         expect(r.tags.where((t) => t[0] == 'd').length, 1);
         expect(r.tags.where((t) => t[0] == 'name').length, 1);
+      });
+    });
+
+    group('relayList (NIP-65 kind 10002)', () {
+      test('one ["r", url] tag per relay, empty content, valid signature', () {
+        final urls = ['wss://a.example', 'wss://b.example'];
+        final e = actions.relayList(urls);
+        expect(e.kind, 10002);
+        expect(e.content, '');
+        final rTags = e.tags.where((t) => t.isNotEmpty && t[0] == 'r').toList();
+        expect(rTags, [
+          ['r', 'wss://a.example'],
+          ['r', 'wss://b.example'],
+        ]);
+        // No read/write marker — the relays are used for both.
+        for (final t in rTags) {
+          expect(t.length, 2);
+        }
+        expect(id.verifyEventSignature(id: e.id, sig: e.sig), isTrue);
+      });
+
+      test('publishes EXACTLY the list it is given (user-edited lists)', () {
+        // Regression guard: the relay list is user-editable now; the event
+        // must carry the passed list verbatim, never a hardcoded default.
+        final e = actions.relayList(['wss://only.example']);
+        final rTags = e.tags.where((t) => t.isNotEmpty && t[0] == 'r').toList();
+        expect(rTags, [
+          ['r', 'wss://only.example'],
+        ]);
       });
     });
   });

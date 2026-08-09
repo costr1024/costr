@@ -21,6 +21,7 @@ class _FakeRelay implements RelayConnection {
 
   final List<List<dynamic>> sent = [];
   bool _connected = false;
+  bool wasDisposed = false;
   void Function()? _onConnected;
   void Function()? _onDisconnected;
 
@@ -64,6 +65,7 @@ class _FakeRelay implements RelayConnection {
 
   @override
   Future<void> dispose() async {
+    wasDisposed = true;
     await _events.close();
     await _eose.close();
     await _notices.close();
@@ -531,6 +533,118 @@ void main() {
       // pump once so the listener drains before we assert.
       await Future<void>.delayed(Duration.zero);
       expect(echoed, contains(evOk.id));
+      await pool.dispose();
+    });
+  });
+
+  group('updateUrls (hot-swap of the relay set)', () {
+    test(
+      'kept URLs reuse the SAME connection; removed ones are disposed',
+      () async {
+        final a = _FakeRelay('wss://a');
+        final b = _FakeRelay('wss://b');
+        final pool = RelayPool([a, b]);
+        await pool.connect();
+        await pool.updateUrls(['wss://a']);
+        // dispose fires via unawaited → pump once.
+        await Future<void>.delayed(Duration.zero);
+        expect(pool.states.map((s) => s.url), ['wss://a']);
+        expect(a.isConnected, isTrue, reason: 'kept relay must not reconnect');
+        expect(a.wasDisposed, isFalse);
+        expect(b.wasDisposed, isTrue, reason: 'removed relay must be disposed');
+        await pool.dispose();
+      },
+    );
+
+    test(
+      'on a wired pool: new URL connects, joins merged stream, re-gets subs',
+      () async {
+        final a = _FakeRelay('wss://a');
+        final pool = RelayPool([a]);
+        await pool.connect();
+        pool.request('costr:feed:1', {
+          'kinds': [1],
+        });
+
+        final fresh = _FakeRelay('wss://n');
+        pool.makeClient = (url) => fresh;
+        await pool.updateUrls(['wss://a', 'wss://n']);
+
+        // New connection was connected...
+        expect(fresh.isConnected, isTrue);
+        // ...and the active subscription was re-issued to it on connect.
+        expect(fresh.sent, [
+          [
+            'REQ',
+            'costr:feed:1',
+            {
+              'kinds': [1],
+            },
+          ],
+        ]);
+        // Its events reach the pool's merged stream.
+        final got = <String>[];
+        final sub = pool.events.listen((e) => got.add(e.id));
+        fresh.emit(_event('from-new'));
+        await Future<void>.delayed(Duration.zero);
+        expect(got, ['from-new']);
+        await sub.cancel();
+        await pool.dispose();
+      },
+    );
+
+    test(
+      'never-connected pool: plain swap, later connect() covers new set',
+      () async {
+        final a = _FakeRelay('wss://a');
+        final pool = RelayPool([a]);
+        final fresh = _FakeRelay('wss://n');
+        pool.makeClient = (url) => fresh;
+
+        await pool.updateUrls(['wss://n']);
+        expect(fresh.isConnected, isFalse, reason: 'no premature connect');
+        await Future<void>.delayed(Duration.zero);
+        expect(a.wasDisposed, isTrue);
+
+        await pool.connect();
+        expect(fresh.isConnected, isTrue);
+        expect(pool.states.map((s) => s.url), ['wss://n']);
+        await pool.dispose();
+      },
+    );
+
+    test('status stream emits the new set', () async {
+      final pool = RelayPool([_FakeRelay('wss://a')]);
+      await pool.connect();
+      final snapshots = <List<String>>[];
+      final sub = pool.statusStream.listen(
+        (list) => snapshots.add(list.map((s) => s.url).toList()),
+      );
+      await Future<void>.delayed(Duration.zero); // initial snapshot
+
+      pool.makeClient = (url) => _FakeRelay(url);
+      await pool.updateUrls(['wss://x', 'wss://y']);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(snapshots.isNotEmpty, isTrue);
+      expect(snapshots.last, ['wss://x', 'wss://y']);
+      await sub.cancel();
+      await pool.dispose();
+    });
+
+    test('whitespace/duplicate entries collapse; empties dropped', () async {
+      final a = _FakeRelay('wss://a');
+      final pool = RelayPool([a]);
+      await pool.connect();
+      var created = 0;
+      pool.makeClient = (url) {
+        created++;
+        return _FakeRelay(url);
+      };
+      await pool.updateUrls(['wss://a', ' wss://a ', '', '   ']);
+      expect(created, 0, reason: 'no new connection for dup/blank entries');
+      expect(pool.states.map((s) => s.url), ['wss://a']);
+      expect(a.wasDisposed, isFalse);
       await pool.dispose();
     });
   });

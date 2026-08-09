@@ -33,8 +33,12 @@ class RelayPool {
 
   /// Construct with explicit connections (allows test injection of fakes).
   RelayPool(List<RelayConnection> connections)
-    : _connections = List<RelayConnection>.unmodifiable(connections);
+    : _connections = List<RelayConnection>.of(connections);
 
+  /// Mutable on purpose: [updateUrls] hot-swaps the connection set when the
+  /// user edits their server list, WITHOUT replacing the pool instance — the
+  /// app's providers (event store, feed, outbox) hold onto this pool via
+  /// `ref.watch(relayPoolProvider)` and must keep their subscriptions.
   final List<RelayConnection> _connections;
   final Map<String, Map<String, dynamic>> _activeSubs = {};
   final Set<String> _closeOnEose = {};
@@ -219,55 +223,126 @@ class RelayPool {
     if (_mergedWired) return;
     _mergedWired = true;
     for (final c in _connections) {
-      c.events.listen((e) {
-        // Raw stream: always emit (consumers dedup themselves) so targeted
-        // re-fetches work even when the global feed already saw the event.
-        if (!_raw.isClosed) _raw.add(e);
-        if (_seenIds.add(e.id)) {
-          _merged.add(e);
-        }
-        // Bound the dedup set to avoid unbounded memory growth on long sessions.
-        if (_seenIds.length > 10000) {
-          _seenIds.remove(_seenIds.first);
-        }
-      });
-      c.eose.listen((String subId) {
-        if (!_eose.isClosed) _eose.add(subId);
-        // closeOnEose subs close only after ALL connected relays have EOSE'd —
-        // closing on the first relay's EOSE loses events from slower relays
-        // (this caused the follow-list wipe: a relay without the user's kind-3
-        // EOSE'd first, the kind-3 from a slower relay was dropped, and a new
-        // kind-3 with only the new pubkey was published — clearing follows).
-        if (_closeOnEose.contains(subId)) {
-          final n = (_eoseCount[subId] ?? 0) + 1;
-          _eoseCount[subId] = n;
-          if (n >= _connections.length) {
-            _closeOnEose.remove(subId);
-            _eoseCount.remove(subId);
-            closeSubscription(subId);
-          }
-        }
-      });
-      c.oks.listen((RelayOk ok) {
-        if (!_oks.isClosed) _oks.add(ok);
-      });
-      c.auths.listen((String challenge) async {
-        // NIP-42: sign a kind-22242 auth event with [relay, url] + [challenge,
-        // challenge] tags and send it back. Lazy-fetch identity so it works
-        // after a login that happened post-connect.
-        final id = identityGetter();
-        if (id == null) return;
-        final auth = id.signEvent(
-          kind: 22242,
-          content: '',
-          tags: [
-            ['relay', c.url],
-            ['challenge', challenge],
-          ],
-        );
-        c.sendAuth(auth);
-      });
+      _wireConnection(c);
     }
+  }
+
+  /// Wire ONE connection's streams into the pool's merged streams. Used by
+  /// [_wireMerged] on first connect AND by [updateUrls] for connections added
+  /// to an already-wired pool.
+  void _wireConnection(RelayConnection c) {
+    c.events.listen((e) {
+      // Raw stream: always emit (consumers dedup themselves) so targeted
+      // re-fetches work even when the global feed already saw the event.
+      if (!_raw.isClosed) _raw.add(e);
+      if (_seenIds.add(e.id)) {
+        _merged.add(e);
+      }
+      // Bound the dedup set to avoid unbounded memory growth on long sessions.
+      if (_seenIds.length > 10000) {
+        _seenIds.remove(_seenIds.first);
+      }
+    });
+    c.eose.listen((String subId) {
+      if (!_eose.isClosed) _eose.add(subId);
+      // closeOnEose subs close only after ALL connected relays have EOSE'd —
+      // closing on the first relay's EOSE loses events from slower relays
+      // (this caused the follow-list wipe: a relay without the user's kind-3
+      // EOSE'd first, the kind-3 from a slower relay was dropped, and a new
+      // kind-3 with only the new pubkey was published — clearing follows).
+      if (_closeOnEose.contains(subId)) {
+        final n = (_eoseCount[subId] ?? 0) + 1;
+        _eoseCount[subId] = n;
+        if (n >= _connections.length) {
+          _closeOnEose.remove(subId);
+          _eoseCount.remove(subId);
+          closeSubscription(subId);
+        }
+      }
+    });
+    c.oks.listen((RelayOk ok) {
+      if (!_oks.isClosed) _oks.add(ok);
+    });
+    c.auths.listen((String challenge) async {
+      // NIP-42: sign a kind-22242 auth event with [relay, url] + [challenge,
+      // challenge] tags and send it back. Lazy-fetch identity so it works
+      // after a login that happened post-connect.
+      final id = identityGetter();
+      if (id == null) return;
+      final auth = id.signEvent(
+        kind: 22242,
+        content: '',
+        tags: [
+          ['relay', c.url],
+          ['challenge', challenge],
+        ],
+      );
+      c.sendAuth(auth);
+    });
+  }
+
+  /// Hot-swap the pool's relay set to [urls] (the user edited their server
+  /// list). Connections whose URL is kept stay untouched (no reconnect);
+  /// removed ones are disposed; new ones are created via [makeClient]. The
+  /// pool instance itself NEVER changes — that's the point: providers watching
+  /// this pool keep their subscriptions, only the underlying sockets change.
+  ///
+  /// Callers pass normalized URLs (see server_list_rules.dart); matching is
+  /// exact-string. If the pool is already wired (connected at least once), new
+  /// connections are wired into the merged streams immediately, get ALL active
+  /// subscriptions re-issued on connect (via the onConnected hook set here),
+  /// and connect right away. If it was never connected, this is a plain list
+  /// swap and the later [connect] covers the new set.
+  ///
+  /// The list itself is swapped in ONE synchronous step (never mutated while
+  /// other code iterates it); removed connections are disposed afterwards. A
+  /// removed connection may still be mid-handshake — RelayClient.connect
+  /// checks its disposed flag after the WS handshake and bails, so disposing
+  /// an in-flight connect is safe.
+  Future<void> updateUrls(List<String> urls) async {
+    final wanted = <String>[];
+    final seen = <String>{};
+    for (final raw in urls) {
+      final u = raw.trim();
+      if (u.isEmpty || !seen.add(u)) continue;
+      wanted.add(u);
+    }
+    final byUrl = <String, RelayConnection>{
+      for (final c in _connections) c.url: c,
+    };
+    final next = <RelayConnection>[];
+    final fresh = <RelayConnection>[];
+    for (final url in wanted) {
+      final existing = byUrl.remove(url);
+      if (existing != null) {
+        next.add(existing);
+      } else {
+        final c = makeClient(url);
+        next.add(c);
+        fresh.add(c);
+      }
+    }
+    final removed = byUrl.values.toList();
+    // Single synchronous swap — iterations elsewhere (request/publish/states)
+    // must never observe a half-edited list.
+    _connections
+      ..clear()
+      ..addAll(next);
+    if (_mergedWired) {
+      for (final c in fresh) {
+        _wireConnection(c);
+        c.setOnConnected(() {
+          _resendActive(c);
+          _emitStatus();
+        });
+        c.setOnDisconnected(_emitStatus);
+        unawaited(c.connect().catchError((Object _) {}));
+      }
+    }
+    for (final c in removed) {
+      unawaited(c.dispose().catchError((Object _) {}));
+    }
+    _emitStatus();
   }
 
   void _resendActive(RelayConnection c) {

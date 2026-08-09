@@ -118,6 +118,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
     _uploads.finished(failed: failed);
     if (mounted) setState(() => _uploading = _uploads.uploading);
   }
+
   bool _nsfw = false;
 
   /// Auto-saved editor draft. Survives crash / back so the user doesn't lose
@@ -438,6 +439,9 @@ class _ComposePageState extends ConsumerState<ComposePage>
       return true;
     }).toList();
     if (files.isEmpty) return;
+    // Resolve the user's configured Blossom servers once for the whole batch.
+    final servers = await currentBlossomServers(ref);
+    if (!mounted) return;
     _uploadStarted();
     var anyFailed = false;
     try {
@@ -456,6 +460,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
               bytes,
               mimetype: mime,
               note: 'costr image',
+              servers: servers,
             );
             if (res == null) anyFailed = true;
             return res == null ? null : (f, mime, res);
@@ -508,6 +513,8 @@ class _ComposePageState extends ConsumerState<ComposePage>
     final bytes = _bytesOf(f);
     if (bytes == null) return;
     final mime = mimeForExt(f.extension ?? f.name);
+    final servers = await currentBlossomServers(ref);
+    if (!mounted) return;
     _uploadStarted();
     BlossomResult? res;
     try {
@@ -516,6 +523,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
         bytes,
         mimetype: mime,
         note: 'costr video',
+        servers: servers,
       );
     } finally {
       _uploadFinished(failed: res == null);
@@ -558,6 +566,8 @@ class _ComposePageState extends ConsumerState<ComposePage>
     final bytes = _bytesOf(f);
     if (bytes == null) return;
     final mime = mimeForExt(f.extension ?? f.name);
+    final servers = await currentBlossomServers(ref);
+    if (!mounted) return;
     _uploadStarted();
     BlossomResult? res;
     try {
@@ -566,6 +576,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
         bytes,
         mimetype: mime,
         note: 'costr file ${f.name}',
+        servers: servers,
       );
     } finally {
       _uploadFinished(failed: res == null);
@@ -624,6 +635,8 @@ class _ComposePageState extends ConsumerState<ComposePage>
       _snack('图片超过 10MB');
       return;
     }
+    final servers = await currentBlossomServers(ref);
+    if (!mounted) return;
     _uploadStarted();
     BlossomResult? res;
     try {
@@ -632,6 +645,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
         bytes,
         mimetype: mime,
         note: 'costr keyboard image',
+        servers: servers,
       );
     } finally {
       _uploadFinished(failed: res == null);

@@ -24,9 +24,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
+import '../../app/server_list_rules.dart';
 import '../../app/theme.dart';
 import '../../nostr/relay_pool.dart';
 import '../../services/blossom_upload.dart' show measureBlossomRtt;
+import 'server_list_sheet.dart';
 
 const int _kKeep = 3;
 const Duration _kRefreshInterval = Duration(seconds: 5);
@@ -65,8 +67,11 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
   // Re-entrancy guard keys ("relay|url" / "blossom|url").
   final Set<String> _measuring = {};
   // Server lists sourced from serverListsProvider (local SQLite, seeded from
-  // the code constants). Populated in _loadCacheThenMeasure.
+  // the code constants, user-editable via the 「自定义」 sheets). Populated in
+  // _loadCacheThenMeasure.
   List<String> _relays = const <String>[];
+  List<String> _search = const <String>[];
+  List<String> _indexer = const <String>[];
   List<String> _blossom = const <String>[];
   Timer? _timer;
   StreamSubscription<List<RelayState>>? _statusSub;
@@ -134,6 +139,8 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     final lists = await ref.read(serverListsProvider.future);
     if (!mounted) return;
     _relays = lists.relays;
+    _search = lists.search;
+    _indexer = lists.indexer;
     _blossom = lists.blossom;
     for (final url in _relays) {
       _relayCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
@@ -141,10 +148,10 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     for (final url in _blossom) {
       _blossomCache[url] = await cache.readRtt(url, prefix: 'blossom_rtt');
     }
-    for (final url in searchRelays) {
+    for (final url in _search) {
       _searchCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
     }
-    for (final url in indexerRelays) {
+    for (final url in _indexer) {
       _indexerCache[url] = await cache.readRtt(url, prefix: 'relay_rtt');
     }
     if (!mounted) return;
@@ -163,13 +170,13 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
         .where((k) => _measuring.add(k))
         .map((k) => k.substring('relay|'.length))
         .toList();
-    final searchTargets = searchRelays
+    final searchTargets = _search
         .where((u) => _searchStatus[u] == RelayStatus.connected)
         .map((u) => 'search|$u')
         .where((k) => _measuring.add(k))
         .map((k) => k.substring('search|'.length))
         .toList();
-    final indexerTargets = indexerRelays
+    final indexerTargets = _indexer
         .where((u) => _indexerStatus[u] == RelayStatus.connected)
         .map((u) => 'indexer|$u')
         .where((k) => _measuring.add(k))
@@ -234,6 +241,19 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     await _measureAll();
   }
 
+  /// Open the customize sheet for [category]; when the user saves a new list,
+  /// reload the lists + re-measure so the page reflects the change at once.
+  Future<void> _openCustomize(ServerCategory category) async {
+    final saved = await showServerListSheet(
+      context: context,
+      ref: ref,
+      category: category,
+    );
+    if (saved == true && mounted) {
+      await _loadCacheThenMeasure();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -260,7 +280,10 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               style: theme.textTheme.bodySmall,
             ),
           ),
-          _SectionHeader('中继服务器'),
+          _SectionHeader(
+            '中继服务器',
+            onCustomize: () => _openCustomize(ServerCategory.relay),
+          ),
           for (final url in _relays)
             _ServerRow(
               url: url,
@@ -269,8 +292,11 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               samples: _relayCache[url] ?? const <int>[],
               measuring: _measuring.contains('relay|$url'),
             ),
-          _SectionHeader('搜索中继（NIP-50）'),
-          for (final url in searchRelays)
+          _SectionHeader(
+            '搜索中继（NIP-50）',
+            onCustomize: () => _openCustomize(ServerCategory.search),
+          ),
+          for (final url in _search)
             _ServerRow(
               url: url,
               online: _searchStatus[url] == RelayStatus.connected,
@@ -278,8 +304,11 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               samples: _searchCache[url] ?? const <int>[],
               measuring: _measuring.contains('search|$url'),
             ),
-          _SectionHeader('索引中继'),
-          for (final url in indexerRelays)
+          _SectionHeader(
+            '索引中继',
+            onCustomize: () => _openCustomize(ServerCategory.indexer),
+          ),
+          for (final url in _indexer)
             _ServerRow(
               url: url,
               online: _indexerStatus[url] == RelayStatus.connected,
@@ -287,7 +316,10 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               samples: _indexerCache[url] ?? const <int>[],
               measuring: _measuring.contains('indexer|$url'),
             ),
-          _SectionHeader('Blossom 图床服务器'),
+          _SectionHeader(
+            'Blossom 图床服务器',
+            onCustomize: () => _openCustomize(ServerCategory.blossom),
+          ),
           for (final url in _blossom)
             _ServerRow(
               url: url,
@@ -369,19 +401,40 @@ class _ExplainerRow extends StatelessWidget {
 }
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader(this.title);
+  const _SectionHeader(this.title, {this.onCustomize});
   final String title;
+
+  /// Opens the customize sheet for this category (「自定义」 entry on the
+  /// right of the title row).
+  final VoidCallback? onCustomize;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 4, 8, 0),
       color: theme.colorScheme.surfaceContainerHighest,
-      child: Text(
-        title,
-        style: theme.textTheme.labelMedium?.copyWith(
-          fontWeight: FontWeight.w600,
-        ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (onCustomize != null)
+            TextButton(
+              onPressed: onCustomize,
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('自定义'),
+            ),
+        ],
       ),
     );
   }

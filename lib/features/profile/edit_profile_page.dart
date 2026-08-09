@@ -98,6 +98,7 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
         bytes,
         mimetype: mime,
         note: 'costr $fieldKey',
+        servers: await currentBlossomServers(ref),
       );
       if (!mounted) return;
       if (res != null) {

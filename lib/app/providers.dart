@@ -29,6 +29,7 @@ import '../services/account_registry.dart';
 import '../services/local_cache.dart' as cache;
 import '../services/blossom_upload.dart';
 import '../services/secure_storage_service.dart';
+import 'server_list_rules.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -46,14 +47,9 @@ const List<String> defaultRelays = <String>[
   'wss://top.testrelay.top/',
 ];
 
-/// Order-insensitive equality of two relay-URL lists (compares as sets so a
-/// re-order in [defaultRelays] doesn't trigger a needless re-seed).
-bool _sameRelaySet(List<String> a, List<String> b) {
-  if (a.length != b.length) return false;
-  final sa = a.map((u) => u.trim()).where((u) => u.isNotEmpty).toSet();
-  final sb = b.map((u) => u.trim()).where((u) => u.isNotEmpty).toSet();
-  return sa.length == sb.length && sa.containsAll(sb);
-}
+// Order-insensitive server-list equality lives in server_list_rules.dart
+// ([sameServerSet]) so the save path and the kind-10002 sync-marker compare
+// share ONE normalization.
 
 /// Dedicated NIP-50 search relays. Global search (searchPostsProvider /
 /// searchUsersProvider) is routed ONLY to these, NOT [defaultRelays], because
@@ -160,46 +156,87 @@ final localCacheProvider = FutureProvider<cache.LocalCache>((ref) async {
   return db;
 });
 
-/// The user's configured server lists (relays + Blossom), sourced from the
-/// local SQLite cache (the editable source of truth, seeded from the code
-/// constants on first run) and published to Nostr (kind 10002 relays /
-/// kind 10063 Blossom). The 服务器节点 page reads from here. Edit UI is
-/// future work; for now the lists equal the seeded constants.
+/// The user's configured server lists — the editable source of truth, seeded
+/// from the code constants on first run and persisted in the SQLite config
+/// table (device-level keys: ALL accounts on this device share the same
+/// lists). Relay changes are published to Nostr as kind 10002 (per account);
+/// Blossom changes stay purely local (kind 10063 deliberately not
+/// implemented). The 服务器节点 page, the relay/search/indexer pools and the
+/// blossom upload path all read from here.
 class ServerLists {
-  const ServerLists(this.relays, this.blossom);
+  const ServerLists({
+    required this.relays,
+    required this.search,
+    required this.indexer,
+    required this.blossom,
+  });
   final List<String> relays;
+  final List<String> search;
+  final List<String> indexer;
   final List<String> blossom;
+
+  List<String> of(ServerCategory category) {
+    switch (category) {
+      case ServerCategory.relay:
+        return relays;
+      case ServerCategory.search:
+        return search;
+      case ServerCategory.indexer:
+        return indexer;
+      case ServerCategory.blossom:
+        return blossom;
+    }
+  }
 }
 
 final serverListsProvider = FutureProvider<ServerLists>((ref) async {
   final db = await ref.read(localCacheProvider.future);
-  var relays = await db.readServerList('relay_list');
-  // The relay set is app-controlled (the defaultRelays const), not user-
-  // editable (the settings page is read-only). So when the const changes
-  // (an app UPDATE ships a different relay list), re-seed the persisted copy
-  // from the const — otherwise a non-uninstall update would keep showing the
-  // OLD relays in the settings page (and the connected pool, which is built
-  // from the const directly, would diverge from what the page shows).
-  if (relays == null ||
-      relays.isEmpty ||
-      !_sameRelaySet(relays, defaultRelays)) {
-    relays = defaultRelays;
-    await db.writeServerList('relay_list', relays);
+  Future<List<String>> load(
+    ServerCategory category,
+    List<String> defaults,
+  ) async {
+    final stored = await db.readServerList(serverListKeys[category]!);
+    if (stored != null && stored.isNotEmpty) return stored;
+    // Seed ONLY when absent. Deliberately NOT resetting when the stored list
+    // diverges from the constants (the pre-edit-UI behavior): the lists are
+    // user-editable now, and silently overwriting a customization on every
+    // launch would defeat the feature. Accepted tradeoff: default-list
+    // changes shipped in an app update no longer reach existing users — a
+    // permanently-dead default server shows a red 离线 on the node page and
+    // the user can swap it via the 自定义 sheet.
+    final seeded = normalizeServerList(defaults);
+    await db.writeServerList(serverListKeys[category]!, seeded);
+    return seeded;
   }
-  var blossom = await db.readServerList('blossom_list');
-  if (blossom == null ||
-      blossom.isEmpty ||
-      !_sameRelaySet(blossom, blossomServersConst)) {
-    blossom = blossomServersConst;
-    await db.writeServerList('blossom_list', blossom);
-  }
-  return ServerLists(relays, blossom);
+
+  return ServerLists(
+    relays: await load(ServerCategory.relay, defaultRelays),
+    search: await load(ServerCategory.search, searchRelays),
+    indexer: await load(ServerCategory.indexer, indexerRelays),
+    blossom: await load(ServerCategory.blossom, blossomServersConst),
+  );
 });
 
 // Re-export the Blossom server list constant (defined in
 // services/blossom_upload.dart) so serverListsProvider can seed the local
 // cache without callers needing to import the upload module directly.
 const List<String> blossomServersConst = blossomServers;
+
+/// The built-in server list for [category] — what the customize sheet's
+/// 「恢复默认」 restores. Kept here (not in server_list_rules.dart) because
+/// the constants live in this layer.
+List<String> defaultServerListFor(ServerCategory category) {
+  switch (category) {
+    case ServerCategory.relay:
+      return defaultRelays;
+    case ServerCategory.search:
+      return searchRelays;
+    case ServerCategory.indexer:
+      return indexerRelays;
+    case ServerCategory.blossom:
+      return blossomServersConst;
+  }
+}
 
 // Monotonic subId counter, namespaced for relay-log readability.
 int _seq = 0;
@@ -381,15 +418,21 @@ class IdentityNotifier extends AsyncNotifier<Identity?> {
     // no-op).
     state = AsyncData(identity);
     // NIP-65: publish this account's relay list right after login (the
-    // cold-start publish only fires for an already-stored identity).
-    // Fire-and-forget.
-    publishRelayList(ref.read(relayPoolProvider), identity);
+    // cold-start publish only fires for an already-stored identity). A fresh
+    // account has no sync marker, so this publishes the device's current
+    // (user-editable) list and records the marker on success.
+    _syncRelayListBg(identity);
   }
 
   /// Switch to another stored account.
   Future<void> switchTo(String pubkeyHex) async {
     final set = await ref.read(accountsProvider.notifier).setActive(pubkeyHex);
     state = AsyncData(_identityOf(set));
+    // The relay list is device-global but kind 10002 is per-account: if the
+    // list changed while this account was dormant, catch up now — the marker
+    // compare publishes only when something actually differs.
+    final switched = state.value;
+    if (switched != null) _syncRelayListBg(switched);
   }
 
   /// Remove an account (its nsec leaves this device). When it was the active
@@ -399,6 +442,42 @@ class IdentityNotifier extends AsyncNotifier<Identity?> {
         .read(accountsProvider.notifier)
         .removeAccount(pubkeyHex);
     state = AsyncData(_identityOf(set));
+    // Best-effort cleanup of the removed account's kind-10002 sync marker.
+    // Fire-and-forget; never block removal on the DB.
+    () async {
+      try {
+        final db = await ref.read(localCacheProvider.future);
+        await db.deleteConfig(relayListSyncedKey(pubkeyHex));
+      } catch (_) {}
+    }();
+  }
+
+  /// Fire-and-forget kind-10002 catch-up for [identity]: publishes the
+  /// device's current relay list under this account when it differs from the
+  /// account's last-published list (the sync marker). ALL DB access is
+  /// unawaited + guarded — login/switchTo/removeAccount stay callable in test
+  /// containers that don't override [localCacheProvider] (which would throw
+  /// MissingPluginException from path_provider). The list is read from the DB
+  /// (the source of truth), NOT from serverListsProvider's cached value —
+  /// after a save the provider may still be mid-rebuild with a stale value.
+  void _syncRelayListBg(Identity identity) {
+    () async {
+      try {
+        final db = await ref.read(localCacheProvider.future);
+        final relays =
+            (await db.readServerList(serverListKeys[ServerCategory.relay]!)) ??
+            defaultRelays;
+        await syncRelayListForAccount(
+          ref.read(relayPoolProvider),
+          db,
+          identity,
+          relays,
+        );
+      } catch (_) {
+        // No DB (tests) or a transient error — the marker is only written on
+        // success, so the next switch/login/cold-start retries automatically.
+      }
+    }();
   }
 
   /// Log out of the active account (removes its nsec from this device); the
@@ -589,6 +668,16 @@ final bootstrapProvider = FutureProvider<void>((ref) async {
 Future<void> _runBootstrap(Ref ref) async {
   await ref.watch(identityProvider.future);
   final pool = ref.read(relayPoolProvider);
+  // Apply the user's persisted server lists BEFORE the first connect:
+  // updateUrls on a never-connected pool is a pure list swap, so the pool
+  // then connects to exactly what the user configured. Reading the pools here
+  // also force-builds the lazy search/indexer pools so their updateUrls lands
+  // now — a pool first built later would be built from the constants and miss
+  // the user's list entirely.
+  final lists = await ref.read(serverListsProvider.future);
+  await pool.updateUrls(lists.relays);
+  await ref.read(searchPoolProvider).updateUrls(lists.search);
+  await ref.read(indexerPoolProvider).updateUrls(lists.indexer);
   await pool.connect();
   // Per-relay publish retry: when a publish succeeds on some relays but
   // background retries to the rest are exhausted (event published, but not
@@ -603,10 +692,24 @@ Future<void> _runBootstrap(Ref ref) async {
   // NIP-65: publish our relay list (kind 10002) in the background so other
   // clients can discover the author's relays (outbox/inbox model). Fire-and-
   // forget — must not block the router. kind 10002 is replaceable, so
-  // re-publishing on every cold start just replaces the prior list.
+  // re-publishing on every cold start just replaces the prior list; the
+  // unconditional resend also repairs relays that lost the event. The sync
+  // marker is updated on success so account switches don't re-publish
+  // needlessly. Publishes the USER's persisted list (not the code constant).
   final identity = ref.read(identityProvider).value;
   if (identity != null) {
-    publishRelayList(pool, identity);
+    unawaited(
+      publishRelayList(pool, identity, lists.relays).then((ok) async {
+        if (!ok) return;
+        try {
+          final db = await ref.read(localCacheProvider.future);
+          await db.writeServerList(
+            relayListSyncedKey(identity.pubkeyHex),
+            lists.relays,
+          );
+        } catch (_) {}
+      }),
+    );
     // Retry drafts (failed publishes from a prior session). publishAndWait
     // already does in-session per-relay retry; this covers cross-session.
     unawaited(
@@ -641,11 +744,102 @@ Future<void> _runBootstrap(Ref ref) async {
   });
 }
 
-/// Sign + publish the NIP-65 relay list (kind 10002) for [identity] to
-/// [pool]. Fire-and-forget; safe to call on every cold start (replaceable).
-void publishRelayList(RelayPool pool, Identity identity) {
-  final signed = NostrActions(identity).relayList(defaultRelays);
-  unawaited(pool.publishAndWait(signed));
+/// Sign + publish [identity]'s NIP-65 relay list (kind 10002) with [relays]
+/// to [pool]. Returns whether any relay accepted the event. Callers that
+/// don't care may still treat it as fire-and-forget; kind 10002 is
+/// replaceable, so a failed publish is harmless (retried on the next
+/// switch/login/cold start via the sync marker).
+Future<bool> publishRelayList(
+  RelayPool pool,
+  Identity identity,
+  List<String> relays,
+) async {
+  final signed = NostrActions(identity).relayList(relays);
+  final ok = await pool.publishAndWait(signed);
+  return ok.ok;
+}
+
+/// Config key of an account's kind-10002 sync marker: the relay list that
+/// account last SUCCESSFULLY published. Device-global relay lists + per-
+/// account kind-10002 events need this bridge so accounts activated later
+/// catch up exactly once.
+String relayListSyncedKey(String pubkeyHex) => 'relay_list_synced:$pubkeyHex';
+
+/// Publish a fresh kind 10002 for [identity] when the device's current relay
+/// list [relays] differs from what this account last published (its sync
+/// marker). The marker is written ONLY after a successful publish, so a
+/// failure retries automatically on the next activation.
+Future<void> syncRelayListForAccount(
+  RelayPool pool,
+  cache.LocalCache db,
+  Identity identity,
+  List<String> relays,
+) async {
+  final markerKey = relayListSyncedKey(identity.pubkeyHex);
+  final synced = await db.readServerList(markerKey);
+  if (synced != null && sameServerSet(synced, relays)) return;
+  final ok = await publishRelayList(pool, identity, relays);
+  if (ok) {
+    await db.writeServerList(markerKey, relays);
+  }
+}
+
+/// Persist a user-edited server list for [category], apply it to the matching
+/// live pool (relay/search/indexer — blossom has none), and for the relay
+/// category publish a fresh kind 10002 under the active account (other stored
+/// accounts catch up when they are activated). UI entry point only: assumes
+/// bootstrap already ran (DB + pools ready).
+Future<void> saveServerList(
+  WidgetRef ref,
+  ServerCategory category,
+  List<String> urls,
+) async {
+  final clean = normalizeServerList(urls);
+  if (clean.length < minServersFor(category) ||
+      clean.length > maxServersPerCategory) {
+    throw StateError('服务器数量超出允许范围');
+  }
+  final db = await ref.read(localCacheProvider.future);
+  await db.writeServerList(serverListKeys[category]!, clean);
+  switch (category) {
+    case ServerCategory.relay:
+      await ref.read(relayPoolProvider).updateUrls(clean);
+    case ServerCategory.search:
+      await ref.read(searchPoolProvider).updateUrls(clean);
+    case ServerCategory.indexer:
+      await ref.read(indexerPoolProvider).updateUrls(clean);
+    case ServerCategory.blossom:
+      break; // No pool; the upload path reads the list on demand.
+  }
+  ref.invalidate(serverListsProvider);
+  if (category == ServerCategory.relay) {
+    final identity = ref.read(identityProvider).value;
+    if (identity != null) {
+      try {
+        await syncRelayListForAccount(
+          ref.read(relayPoolProvider),
+          db,
+          identity,
+          clean,
+        );
+      } catch (_) {
+        // The list is already persisted + applied locally; the kind-10002
+        // catch-up retries on the next activation/cold start.
+      }
+    }
+  }
+}
+
+/// The Blossom servers to upload to: the user's persisted list, falling back
+/// to the built-in constant when the cache is unreadable — a broken DB must
+/// not break posting.
+Future<List<String>> currentBlossomServers(WidgetRef ref) async {
+  try {
+    final lists = await ref.read(serverListsProvider.future);
+    return lists.blossom.isEmpty ? blossomServersConst : lists.blossom;
+  } catch (_) {
+    return blossomServersConst;
+  }
 }
 
 /// Retry publishing drafts — events that failed to publish in a prior
