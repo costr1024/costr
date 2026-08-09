@@ -511,8 +511,9 @@ class LocalCache extends _$LocalCache {
         'INSERT INTO drafts(raw_json, created_at, attempts) VALUES (?, ?, 0)',
         [rawJson, DateTime.now().millisecondsSinceEpoch ~/ 1000],
       );
-      final row = await customSelect('SELECT last_insert_rowid() AS id')
-          .getSingle();
+      final row = await customSelect(
+        'SELECT last_insert_rowid() AS id',
+      ).getSingle();
       return row.read<int>('id');
     });
   }
@@ -596,24 +597,31 @@ class LocalCache extends _$LocalCache {
 
   // --- Cleanup ---
 
-  /// Delete cached events older than [ttlDays]. When [ownPubkey] is given,
-  /// the user's OWN posts are exempt: they are notification targets (a
-  /// kind-7 reaction notification deep-links to the reacted post), and once
-  /// TTL-evicted the only remaining source is the relays — which often prune
-  /// old events too, making "X 赞了你" open to "未找到该帖子". Keeping own
-  /// posts locally makes notification targets resolve instantly forever.
-  Future<int> cleanupOldEvents({int ttlDays = 30, String? ownPubkey}) async {
+  /// Delete cached events older than [ttlDays]. Every pubkey in
+  /// [ownPubkeys] (all accounts logged in on this device) is exempt: own
+  /// posts are notification targets (a kind-7 reaction notification deep-links
+  /// to the reacted post), and once TTL-evicted the only remaining source is
+  /// the relays — which often prune old events too, making "X 赞了你" open to
+  /// "未找到该帖子". Keeping own posts locally makes notification targets
+  /// resolve instantly forever — for every stored account, so switching to a
+  /// dormant account doesn't surface dead links.
+  Future<int> cleanupOldEvents({
+    int ttlDays = 30,
+    Set<String> ownPubkeys = const {},
+  }) async {
     final cutoff =
         DateTime.now().millisecondsSinceEpoch ~/ 1000 - ttlDays * 86400;
-    if (ownPubkey != null) {
-      await customStatement(
-        'DELETE FROM events WHERE created_at < ? AND kind != 5 AND pubkey != ?',
-        [cutoff, ownPubkey],
-      );
-    } else {
+    if (ownPubkeys.isEmpty) {
       await customStatement(
         'DELETE FROM events WHERE created_at < ? AND kind != 5',
         [cutoff],
+      );
+    } else {
+      final placeholders = List.filled(ownPubkeys.length, '?').join(', ');
+      await customStatement(
+        'DELETE FROM events WHERE created_at < ? AND kind != 5 '
+        'AND pubkey NOT IN ($placeholders)',
+        [cutoff, ...ownPubkeys],
       );
     }
     await customStatement(

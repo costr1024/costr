@@ -5,6 +5,7 @@
 
 import 'package:costr/app/providers.dart';
 import 'package:costr/models/event.dart';
+import 'package:costr/nostr/identity.dart';
 import 'package:costr/nostr/relay_pool.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +20,14 @@ Event _e(String id) => Event(
   sig: 's' * 128,
 );
 
+/// Logged-out stub: the event store now watches the active pubkey (account
+/// switch resets the store) — without a stub the REAL storage-backed identity
+/// would resolve mid-test and wipe the ingested events.
+class _LoggedOutIdentity extends IdentityNotifier {
+  @override
+  Future<Identity?> build() async => null;
+}
+
 void main() {
   test('ingest batches state emissions to ≤1 per 200ms burst', () async {
     // Empty pool (not connected — build() only listens to pool.events, which
@@ -31,6 +40,7 @@ void main() {
         localCacheProvider.overrideWith(
           (ref) async => throw StateError('stub'),
         ),
+        identityProvider.overrideWith(() => _LoggedOutIdentity()),
       ],
     );
     addTearDown(container.dispose);

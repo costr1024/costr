@@ -101,7 +101,9 @@ class AccountSettingsPage extends ConsumerWidget {
       ).showSnackBar(const SnackBar(content: Text('身份验证未通过，私钥未复制')));
       return;
     }
-    final nsec = await ref.read(storageProvider).readNsec();
+    // The ACTIVE account's nsec — with multi-account, each stored account
+    // keeps its own key in the registry; backup always targets the current one.
+    final nsec = ref.read(identityProvider).value?.nsec;
     if (nsec == null) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(

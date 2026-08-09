@@ -18,6 +18,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'account_registry.dart';
+
 /// Testable file-backed secret store. Stores key→value in a single 0600 JSON
 /// file under [dir] (which is created 0700).
 class FileSecretStore {
@@ -108,12 +110,17 @@ class SecureStorageService {
 
   static const String _nsecKey = 'costr.identity.nsec';
 
+  /// Multi-account registry blob (JSON of [AccountSet]). All logged-in
+  /// accounts' nsecs + the active pubkey live in this single key so the set
+  /// is read/written atomically.
+  static const String _accountsKey = 'costr.accounts.v1';
+
   static String get _defaultFileDir {
     final home = Platform.environment['HOME'] ?? '.';
     return '$home/.config/costr';
   }
 
-  Future<String?> readNsec() async {
+  Future<String?> _readSecret(String key) async {
     if (_secureOk) {
       try {
         // Bounded: on some Android devices the Keystore read HANGS after an
@@ -122,7 +129,7 @@ class SecureStorageService {
         // read here freezes the app on the splash screen. Time out and fall
         // back to the file store instead of hanging forever.
         final v = await _secure
-            .read(key: _nsecKey)
+            .read(key: key)
             .timeout(const Duration(seconds: 8));
         return v;
       } on TimeoutException {
@@ -139,16 +146,26 @@ class SecureStorageService {
         _secureOk = false;
       }
     }
-    return _file.read(_nsecKey);
+    return _file.read(key);
   }
 
-  Future<void> writeNsec(String nsec) async {
+  Future<void> _writeSecret(String key, String value) async {
     if (_secureOk) {
       try {
-        await _secure.write(key: _nsecKey, value: nsec);
+        // Bounded like the read path: a wedged keystore must not hang the
+        // caller (login/account switching await this on the UI path).
+        await _secure
+            .write(key: key, value: value)
+            .timeout(const Duration(seconds: 8));
         // libsecret worked; remove any stale file copy.
-        await _file.delete(_nsecKey);
+        await _file.delete(key);
         return;
+      } on TimeoutException {
+        debugPrint(
+          '[costr] secureStorage.write timed out (keystore hung), '
+          'using file fallback',
+        );
+        _secureOk = false;
       } catch (e, s) {
         debugPrint(
           '[costr] secureStorage.write failed, using file fallback: $e',
@@ -157,20 +174,51 @@ class SecureStorageService {
         _secureOk = false;
       }
     }
-    await _file.write(_nsecKey, nsec);
+    await _file.write(key, value);
   }
 
-  Future<void> deleteNsec() async {
+  Future<void> _deleteSecret(String key) async {
     if (_secureOk) {
       try {
-        await _secure.delete(key: _nsecKey);
+        await _secure.delete(key: key).timeout(const Duration(seconds: 8));
+      } on TimeoutException {
+        debugPrint('[costr] secureStorage.delete timed out (keystore hung)');
+        _secureOk = false;
       } catch (e) {
         debugPrint('[costr] secureStorage.delete failed: $e');
         _secureOk = false;
       }
     }
-    await _file.delete(_nsecKey);
+    await _file.delete(key);
   }
+
+  Future<String?> readNsec() => _readSecret(_nsecKey);
+
+  Future<void> writeNsec(String nsec) => _writeSecret(_nsecKey, nsec);
+
+  Future<void> deleteNsec() => _deleteSecret(_nsecKey);
+
+  // --- Multi-account registry (all nsecs + active pubkey in one blob) ---
+
+  /// Read the stored account set. Returns null when nothing is stored yet
+  /// (first run / pre-multi-account install); a present-but-empty set is a
+  /// valid "logged out of all accounts" state and returns non-null.
+  Future<AccountSet?> readAccounts() async {
+    final raw = await _readSecret(_accountsKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return AccountSet.tryFromJson(jsonDecode(raw));
+    } catch (_) {
+      // Corrupted blob — treat as absent (the user can log in again; must
+      // not wedge startup).
+      return null;
+    }
+  }
+
+  Future<void> writeAccounts(AccountSet set) =>
+      _writeSecret(_accountsKey, jsonEncode(set.toJson()));
+
+  Future<void> deleteAccounts() => _deleteSecret(_accountsKey);
 
   Future<void> dispose() async {}
 

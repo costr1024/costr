@@ -361,6 +361,7 @@
     <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> 切 tab · <kbd>C</kbd> 发帖 · <kbd>L</kbd> 登录 · <kbd>Esc</kbd> 返回<br><br>
     <b>新增</b><br>
     · 登录/注册（创建账号 / 私钥导入）<br>
+    · 多账号切换（设置→账号：点按切换 / 长按移除 / 添加账号）<br>
     · 退出登录确认页<br>
     · 搜索结果 帖子/用户 分 tab<br>
     · 主页 帖子/回帖 搜索<br>
@@ -514,7 +515,7 @@
     <div class="content">
       <div class="set-group"><div class="h">通用</div>
         <div class="set-row" style="cursor:pointer" onclick="go('notif-settings')"><div class="l"><b>通知</b><span>回复、喜欢、关注等</span></div><span style="color:var(--tx3)">›</span></div>
-        <div class="set-row" style="cursor:pointer" onclick="alert('账号与身份（占位）')"><div class="l"><b>账号与身份</b><span>你的身份钥匙、登录与登出</span></div><span style="color:var(--tx3)">›</span></div>
+        <div class="set-row" style="cursor:pointer" onclick="alert('账号级 NSFW 设置、备份私钥（占位）')"><div class="l"><b>账号备份</b><span>账号级 NSFW 设置、备份私钥</span></div><span style="color:var(--tx3)">›</span></div>
         <div class="set-row" style="cursor:pointer" onclick="alert('服务器节点（占位）')"><div class="l"><b>服务器节点</b><span>Costr 连接的服务器，一般不用改</span></div><span style="color:var(--tx3)">›</span></div>
         <div class="set-row"><div class="l"><b>在关注信息流显示自己的帖子</b><span>关注自己后，你发的帖子也会出现在「关注」信息流</span></div><div class="switch on" onclick="this.classList.toggle('on')"></div></div>
         <div class="set-row"><div class="l"><b>代理媒体</b><span>开启后含图片/视频的帖子显示「代理媒体」按钮，点按用 proxy.bostr.online 加载被墙的图视频（仅本机，不同步）</span></div><div class="switch" onclick="this.classList.toggle('on')"></div></div>
@@ -524,7 +525,24 @@
         <div class="set-row" style="cursor:pointer" onclick="go('about')"><div class="l"><b>关于 Costr</b><span>是什么、设计理念</span></div><span style="color:var(--tx3)">›</span></div>
       </div>
       <div class="set-group"><div class="h">账号</div>
-        <div class="set-row" style="cursor:pointer" onclick="openSheet('logout-sheet')"><div class="l"><b style="color:var(--red)">退出登录</b><span>保留本地数据，下次可恢复</span></div><span style="color:var(--tx3)">›</span></div>
+        <!-- 多账号列表：点按切换（当前账号带「当前」徽标），长按移除。仅当前账号活跃，其余账号不占连接 -->
+        <div class="set-row" style="cursor:pointer" onclick="alert('已是当前账号')">
+          <div style="display:flex;align-items:center;gap:12px;flex:1">
+            <div class="ava" style="background:#7c5cff">阿</div>
+            <div class="l" style="flex:1"><b>阿橘</b><span>npub1aju…x9k2</span></div>
+            <span style="font-size:12px;font-weight:600;color:var(--brand,#0f1419);background:rgba(124,92,255,.12);border-radius:10px;padding:3px 8px">当前</span>
+          </div>
+        </div>
+        <div class="set-row" style="cursor:pointer" onclick="alert('已切换到该账号（demo 占位）')">
+          <div style="display:flex;align-items:center;gap:12px;flex:1">
+            <div class="ava" style="background:#4da3ff">测</div>
+            <div class="l" style="flex:1"><b>测试小号</b><span>npub1q8m…3jd7</span></div>
+            <span style="color:var(--tx3)">›</span>
+          </div>
+        </div>
+        <div style="padding:6px 16px 0;color:var(--tx3);font-size:12px;line-height:1.5">点按账号即可切换，当前账号保持活跃、其余账号不占用连接；长按账号可将其从本机移除。</div>
+        <div class="set-row" style="cursor:pointer" onclick="loginStep('login-step1');go('login')"><div class="l"><b>添加账号</b><span>用已有私钥登录或创建新账号</span></div><span style="color:var(--tx3)">›</span></div>
+        <div class="set-row" style="cursor:pointer" onclick="openSheet('logout-sheet')"><div class="l"><b style="color:var(--red)">退出登录</b><span>移除当前账号私钥，保留本地数据，下次可恢复</span></div><span style="color:var(--tx3)">›</span></div>
       </div>
       <div style="padding:24px 16px;color:var(--tx3);font-size:12px;text-align:center;line-height:1.6">Costr = Chinese Nostr<br>更适合中文用户的 Nostr 开源社交客户端</div>
     </div>
@@ -665,7 +683,7 @@
       <div class="grab"></div>
       <div style="padding:8px 20px 20px">
         <h3 style="font-size:18px;margin-bottom:8px">退出登录？</h3>
-        <p style="color:var(--tx2);font-size:14px;line-height:1.6">本地数据（帖子缓存、关注列表）会保留在这台手机上，下次用同一把私钥登录即可恢复。<br><br>想<b>彻底注销这个账号</b>？去中心化里没人能删你的号——但你可以不再用这把钥匙，它就静默下去了。</p>
+        <p style="color:var(--tx2);font-size:14px;line-height:1.6">当前账号的私钥将从这台手机移除（其他已添加账号不受影响）。本地数据（帖子缓存、关注列表）会保留，下次用同一把私钥登录即可恢复。<br><br>想<b>彻底注销这个账号</b>？去中心化里没人能删你的号——但你可以不再用这把钥匙，它就静默下去了。</p>
         <div style="display:flex;gap:10px;margin-top:16px">
           <button class="big-btn" style="flex:1" onclick="closeSheet('logout-sheet')">取消</button>
           <button class="big-btn primary" style="flex:1;background:var(--red);border-color:var(--red)" onclick="closeSheet('logout-sheet');loginStep('login-step1');go('login')">退出登录</button>

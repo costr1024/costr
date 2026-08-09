@@ -9,6 +9,10 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../app/providers.dart';
 import '../../app/theme.dart';
+import '../../services/account_registry.dart';
+import '../../utils/nip19.dart';
+import '../../widgets/avatar.dart';
+import '../../widgets/display_name.dart';
 import '../auth/login_page.dart' show showLogoutSheet;
 
 class SettingsPage extends ConsumerWidget {
@@ -72,10 +76,28 @@ class SettingsPage extends ConsumerWidget {
             onTap: () => context.push('/about'),
           ),
           const _SectionHeader('账号'),
+          const _AccountList(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+            child: Text(
+              '点按账号即可切换，当前账号保持活跃、其余账号不占用连接；'
+              '长按账号可将其从本机移除。',
+              style: TextStyle(
+                fontSize: 12,
+                color: CostrColors.of(context).text3,
+                height: 1.5,
+              ),
+            ),
+          ),
+          _Row(
+            title: '添加账号',
+            subtitle: '用已有私钥登录或创建新账号',
+            onTap: () => context.push('/login?add=1'),
+          ),
           _Row(
             title: '退出登录',
             titleColor: CostrColors.of(context).red,
-            subtitle: '保留本地数据，下次可恢复',
+            subtitle: '移除当前账号私钥，保留本地数据，下次可恢复',
             onTap: () => showLogoutSheet(context, ref),
           ),
           const SizedBox(height: 24),
@@ -528,6 +550,182 @@ class _Row extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// The logged-in account list (multi-account switcher). Tap a row to switch
+/// the active account; long-press to remove an account from this device.
+/// The active account shows a 「当前」 badge — only IT holds live connections
+/// and notifications; switching tears the old account's subscriptions down
+/// via the reactive identity chain.
+class _AccountList extends ConsumerWidget {
+  const _AccountList();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final accounts = ref.watch(accountsProvider).value;
+    if (accounts == null || accounts.isEmpty) return const SizedBox.shrink();
+    return Column(
+      children: [
+        for (final entry in accounts.accounts)
+          _AccountTile(
+            entry: entry,
+            isActive: entry.pubkeyHex == accounts.activePubkey,
+          ),
+      ],
+    );
+  }
+}
+
+class _AccountTile extends ConsumerWidget {
+  const _AccountTile({required this.entry, required this.isActive});
+
+  final AccountEntry entry;
+  final bool isActive;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final meta = ref.watch(metadataProvider(entry.pubkeyHex)).value;
+    return InkWell(
+      onTap: isActive ? null : () => _switchTo(context, ref),
+      onLongPress: () => _confirmRemove(context, ref),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: CostrColors.of(context).border),
+          ),
+        ),
+        child: Row(
+          children: [
+            Avatar(pubkey: entry.pubkeyHex, radius: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DisplayName(
+                    pubkey: entry.pubkeyHex,
+                    meta: meta,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: isActive
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                      color: CostrColors.of(context).text,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    shortenEntity(entry.npub),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: CostrColors.of(context).text2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isActive)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: CostrColors.of(context).brand.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '当前',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: CostrColors.of(context).brand,
+                  ),
+                ),
+              )
+            else
+              Icon(Icons.chevron_right, color: CostrColors.of(context).text3),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _switchTo(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref.read(identityProvider.notifier).switchTo(entry.pubkeyHex);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('切换失败：$e')));
+    }
+  }
+
+  /// Remove-confirm sheet. Same teardown-safe pattern as [showLogoutSheet]:
+  /// await the sheet's dismissal BEFORE mutating identity state, so the route
+  /// refresh never rebuilds the tree under a mid-teardown sheet element.
+  Future<void> _confirmRemove(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('移除账号？', style: Theme.of(ctx).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Text(
+                isActive
+                    ? '这是当前活跃账号。移除后它的私钥将从本机删除；'
+                          '本地数据保留，下次用同一把私钥登录即可恢复。'
+                    : '该账号的私钥将从这台手机移除。'
+                          '本地数据保留，下次用同一把私钥登录即可恢复。',
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('取消'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: CostrColors.of(context).red,
+                      ),
+                      child: const Text('移除'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await ref.read(identityProvider.notifier).removeAccount(entry.pubkeyHex);
+      // Removing the LAST account leaves identity null → the router's refresh
+      // listener redirects to /login; removing the active account activates
+      // the next stored one and we stay on this page.
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('移除失败：$e')));
+    }
   }
 }
 

@@ -48,15 +48,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       final identity = ref.read(identityProvider).value;
       final loc = state.matchedLocation;
       final goingToLogin = loc == '/login';
+      // `?add=1` = the multi-account ADD flow, reachable while logged in.
+      final addingAccount =
+          goingToLogin && state.uri.queryParameters['add'] == '1';
       if (identity == null && !goingToLogin) return '/login';
-      if (identity != null && goingToLogin) return '/feed';
+      if (identity != null && goingToLogin && !addingAccount) return '/feed';
       return null;
     },
     routes: <RouteBase>[
       GoRoute(
         path: '/login',
         builder: (BuildContext context, GoRouterState state) =>
-            const LoginPage(),
+            LoginPage(addMode: state.uri.queryParameters['add'] == '1'),
       ),
       GoRoute(
         path: '/compose',

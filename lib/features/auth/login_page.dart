@@ -16,7 +16,12 @@ import '../../utils/nip19.dart';
 import '../../widgets/costr_logo.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
-  const LoginPage({super.key});
+  const LoginPage({super.key, this.addMode = false});
+
+  /// Multi-account ADD flow (`/login?add=1`): reached from the settings page
+  /// while already logged in. The new account becomes active on success and
+  /// the user is returned to settings instead of the feed.
+  final bool addMode;
 
   @override
   ConsumerState<LoginPage> createState() => _LoginPageState();
@@ -38,7 +43,18 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     setState(() => _busy = true);
     try {
       await ref.read(identityProvider.notifier).login(nsec);
-      if (mounted) context.go('/feed');
+      if (mounted) {
+        if (widget.addMode) {
+          // Return to wherever the add-flow was started (settings page).
+          if (context.canPop()) {
+            context.pop();
+          } else {
+            context.go('/settings');
+          }
+        } else {
+          context.go('/feed');
+        }
+      }
     } on FormatException catch (e) {
       _snack('私钥格式无效：${e.message}');
     } catch (e) {
@@ -51,6 +67,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: widget.addMode ? AppBar(title: const Text('添加账号')) : null,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -59,11 +76,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               constraints: const BoxConstraints(maxWidth: 400),
               child: _LoginView(
                 busy: _busy,
+                addMode: widget.addMode,
                 onImport: _importKey,
                 onShowCreate: () => Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => const _CreateAccountWizard(),
+                    builder: (_) =>
+                        _CreateAccountWizard(addMode: widget.addMode),
                   ),
                 ),
               ),
@@ -82,8 +101,10 @@ class _LoginView extends ConsumerStatefulWidget {
     required this.busy,
     required this.onImport,
     required this.onShowCreate,
+    this.addMode = false,
   });
   final bool busy;
+  final bool addMode;
   final void Function(String nsec) onImport;
   final VoidCallback onShowCreate;
 
@@ -108,19 +129,29 @@ class _LoginViewState extends ConsumerState<_LoginView> {
       mainAxisSize: MainAxisSize.min,
       children: [
         const SizedBox(height: 32),
-        const CostrLogo(size: 56),
-        const SizedBox(height: 16),
-        Text('欢迎来到 Costr', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 6),
-        Text(
-          '更适合中文用户的 Nostr 开源社交客户端',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+        if (!widget.addMode) ...[
+          const CostrLogo(size: 56),
+          const SizedBox(height: 16),
+          Text('欢迎来到 Costr', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 6),
+          Text(
+            '更适合中文用户的 Nostr 开源社交客户端',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ] else ...[
+          Text('添加账号', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 6),
+          Text(
+            '登录或创建完成后，新账号将成为当前活跃账号',
+            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
+          ),
+        ],
         const SizedBox(height: 28),
         if (!_showImport) ...[
           FilledButton.icon(
             icon: const Icon(Icons.person_add),
-            label: const Text('我是新用户，创建账号'),
+            label: Text(widget.addMode ? '创建新账号' : '我是新用户，创建账号'),
             onPressed: widget.onShowCreate,
             style: FilledButton.styleFrom(
               minimumSize: const Size.fromHeight(48),
@@ -129,7 +160,7 @@ class _LoginViewState extends ConsumerState<_LoginView> {
           const SizedBox(height: 12),
           OutlinedButton.icon(
             icon: const Icon(Icons.key),
-            label: const Text('我有账号，用私钥登录'),
+            label: Text(widget.addMode ? '用私钥添加已有账号' : '我有账号，用私钥登录'),
             onPressed: () => setState(() => _showImport = true),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size.fromHeight(48),
@@ -173,7 +204,11 @@ class _LoginViewState extends ConsumerState<_LoginView> {
             style: FilledButton.styleFrom(
               minimumSize: const Size.fromHeight(48),
             ),
-            child: Text(widget.busy ? '登录中…' : '登录'),
+            child: Text(
+              widget.busy
+                  ? (widget.addMode ? '添加中…' : '登录中…')
+                  : (widget.addMode ? '添加账号' : '登录'),
+            ),
           ),
           const SizedBox(height: 8),
           TextButton(
@@ -189,7 +224,9 @@ class _LoginViewState extends ConsumerState<_LoginView> {
 // --- Create account wizard ---
 
 class _CreateAccountWizard extends ConsumerStatefulWidget {
-  const _CreateAccountWizard();
+  const _CreateAccountWizard({this.addMode = false});
+
+  final bool addMode;
 
   @override
   ConsumerState<_CreateAccountWizard> createState() =>
@@ -245,8 +282,14 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
           }
         }
         if (mounted) {
-          Navigator.popUntil(context, (route) => route.isFirst);
-          context.go('/feed');
+          if (widget.addMode) {
+            // Add-flow: return to the settings page so the user sees the new
+            // account in the account list (already active).
+            context.go('/settings');
+          } else {
+            Navigator.popUntil(context, (route) => route.isFirst);
+            context.go('/feed');
+          }
         }
       }
     } catch (e) {
@@ -483,6 +526,10 @@ class _CreateAccountWizardState extends ConsumerState<_CreateAccountWizard> {
 
 // --- Logout confirmation sheet ---
 
+/// Log out of the CURRENT account: its nsec is removed from this device.
+/// When other accounts remain, the next one becomes active and the user stays
+/// where they are; only when the last account is removed does the router
+/// fall back to /login.
 Future<void> showLogoutSheet(BuildContext context, WidgetRef ref) async {
   // Confirm via the sheet; only mutate identity state AFTER the sheet has
   // fully dismissed. Otherwise `logout()` sets state -> Riverpod listeners
@@ -505,7 +552,8 @@ Future<void> showLogoutSheet(BuildContext context, WidgetRef ref) async {
             Text('退出登录？', style: Theme.of(ctx).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              '本地数据（帖子缓存、关注列表）会保留在这台手机上，'
+              '当前账号的私钥将从这台手机移除（其他已添加账号不受影响）。'
+              '本地数据（帖子缓存、关注列表）会保留，'
               '下次用同一把私钥登录即可恢复。',
               style: Theme.of(ctx).textTheme.bodySmall,
             ),
@@ -537,8 +585,10 @@ Future<void> showLogoutSheet(BuildContext context, WidgetRef ref) async {
   );
   if (confirmed != true) return;
   await ref.read(identityProvider.notifier).logout();
-  // GoRouter's redirect (router.dart) already routes a null identity to
-  // /login via refreshListenable; the explicit go is a safe belt-and-suspenders
-  // now that the sheet is gone (no concurrent teardown).
-  if (context.mounted) context.go('/login');
+  if (!context.mounted) return;
+  // logout() removed the active account. When other accounts remain, the next
+  // one is active already — stay put. Only navigate when NO account is left.
+  if (ref.read(identityProvider).value == null) {
+    context.go('/login');
+  }
 }

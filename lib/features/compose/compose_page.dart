@@ -84,6 +84,12 @@ class _ComposePageState extends ConsumerState<ComposePage>
   /// can still write the final draft without touching [ref].
   LocalCache? _cache;
 
+  /// The author's pubkey, captured on open. Held for the same reason as
+  /// [_cache]: the per-account draft key is needed in [_flushDraft] from
+  /// [dispose], where `ref.read` is unsafe. Compose is only reachable while
+  /// logged in, so this is always a real pubkey.
+  String _me = 'anon';
+
   /// Rowids of outbox drafts saved during FAILED publish attempts in THIS
   /// session. A retry signs a FRESH event (new `created_at` → new id), so
   /// when the retry succeeds the prior failed drafts can't be matched by
@@ -108,14 +114,18 @@ class _ComposePageState extends ConsumerState<ComposePage>
     }
   }
 
+  /// Auto-save key, PER-ACCOUNT: account B must never inherit account A's
+  /// unpublished text. The pubkey is captured on open ([_me]) — the key is
+  /// also read from [dispose], where `ref` is no longer usable.
   String get _draftKey {
+    final me = _me;
     if (widget.replyTo != null) {
-      return 'compose_draft:reply:${widget.replyTo!.id}';
+      return 'compose_draft:reply:${widget.replyTo!.id}:$me';
     }
     if (widget.quoteOf != null) {
-      return 'compose_draft:quote:${widget.quoteOf!.id}';
+      return 'compose_draft:quote:${widget.quoteOf!.id}:$me';
     }
-    return 'compose_draft';
+    return 'compose_draft:$me';
   }
 
   static const int _softLimit = 280;
@@ -131,6 +141,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
   @override
   void initState() {
     super.initState();
+    _me = ref.read(identityProvider).value?.pubkeyHex ?? 'anon';
     _nsfw = ref.read(nsfwSettingsProvider).defaultComposeNsfw;
     WidgetsBinding.instance.addObserver(this);
     _controller.addListener(_onDraftChanged);
@@ -173,6 +184,12 @@ class _ComposePageState extends ConsumerState<ComposePage>
   /// tags are still emitted on send.
   Future<void> _loadDraft() async {
     try {
+      // Resolve the author first so the per-account draft key is right even
+      // when the page opened while identity was still loading (in the real
+      // app bootstrap resolves it long before compose is reachable).
+      final identity = await ref.read(identityProvider.future);
+      if (!mounted) return;
+      if (identity != null) _me = identity.pubkeyHex;
       final db = await ref.read(localCacheProvider.future);
       _cache = db;
       final raw = await db.readConfig(_draftKey);
@@ -221,8 +238,9 @@ class _ComposePageState extends ConsumerState<ComposePage>
       final text = _controller.text;
       if (!text.contains(a.url)) return;
       final lines = text.split('\n');
-      final urlEmbedded =
-          lines.any((l) => l.contains(a.url) && l.trim() != a.url);
+      final urlEmbedded = lines.any(
+        (l) => l.contains(a.url) && l.trim() != a.url,
+      );
       final next = urlEmbedded
           ? text.replaceAll(a.url, '')
           : lines.where((l) => !l.contains(a.url)).join('\n');

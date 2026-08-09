@@ -25,6 +25,7 @@ import '../nostr/identity.dart';
 import '../nostr/outbox_router.dart';
 import '../nostr/relay_client.dart';
 import '../nostr/relay_pool.dart';
+import '../services/account_registry.dart';
 import '../services/local_cache.dart' as cache;
 import '../services/blossom_upload.dart';
 import '../services/secure_storage_service.dart';
@@ -273,7 +274,7 @@ String? relayHintFor(WidgetRef ref, String pubkey) {
   return null;
 }
 
-// --- Identity ---------------------------------------------------------------
+// --- Accounts + Identity -----------------------------------------------------
 
 final storageProvider = Provider<SecureStorageService>((ref) {
   final svc = SecureStorageService(const FlutterSecureStorage());
@@ -281,31 +282,132 @@ final storageProvider = Provider<SecureStorageService>((ref) {
   return svc;
 });
 
+/// The device's logged-in account set (multi-account registry). Many accounts
+/// stored, ONE active — only the active account drives connections, feeds and
+/// notifications (switching rebuilds the reactive identity chain; it does NOT
+/// add parallel per-account connections). Persisted as a single secure-storage
+/// blob (`costr.accounts.v1`); the legacy single-nsec key is migrated on first
+/// run.
+class AccountsNotifier extends AsyncNotifier<AccountSet> {
+  @override
+  Future<AccountSet> build() async {
+    final s = ref.read(storageProvider);
+    try {
+      final stored = await s.readAccounts();
+      if (stored != null) return stored;
+      // One-time migration from the legacy single-nsec storage (pre-multi-
+      // account builds kept exactly one nsec under `costr.identity.nsec`).
+      final legacy = await s.readNsec();
+      if (legacy != null) {
+        await s.deleteNsec();
+        try {
+          final id = Identity.fromNsec(legacy);
+          final migrated = const AccountSet().upsert(
+            AccountEntry.fromIdentity(id),
+            activate: true,
+          );
+          await s.writeAccounts(migrated);
+          return migrated;
+        } catch (_) {
+          // Invalid legacy nsec — drop it, end up logged out.
+        }
+      }
+      return const AccountSet();
+    } catch (_) {
+      // Storage unavailable — never wedge startup; behave as logged out.
+      return const AccountSet();
+    }
+  }
+
+  /// Add (or re-add) an account and make it active.
+  Future<AccountSet> addAccount(Identity identity) => _commit(
+    (cur) => cur.upsert(AccountEntry.fromIdentity(identity), activate: true),
+  );
+
+  /// Switch the active account to an already-stored pubkey.
+  Future<AccountSet> setActive(String pubkeyHex) =>
+      _commit((cur) => cur.withActive(pubkeyHex));
+
+  /// Remove an account from the device. Removing the active account activates
+  /// the next remaining one (or logs out entirely).
+  Future<AccountSet> removeAccount(String pubkeyHex) =>
+      _commit((cur) => cur.remove(pubkeyHex));
+
+  Future<AccountSet> _commit(AccountSet Function(AccountSet) op) async {
+    final cur = state.value ?? const AccountSet();
+    final next = op(cur);
+    if (next == cur) return next;
+    await ref.read(storageProvider).writeAccounts(next);
+    state = AsyncData(next);
+    return next;
+  }
+}
+
+final accountsProvider = AsyncNotifierProvider<AccountsNotifier, AccountSet>(
+  AccountsNotifier.new,
+);
+
+/// The ACTIVE identity, derived from [accountsProvider]. All writes to
+/// identity state go through the account registry so storage and state can't
+/// diverge. Downstream the app reacts to identity changes reactively (feed
+/// subscriptions, follows, notifications are all keyed/watched on this), so
+/// switching accounts = updating this one provider.
 class IdentityNotifier extends AsyncNotifier<Identity?> {
   @override
   Future<Identity?> build() async {
-    final nsec = await ref.read(storageProvider).readNsec();
-    if (nsec == null) return null;
+    final set = await ref.watch(accountsProvider.future);
+    return _identityOf(set);
+  }
+
+  Identity? _identityOf(AccountSet set) {
+    final active = set.active;
+    if (active == null) return null;
     try {
-      return Identity.fromNsec(nsec);
+      return Identity.fromNsec(active.nsec);
     } catch (_) {
-      // Stored nsec is invalid — treat as logged out.
+      // Stored nsec invalid — treat as logged out.
       return null;
     }
   }
 
+  /// Log in with an nsec: adds the account to the registry (or re-activates
+  /// it when already stored) and makes it active. Throws [FormatException]
+  /// on an invalid key.
   Future<void> login(String nsec) async {
     final identity = Identity.fromNsec(nsec); // throws on invalid
-    await ref.read(storageProvider).writeNsec(nsec);
+    await ref.read(accountsProvider.notifier).addAccount(identity);
+    // Set state synchronously so navigation right after login sees the new
+    // identity (the watch-driven rebuild lands on the same value and is a
+    // no-op).
     state = AsyncData(identity);
-    // NIP-65: publish relay list right after first login (cold-start publish
-    // only fires if an identity was already stored). Fire-and-forget.
+    // NIP-65: publish this account's relay list right after login (the
+    // cold-start publish only fires for an already-stored identity).
+    // Fire-and-forget.
     publishRelayList(ref.read(relayPoolProvider), identity);
   }
 
+  /// Switch to another stored account.
+  Future<void> switchTo(String pubkeyHex) async {
+    final set = await ref.read(accountsProvider.notifier).setActive(pubkeyHex);
+    state = AsyncData(_identityOf(set));
+  }
+
+  /// Remove an account (its nsec leaves this device). When it was the active
+  /// one, the next stored account becomes active — or identity becomes null.
+  Future<void> removeAccount(String pubkeyHex) async {
+    final set = await ref
+        .read(accountsProvider.notifier)
+        .removeAccount(pubkeyHex);
+    state = AsyncData(_identityOf(set));
+  }
+
+  /// Log out of the active account (removes its nsec from this device); the
+  /// next stored account becomes active when there is one. Local cache data
+  /// (posts, metadata) is kept.
   Future<void> logout() async {
-    await ref.read(storageProvider).deleteNsec();
-    state = const AsyncData(null);
+    final me = state.value?.pubkeyHex;
+    if (me == null) return;
+    await removeAccount(me);
   }
 }
 
@@ -521,12 +623,18 @@ Future<void> _runBootstrap(Ref ref) async {
   }
   // Cache cleanup 30s after startup (avoids startup jank). Own posts are
   // exempt from the TTL (see cleanupOldEvents): they're notification targets.
+  // ALL logged-in accounts' posts are exempt — not just the active one — so
+  // switching to a dormant account doesn't surface dead notification links.
   Timer(const Duration(seconds: 30), () async {
     final cache = ref.read(localCacheProvider).value;
     if (cache == null) return;
     try {
-      final me = ref.read(identityProvider).value?.pubkeyHex;
-      await cache.cleanupOldEvents(ttlDays: 30, ownPubkey: me);
+      final accounts = ref.read(accountsProvider).value;
+      final ownPubkeys = <String>{
+        for (final a in accounts?.accounts ?? const <AccountEntry>[])
+          a.pubkeyHex,
+      };
+      await cache.cleanupOldEvents(ttlDays: 30, ownPubkeys: ownPubkeys);
       await cache.enforceSizeCap();
       await cache.vacuum();
     } catch (_) {}
@@ -576,6 +684,16 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   // (test stubs) never block awaiters of [hydrated].
   Completer<void> _hydrated = Completer<void>()..complete();
 
+  /// Active-account pubkey at the last [build]. A change (account switch /
+  /// login / logout) forces a store reset so the previous account's feed
+  /// residue (esp. following-mode events) never leaks into the new feed.
+  String? _builtForAccount;
+
+  /// Hydration generation: a rebuild (account switch) invalidates any
+  /// in-flight hydration so a stale one can't complete the NEW [hydrated]
+  /// early or add rows after the reset.
+  int _hydrateGen = 0;
+
   /// The backing store. Test stubs that drive [build] from their own
   /// store/list override this so the revision getters + [byId] see the same
   /// events the UI does.
@@ -602,15 +720,25 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   /// notification ids per launch ("已读通知复活" bug).
   Future<void> get hydrated => _hydrated.future;
 
-  void _completeHydrated() {
-    if (!_hydrated.isCompleted) _hydrated.complete();
-  }
-
   @override
   List<Event> build() {
+    _disposed = false;
+    // Account switch (or login/logout) → wipe the in-memory feed BEFORE
+    // re-hydrating: the store holds per-account content (following feed,
+    // own reactions) that must not carry over between accounts.
+    final accountKey = ref.watch(
+      identityProvider.select((v) => v.value?.pubkeyHex),
+    );
+    if (_builtForAccount != accountKey) {
+      _builtForAccount = accountKey;
+      _store.clear();
+      // Never leave awaiters of the previous [hydrated] hanging.
+      if (!_hydrated.isCompleted) _hydrated.complete();
+    }
     // Hydrate from SQLite (async — fills store as data arrives).
+    _hydrateGen++;
     _hydrated = Completer<void>();
-    _hydrate();
+    _hydrate(_hydrated, _hydrateGen);
     final pool = ref.watch(relayPoolProvider);
     _sub = pool.events.listen((e) {
       // Immutable feed events (kind 0/1/6/7) → in-memory store + persist
@@ -669,42 +797,49 @@ class EventStoreNotifier extends Notifier<List<Event>> {
 
   /// Hydrate from SQLite on cold start — fills the in-memory store before
   /// the first relay EOSE, so the UI shows cached content instantly.
-  Future<void> _hydrate() async {
+  Future<void> _hydrate(Completer<void> hydrated, int gen) async {
     _cache = ref.read(localCacheProvider).value;
     if (_cache == null) {
       ref.listen(localCacheProvider, (_, next) {
+        if (gen != _hydrateGen) return; // superseded by an account switch
         if (next.hasValue && _cache == null) {
           _cache = next.value;
-          _doHydrate();
+          _doHydrate(hydrated, gen);
         } else if (next.hasError) {
           // DB open failed — never leave awaiters of [hydrated] hanging.
-          _completeHydrated();
+          if (!hydrated.isCompleted) hydrated.complete();
         }
       });
       return;
     }
-    await _doHydrate();
+    await _doHydrate(hydrated, gen);
   }
 
-  Future<void> _doHydrate() async {
+  Future<void> _doHydrate(Completer<void> hydrated, int gen) async {
     final db = _cache;
     if (db == null) {
-      _completeHydrated();
+      if (!hydrated.isCompleted) hydrated.complete();
       return;
     }
     try {
       // Kind-1 feed (1000 newest — deep enough that a relaunch restores the
       // depth the user had scrolled to (load-more pages are persisted by
       // _persist), instead of dumping them back at the newest 200)
-      for (final row in await db.queryFeed(limit: 1000)) {
+      final feedRows = await db.queryFeed(limit: 1000);
+      if (gen != _hydrateGen || _disposed) return;
+      for (final row in feedRows) {
         _store.add(_cacheRowToEvent(row));
       }
       // Kind-7 reactions (500 newest)
-      for (final row in await db.queryRecentReactions(limit: 500)) {
+      final reactionRows = await db.queryRecentReactions(limit: 500);
+      if (gen != _hydrateGen || _disposed) return;
+      for (final row in reactionRows) {
         _store.add(_cacheRowToEvent(row));
       }
       // Kind-0 metadata (all cached)
-      for (final row in await db.queryAllMetadata()) {
+      final metaRows = await db.queryAllMetadata();
+      if (gen != _hydrateGen || _disposed) return;
+      for (final row in metaRows) {
         _store.add(_replaceableRowToEvent(row));
       }
       if (_store.length > 0) {
@@ -717,7 +852,7 @@ class EventStoreNotifier extends Notifier<List<Event>> {
     } catch (_) {
       // Hydration failure — continue with empty store, relays will fill it.
     } finally {
-      _completeHydrated();
+      if (gen == _hydrateGen && !hydrated.isCompleted) hydrated.complete();
     }
   }
 
@@ -1141,13 +1276,16 @@ final textScaleFactorProvider = Provider<double>(
 /// Filter applied to the 关注 feed (following mode only): `null` = 全部关注;
 /// `group:<name>` = only posts from authors in that NIP-51 kind-30000 custom
 /// group; `tag:<tag>` = only posts carrying that hashtag. Persisted to config
-/// (`following_filter`) so a relaunch keeps the last selection (DESIGN §8
+/// (`following_filter:<pubkey>`, PER-ACCOUNT — each account keeps its own
+/// selection) so a relaunch keeps the last selection (DESIGN §8
 /// follow-list feed switcher, Amethyst PeopleList). Client-side filtering on
 /// the already-loaded following feed — no extra relay REQ, instant, robust
 /// against relays that don't support `#t`.
 final savedFollowingFilterProvider = FutureProvider<String?>((ref) async {
+  final me = ref.watch(identityProvider.select((v) => v.value?.pubkeyHex));
+  if (me == null) return null;
   final cache = await ref.read(localCacheProvider.future);
-  final v = await cache.readConfig('following_filter');
+  final v = await cache.readConfig('following_filter:$me');
   return (v == null || v.isEmpty) ? null : v;
 });
 
@@ -1156,16 +1294,20 @@ class FollowingFilterNotifier extends Notifier<String?> {
   String? build() {
     // Default to 全部关注 until the persisted value loads; rebuilds (snapping
     // to the saved filter) once [savedFollowingFilterProvider] resolves.
-    return ref.watch(savedFollowingFilterProvider).value;
+    // asData (not .value): during the per-account reload after a switch the
+    // previous account's filter must not leak through.
+    return ref.watch(savedFollowingFilterProvider).asData?.value;
   }
 
   void set(String? value) {
     final v = (value == null || value.isEmpty) ? null : value;
     if (v == state) return;
     state = v;
+    final me = ref.read(identityProvider).value?.pubkeyHex;
+    if (me == null) return;
     ref
         .read(localCacheProvider.future)
-        .then((cache) => cache.writeConfig('following_filter', v ?? ''));
+        .then((cache) => cache.writeConfig('following_filter:$me', v ?? ''));
   }
 }
 
@@ -1179,10 +1321,13 @@ final followingFilterProvider =
 enum LanguageFilter { all, zh, en, ja }
 
 /// Last-used language filter, persisted in the config table (key
-/// `language_filter`). Restored into [LanguageFilterNotifier] on startup.
+/// `language_filter:<pubkey>`, PER-ACCOUNT). Restored into
+/// [LanguageFilterNotifier] on startup.
 final savedLanguageFilterProvider = FutureProvider<LanguageFilter>((ref) async {
+  final me = ref.watch(identityProvider.select((v) => v.value?.pubkeyHex));
+  if (me == null) return LanguageFilter.all;
   final cache = await ref.read(localCacheProvider.future);
-  final raw = await cache.readConfig('language_filter');
+  final raw = await cache.readConfig('language_filter:$me');
   switch (raw) {
     case 'zh':
       return LanguageFilter.zh;
@@ -1198,11 +1343,16 @@ final savedLanguageFilterProvider = FutureProvider<LanguageFilter>((ref) async {
 class LanguageFilterNotifier extends Notifier<LanguageFilter> {
   @override
   LanguageFilter build() =>
-      ref.watch(savedLanguageFilterProvider).value ?? LanguageFilter.all;
+      // asData (not .value): during the per-account reload after a switch the
+      // previous account's filter must not leak through.
+      ref.watch(savedLanguageFilterProvider).asData?.value ??
+      LanguageFilter.all;
 
   void set(LanguageFilter f) {
     if (f == state) return;
     state = f;
+    final me = ref.read(identityProvider).value?.pubkeyHex;
+    if (me == null) return;
     final value = switch (f) {
       LanguageFilter.zh => 'zh',
       LanguageFilter.en => 'en',
@@ -1211,7 +1361,7 @@ class LanguageFilterNotifier extends Notifier<LanguageFilter> {
     };
     ref
         .read(localCacheProvider.future)
-        .then((cache) => cache.writeConfig('language_filter', value));
+        .then((cache) => cache.writeConfig('language_filter:$me', value));
   }
 }
 
@@ -1238,7 +1388,13 @@ final tagFilterProvider = NotifierProvider<TagFilterNotifier, String?>(
 /// round-trip (same pattern as [contactListCacheProvider] for kind-3).
 class FollowedTagsCacheNotifier extends Notifier<Event?> {
   @override
-  Event? build() => null;
+  Event? build() {
+    // The cached kind-10015 belongs to ONE account — reset on account switch
+    // so a late add/remove never appends to the previous account's list.
+    ref.watch(identityProvider.select((v) => v.value?.pubkeyHex));
+    return null;
+  }
+
   void set(Event? e) => state = e;
 }
 
@@ -1489,7 +1645,13 @@ final tagPostCountProvider = Provider.family<int, String>((ref, tag) {
 /// fetch; updated by [followUser] after each follow.
 class ContactListCacheNotifier extends Notifier<Event?> {
   @override
-  Event? build() => null;
+  Event? build() {
+    // The cached kind-3 belongs to ONE account — reset on account switch so
+    // follow/unfollow never mutates the previous account's contact list.
+    ref.watch(identityProvider.select((v) => v.value?.pubkeyHex));
+    return null;
+  }
+
   void set(Event? e) => state = e;
 }
 
@@ -1601,7 +1763,11 @@ class FollowingNotifier extends AsyncNotifier<List<String>> {
         if (row != null) fromDb = _replaceableToEvent(row);
       } catch (_) {}
     }
+    // inMem must belong to THIS pubkey: right after an account switch the
+    // cache reset and this rebuild race, and a stale in-memory kind-3 from
+    // the previous account must never win over the new account's SQLite row.
     if (inMem != null &&
+        inMem.pubkey == pubkey &&
         (fromDb == null || inMem.createdAt >= fromDb.createdAt)) {
       return inMem;
     }
@@ -3181,9 +3347,10 @@ class PostInteractionStats {
 /// object and Riverpod skips their dependents entirely when "their" post's
 /// interactions didn't change.
 final interactionIndexProvider =
-    NotifierProvider<InteractionIndexNotifier, Map<String, PostInteractionStats>>(
-      InteractionIndexNotifier.new,
-    );
+    NotifierProvider<
+      InteractionIndexNotifier,
+      Map<String, PostInteractionStats>
+    >(InteractionIndexNotifier.new);
 
 class InteractionIndexNotifier
     extends Notifier<Map<String, PostInteractionStats>> {
@@ -3269,8 +3436,7 @@ class InteractionIndexNotifier
       final prevStats = _prev[id];
       // Carry over the OLD instance when content is unchanged so downstream
       // providers hand Riverpod an identical object (no rebuild).
-      next[id] =
-          (prevStats != null && _statsEqual(prevStats, candidate))
+      next[id] = (prevStats != null && _statsEqual(prevStats, candidate))
           ? prevStats
           : candidate;
     }
@@ -4284,7 +4450,7 @@ final myMuteSetProvider = Provider<MuteSet>((ref) {
   return async.value ?? const MuteSet();
 });
 
-// --- NSFW settings (local, not synced to relays) ---------------------------
+// --- NSFW settings (local, PER-ACCOUNT, not synced to relays) ---------------
 
 class NsfwSettings {
   const NsfwSettings({
@@ -4300,36 +4466,74 @@ class NsfwSettings {
       );
 }
 
+/// NSFW preferences follow the ACCOUNT, not the device: stored per pubkey in
+/// the local config table (`nsfw_*:<pubkey>`). Rebuilds (and reloads) on
+/// account switch. The pre-multi-account global values (secure storage) are
+/// adopted by whichever account loads first, then deleted.
 class NsfwSettingsNotifier extends Notifier<NsfwSettings> {
-  static const _kAutoReveal = 'costr.nsfw.autoReveal';
-  static const _kDefault = 'costr.nsfw.defaultCompose';
+  static const _legacyAutoReveal = 'costr.nsfw.autoReveal';
+  static const _legacyDefault = 'costr.nsfw.defaultCompose';
 
   @override
   NsfwSettings build() {
-    _load();
+    final me = ref.watch(identityProvider.select((v) => v.value?.pubkeyHex));
+    if (me != null) _load(me);
     return const NsfwSettings();
   }
 
-  Future<void> _load() async {
-    final s = ref.read(storageProvider);
-    final ar = await s.readValue(_kAutoReveal);
-    final dc = await s.readValue(_kDefault);
-    if (ar != null || dc != null) {
-      state = NsfwSettings(
-        autoReveal: ar == 'true',
-        defaultComposeNsfw: dc == 'true',
-      );
+  String _keyAutoReveal(String me) => 'nsfw_auto_reveal:$me';
+  String _keyDefault(String me) => 'nsfw_default_compose:$me';
+
+  Future<void> _load(String me) async {
+    try {
+      final cache = await ref.read(localCacheProvider.future);
+      var ar = await cache.readConfig(_keyAutoReveal(me));
+      var dc = await cache.readConfig(_keyDefault(me));
+      if (ar == null && dc == null) {
+        // One-time migration of the pre-multi-account global values.
+        final s = ref.read(storageProvider);
+        final legAr = await s.readValue(_legacyAutoReveal);
+        final legDc = await s.readValue(_legacyDefault);
+        if (legAr != null || legDc != null) {
+          ar = legAr ?? 'false';
+          dc = legDc ?? 'false';
+          await cache.writeConfig(_keyAutoReveal(me), ar);
+          await cache.writeConfig(_keyDefault(me), dc);
+          await s.deleteValue(_legacyAutoReveal);
+          await s.deleteValue(_legacyDefault);
+        }
+      }
+      if (ar != null || dc != null) {
+        state = NsfwSettings(
+          autoReveal: ar == 'true',
+          defaultComposeNsfw: dc == 'true',
+        );
+      }
+    } catch (_) {
+      // Cache unavailable — keep defaults.
     }
   }
 
+  String? get _me => ref.read(identityProvider).value?.pubkeyHex;
+
   Future<void> setAutoReveal(bool v) async {
     state = state.copyWith(autoReveal: v);
-    await ref.read(storageProvider).writeValue(_kAutoReveal, v.toString());
+    final me = _me;
+    if (me == null) return;
+    try {
+      final cache = await ref.read(localCacheProvider.future);
+      await cache.writeConfig(_keyAutoReveal(me), v.toString());
+    } catch (_) {}
   }
 
   Future<void> setDefaultComposeNsfw(bool v) async {
     state = state.copyWith(defaultComposeNsfw: v);
-    await ref.read(storageProvider).writeValue(_kDefault, v.toString());
+    final me = _me;
+    if (me == null) return;
+    try {
+      final cache = await ref.read(localCacheProvider.future);
+      await cache.writeConfig(_keyDefault(me), v.toString());
+    } catch (_) {}
   }
 }
 

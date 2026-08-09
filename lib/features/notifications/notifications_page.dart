@@ -87,11 +87,14 @@ Duration followGateTimeout = const Duration(seconds: 6);
 
 /// Subscribes to notifications: #p mentions + #e interactions on the user's
 /// recent 200 posts. Collects and aggregates into NotificationItem list.
-final notificationsProvider =
-    StreamProvider.family<List<NotificationItem>, String>((
-      ref,
-      myPubkey,
-    ) async* {
+///
+/// autoDispose: the provider family is keyed by pubkey, and ONLY the active
+/// account's instance stays alive (AppShell's unread badge + the page watch
+/// it). On an account switch the old account's instance loses its last
+/// listener and is disposed — closing its relay REQs — so non-active accounts
+/// hold NO connections and generate NO notifications.
+final notificationsProvider = StreamProvider.autoDispose
+    .family<List<NotificationItem>, String>((ref, myPubkey) async* {
       final pool = ref.watch(relayPoolProvider);
       // Wait for the event store's cold-start hydration before snapshotting
       // own posts + registering the listener. Reply/mention classification
@@ -206,7 +209,7 @@ final notificationsProvider =
         controller.add(List.unmodifiable(items));
       }
 
-      pool.rawEvents.listen((e) {
+      final rawSub = pool.rawEvents.listen((e) {
         if (e.pubkey == myPubkey) return; // skip my own events
         if (!seen.add(e.id)) return; // already processed this event
         // Muted accounts don't generate notifications (mute applies to the
@@ -338,6 +341,7 @@ final notificationsProvider =
       }, closeOnEose: false);
 
       ref.onDispose(() {
+        rawSub.cancel();
         pool.closeSubscription(subId);
         pool.closeSubscription(subId2);
         controller.close();
@@ -463,10 +467,13 @@ Future<({bool timedOut, Event? event})> _fetchAuthorContactList(
   }, closeOnEose: true);
   Event? hit;
   try {
-    hit = await completer.future.timeout(timeout, onTimeout: () {
-      timedOut = true;
-      return null;
-    });
+    hit = await completer.future.timeout(
+      timeout,
+      onTimeout: () {
+        timedOut = true;
+        return null;
+      },
+    );
   } finally {
     await sub.cancel();
     await eoseSub.cancel();
@@ -936,21 +943,24 @@ void compactNotificationWatermarkIfFullyRead(WidgetRef ref, String myPubkey) {
 /// alive across tabs so the badge updates while the user is elsewhere in the
 /// app — the notification subscription is a foreground-live feed per
 /// DESIGN §5.1 / §10 (background pauses via the relay pool disconnect).
-final unreadNotificationCountProvider = Provider.family<int, String>((
-  ref,
-  myPubkey,
-) {
-  final items =
-      ref.watch(notificationsProvider(myPubkey)).value ??
-      const <NotificationItem>[];
-  final read = ref.watch(notificationReadProvider(myPubkey));
-  final watermark = ref.watch(notificationWatermarkProvider(myPubkey));
-  var count = 0;
-  for (final i in items) {
-    if (notificationIsUnread(i, read, watermark)) count++;
-  }
-  return count;
-});
+///
+/// autoDispose (like [notificationsProvider]): when the active account
+/// changes, AppShell watches the NEW pubkey's count, this instance loses its
+/// last listener and the whole per-account chain (including the relay REQs)
+/// is disposed — non-active accounts keep no live notification state.
+final unreadNotificationCountProvider = Provider.autoDispose
+    .family<int, String>((ref, myPubkey) {
+      final items =
+          ref.watch(notificationsProvider(myPubkey)).value ??
+          const <NotificationItem>[];
+      final read = ref.watch(notificationReadProvider(myPubkey));
+      final watermark = ref.watch(notificationWatermarkProvider(myPubkey));
+      var count = 0;
+      for (final i in items) {
+        if (notificationIsUnread(i, read, watermark)) count++;
+      }
+      return count;
+    });
 
 // --- UI ---
 

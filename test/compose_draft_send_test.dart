@@ -18,6 +18,7 @@ import 'package:go_router/go_router.dart';
 
 const _priv =
     '0000000000000000000000000000000000000000000000000000000000000001';
+final String _me = Identity.fromPrivkeyHex(_priv).pubkeyHex;
 
 class _Id extends IdentityNotifier {
   @override
@@ -109,19 +110,19 @@ void main() {
       );
       await tester.pump();
 
-      // Open compose.
-      router.push('/compose');
-      await tester.pumpAndSettle();
-
-      // Prime the (lazy) identity provider and wait for it to resolve — in
-      // the real app bootstrap resolves it long before compose opens; here
-      // nothing else reads it, so without priming `_send` sees a still-loading
-      // AsyncValue and bails with 未登录.
+      // Prime the (lazy) identity provider BEFORE opening compose — in the
+      // real app bootstrap resolves it long before compose is reachable, and
+      // ComposePage captures the author pubkey in initState (the per-account
+      // draft key is needed again in dispose, when `ref` is unusable).
       final container = ProviderScope.containerOf(
-        tester.element(find.byType(ComposePage)),
+        tester.element(find.byType(MaterialApp)),
       );
       container.read(identityProvider);
       await tester.pump();
+
+      // Open compose.
+      router.push('/compose');
+      await tester.pumpAndSettle();
 
       // Type some text; the debounce persists it as a draft.
       final field = tester.widget<ExtendedTextField>(
@@ -129,7 +130,7 @@ void main() {
       );
       field.controller!.text = 'hello world';
       await tester.pump(const Duration(milliseconds: 400)); // fire the debounce
-      expect(cacheDb.config['compose_draft'], isNotNull);
+      expect(cacheDb.config['compose_draft:$_me'], isNotNull);
 
       // Publish — _SuccessPool makes it succeed, then pop back to '/' disposes
       // the page.
@@ -139,7 +140,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // The draft was deleted on success…
-      expect(cacheDb.config['compose_draft'] ?? '', isEmpty);
+      expect(cacheDb.config['compose_draft:$_me'] ?? '', isEmpty);
 
       // …and the pop→dispose flush did NOT re-save it. Reopen compose: the
       // editor must be empty (the sent post must not come back as a draft).

@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _priv =
     '0000000000000000000000000000000000000000000000000000000000000001';
+final String _me = Identity.fromPrivkeyHex(_priv).pubkeyHex;
 const _url = 'https://blossom.example/x.jpg';
 
 class _Id extends IdentityNotifier {
@@ -55,7 +56,7 @@ void main() {
     tester,
   ) async {
     final db = _FakeCache();
-    db.config['compose_draft'] = jsonEncode(<String, dynamic>{
+    db.config['compose_draft:$_me'] = jsonEncode(<String, dynamic>{
       'text': 'hello\n$_url',
       'attachments': [
         <String, String>{
@@ -101,7 +102,7 @@ void main() {
     tester,
   ) async {
     final db = _FakeCache();
-    db.config['compose_draft'] = jsonEncode(<String, dynamic>{
+    db.config['compose_draft:$_me'] = jsonEncode(<String, dynamic>{
       'text': 'hello\n$_url',
       'attachments': [
         <String, String>{
