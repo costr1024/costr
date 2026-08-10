@@ -442,7 +442,15 @@ class _ReplyContext extends ConsumerWidget {
     }
 
     final meta = ref.watch(metadataProvider(parentPubkey)).value;
-    final name = meta?.bestName ?? shortenEntity(hexToNpub(parentPubkey));
+    // Same style for the "回复 @" prefix and the name spans; displayNameSpans
+    // renders NIP-30 shortcodes in the parent author's name as inline images
+    // (raw ":verified:" text otherwise) and falls back to the shortened npub
+    // when no metadata arrived yet.
+    final lineStyle = TextStyle(
+      fontSize: 13,
+      color: CostrColors.of(context).text3,
+      fontWeight: FontWeight.w600,
+    );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -460,15 +468,20 @@ class _ReplyContext extends ConsumerWidget {
                 ),
                 const SizedBox(width: 4),
                 Flexible(
-                  child: Text(
-                    '回复 @$name',
+                  child: Text.rich(
+                    TextSpan(
+                      style: lineStyle,
+                      children: [
+                        const TextSpan(text: '回复 @'),
+                        ...displayNameSpans(
+                          pubkey: parentPubkey,
+                          meta: meta,
+                          style: lineStyle,
+                        ),
+                      ],
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: CostrColors.of(context).text3,
-                      fontWeight: FontWeight.w600,
-                    ),
                   ),
                 ),
               ],
