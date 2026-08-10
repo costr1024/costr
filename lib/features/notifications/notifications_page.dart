@@ -216,6 +216,14 @@ final notificationsProvider = StreamProvider.autoDispose
         // feed AND the notification center — a muted spam/ad account that
         // keeps following or @-mentioning you must not keep surfacing here).
         if (muteSet.isMutedPubkey(e.pubkey)) return;
+        // Kind whitelist: relay output is UNTRUSTED — a buggy/misbehaving
+        // relay can deliver events no active filter requested (real attack:
+        // spam kind-30000 people-lists re-published every few minutes with
+        // dozens of p-tags, "mention farming" — each revision surfaced as
+        // "在帖子里 @了你" and opened into an empty non-post). Classify only
+        // the four kinds the notification center understands: 1 mention/
+        // reply, 3 follow, 6 repost, 7 reaction.
+        if (e.kind != 1 && e.kind != 3 && e.kind != 6 && e.kind != 7) return;
 
         // Check #p mention (kind 1, 7, 6 with p tag = me)
         bool mentionsMe = false;
