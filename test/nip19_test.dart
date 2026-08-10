@@ -138,6 +138,45 @@ void main() {
       expect(decoded.kind, 1);
     });
 
+    test('kind TLV is the spec 4-byte big-endian on the wire', () {
+      final nevent = hexToNevent(idHex, kind: 30000);
+      final data = decodeBech32(nevent).data;
+      var i = 0;
+      List<int>? kindBytes;
+      while (i + 2 <= data.length) {
+        final t = data[i];
+        final l = data[i + 1];
+        if (t == 3) kindBytes = data.sublist(i + 2, i + 2 + l);
+        i += 2 + l;
+      }
+      expect(kindBytes, [0, 0, 0x75, 0x30]); // 30000, big-endian
+    });
+
+    test('decodes a spec-encoded (4-byte BE) kind from other clients', () {
+      final tlv = <int>[0, 32, ...HEX.decode(idHex), 3, 4, 0, 0, 0x75, 0x30];
+      final decoded = neventDecode(encodeBech32('nevent', tlv))!;
+      expect(decoded.id, idHex);
+      expect(decoded.kind, 30000);
+    });
+
+    test('pre-fix varint kind copy degrades to kind=null, id intact', () {
+      // A real reference copied by a pre-fix Costr (kind 30000 as the LEB128
+      // varint `b0 ea 01`): must not throw; id/author still parse from their
+      // own TLVs, only the non-spec kind is dropped.
+      const old =
+          'nevent1qqsdedrwy52svqtcweyy6xwqzjhcxe6rcgsu0l7g45kqzxkyg8ln44qpr9mhxue69uhkgctdw4ejucn0wd68ytn0dekxjmn99uq3jamnwvaz7tmjv4kxz7fwva6kcat8w4k82tnddajj7q3qjcgstsz44ln6q9z5lwqz6ce572hrmnntvszd48ywe348r2eclldsxqasagqs5979n4';
+      final decoded = neventDecode(old)!;
+      expect(
+        decoded.id,
+        'dcb46e251506017876484d19c014af836743c221c7ffc8ad2c011ac441ff3ad4',
+      );
+      expect(
+        decoded.author,
+        '961105c055afe7a01454fb802d6334f2ae3dce6b6404da9c8ecc6a71ab38ffdb',
+      );
+      expect(decoded.kind, isNull);
+    });
+
     test('strips nostr: prefix', () {
       final nevent = hexToNevent(idHex, authorHex: authorHex);
       expect(neventDecode('nostr:$nevent')!.id, idHex);

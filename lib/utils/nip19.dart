@@ -126,28 +126,15 @@ String hexToNprofile(String pubkeyHex, {List<String> relays = const []}) {
 /// Encode a TLV record: [type, length, ...value].
 List<int> _tlv(int type, List<int> value) => [type, value.length, ...value];
 
-/// Unsigned LEB128 varint (used for the kind TLV in nevent).
-List<int> _encodeVarint(int v) {
-  final out = <int>[];
-  do {
-    var b = v & 0x7f;
-    v >>= 7;
-    if (v != 0) b |= 0x80;
-    out.add(b);
-  } while (v != 0);
-  return out;
-}
-
-int _decodeVarint(List<int> bytes) {
-  var result = 0;
-  var shift = 0;
-  for (final b in bytes) {
-    result |= (b & 0x7f) << shift;
-    if ((b & 0x80) == 0) break;
-    shift += 7;
-  }
-  return result;
-}
+/// Kind TLV value per NIP-19: a 4-byte big-endian unsigned integer. (An
+/// older Costr wrote LEB128 varints here — other clients read ≥128 kinds as
+/// garbage, e.g. 30000 → 0x00B0EA01 = 11594241.)
+List<int> _kindToBytes(int kind) => <int>[
+  (kind >> 24) & 0xff,
+  (kind >> 16) & 0xff,
+  (kind >> 8) & 0xff,
+  kind & 0xff,
+];
 
 /// Encode an event id (hex) + optional relay hint + author pubkey + kind as
 /// `nevent1...` (NIP-19). The relay + author hints let other clients fetch
@@ -166,7 +153,7 @@ String hexToNevent(
   if (authorHex != null && authorHex.isNotEmpty) {
     tlv.addAll(_tlv(0x02, _hexToBytes(authorHex)));
   }
-  if (kind != null) tlv.addAll(_tlv(0x03, _encodeVarint(kind)));
+  if (kind != null) tlv.addAll(_tlv(0x03, _kindToBytes(kind)));
   return encodeBech32('nevent', tlv);
 }
 
@@ -211,7 +198,16 @@ Nevent? neventDecode(String nevent) {
       case 0x02:
         if (len == 32) author = _bytesToHex(value);
       case 0x03:
-        kind = _decodeVarint(value);
+        // Spec form is exactly 4 bytes big-endian. Anything else (e.g. a
+        // pre-fix Costr's varint copy still circulating in an old post)
+        // leaves kind null — id/relays/author parse from their own TLVs.
+        if (len == 4) {
+          kind =
+              (value[0] << 24) |
+              (value[1] << 16) |
+              (value[2] << 8) |
+              value[3];
+        }
     }
     i += 2 + len;
   }
