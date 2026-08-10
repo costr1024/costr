@@ -1079,8 +1079,14 @@ class EventStoreNotifier extends Notifier<List<Event>> {
             });
           } else if (e.kind == 3) {
             // Own contact list changed → refresh the in-memory cache that
-            // FollowingNotifier / buildFeedFilter read from.
-            ref.read(contactListCacheProvider.notifier).set(e);
+            // FollowingNotifier / buildFeedFilter read from. Newest-wins:
+            // different relays serve different kind-3 revisions and deliver
+            // them out of order — a stale revision arriving after a newer
+            // one must not revert the follows list.
+            final prevContact = ref.read(contactListCacheProvider);
+            if (prevContact == null || e.createdAt > prevContact.createdAt) {
+              ref.read(contactListCacheProvider.notifier).set(e);
+            }
           }
         }
       } else if (e.kind == 5) {
@@ -3272,6 +3278,14 @@ String _kind30000D(Event e) {
   return '';
 }
 
+/// Test seam for [_buildFollowGroups] (regression tests for the
+/// stale-revision UUID-name bug).
+@visibleForTesting
+List<FollowGroup> buildFollowGroupsForTest(
+  List<String> follows,
+  List<Event> k30000Events,
+) => _buildFollowGroups(follows, k30000Events);
+
 final userGroupedFollowsProvider =
     StreamProvider.family<List<FollowGroup>, String>((ref, pubkey) async* {
       // Re-run when any kind-30000 set for the user changes (local publish or
@@ -3279,54 +3293,71 @@ final userGroupedFollowsProvider =
       ref.watch(kind30000VersionProvider);
 
       // 1. SQLite snapshot (instant) — kind-3 + all kind-30000 are persisted
-      //    by EventStoreNotifier's main listener.
+      //    by EventStoreNotifier's main listener. The same rows seed the
+      //    relay refresh below, so a stale relay revision can never beat the
+      //    newest persisted one.
       final cache = ref.read(localCacheProvider).value;
       List<FollowGroup>? cached;
+      Event? cachedK3;
+      final cachedSets = <Event>[];
       if (cache != null) {
         try {
           final k3row = await cache.queryContactList(pubkey);
-          final follows = k3row != null
-              ? _replaceableToEvent(k3row).pTagPubkeys
-              : const <String>[];
-          final sets = await cache.queryFollowSets(pubkey);
-          final k30000 = sets.map(_replaceableToEvent).toList();
-          cached = _buildFollowGroups(follows, k30000);
+          if (k3row != null) cachedK3 = _replaceableToEvent(k3row);
+          cachedSets.addAll(
+            (await cache.queryFollowSets(pubkey)).map(_replaceableToEvent),
+          );
+          cached = _buildFollowGroups(
+            cachedK3?.pTagPubkeys ?? const <String>[],
+            cachedSets,
+          );
         } catch (_) {}
       }
       if (cached != null) yield cached;
 
-      // 2. Relay refresh — kind-3 + kind-30000, each resolves on its FIRST
-      //    EOSE (not all relays). Rebuild + yield once both settle.
+      // 2. Relay refresh — kind-3 + kind-30000. Each settles only after EOSE
+      //    from ALL relays connected at request time (10s timeout backstop),
+      //    NOT on the first EOSE: different relays serve different revisions
+      //    of a replaceable list, and finalizing on the fastest relay loses
+      //    the slower relays' events. When the fastest relay's kind-30000
+      //    copy is a stale revision without a `name` tag (e.g. a relay that
+      //    missed a rename), the group name falls back to the UUID `d`
+      //    identifier — and since nothing re-triggers this provider until
+      //    the next list publish, the UUID name sticks for the whole session
+      //    (the "列表名偶尔变 UUID、强制退出重开恢复" bug). An intermediate
+      //    snapshot is emitted after each relay EOSE, so the fast relay's
+      //    view shows instantly and slower relays correct it as they land.
       final pool = ref.watch(relayPoolProvider);
       final ctrl = StreamController<List<FollowGroup>>();
-      // Seed follows from the cached 默认分组 if present (best-effort).
-      List<String> follows = const <String>[];
-      if (cached != null) {
-        for (final g in cached) {
-          if (g.name == '默认分组') {
-            follows = g.pubkeys;
-            break;
-          }
-        }
-      }
-      final k30000Events = <Event>[];
-      final seen3 = <String>{};
+      List<String> follows = cachedK3?.pTagPubkeys ?? const <String>[];
+      Event? newestK3 = cachedK3;
+      final k30000Events = <Event>[...cachedSets];
+      final seen3 = <String>{for (final e in cachedSets) e.id};
       late StreamSubscription<Event> evSub1;
       late StreamSubscription<Event> evSub2;
       late StreamSubscription<String> eoseSub1;
       late StreamSubscription<String> eoseSub2;
       final done1 = Completer<void>();
       final done2 = Completer<void>();
+      final connectedCount = pool.states
+          .where((s) => s.status == RelayStatus.connected)
+          .length;
 
       evSub1 = pool.rawEvents.listen((e) {
         if (e.isContactList && e.pubkey == pubkey && !done1.isCompleted) {
-          follows = e.pTagPubkeys;
-          done1.complete();
+          // Replaceable — newest createdAt wins (a stale kind-3 arriving
+          // after a newer one must not revert the follows list).
+          if (newestK3 == null || e.createdAt > newestK3!.createdAt) {
+            newestK3 = e;
+            follows = e.pTagPubkeys;
+          }
         }
       });
       final sub1 = nextSubId('grouped-k3');
+      var eoses1 = 0;
       eoseSub1 = pool.eoseStream.where((s) => s == sub1).listen((_) {
-        if (!done1.isCompleted) done1.complete();
+        eoses1++;
+        if (eoses1 >= connectedCount && !done1.isCompleted) done1.complete();
       });
       pool.request(sub1, {
         'authors': [pubkey],
@@ -3340,8 +3371,16 @@ final userGroupedFollowsProvider =
         }
       });
       final sub2 = nextSubId('grouped-k30k');
+      var eoses2 = 0;
       eoseSub2 = pool.eoseStream.where((s) => s == sub2).listen((_) {
-        if (!done2.isCompleted) done2.complete();
+        eoses2++;
+        // Intermediate snapshot: _buildFollowGroups picks the newest
+        // revision per `d`, so each relay's corrections surface as they
+        // land instead of waiting for the slowest relay.
+        if (!ctrl.isClosed) {
+          ctrl.add(_buildFollowGroups(follows, k30000Events));
+        }
+        if (eoses2 >= connectedCount && !done2.isCompleted) done2.complete();
       });
       pool.request(sub2, {
         'authors': [pubkey],
@@ -3381,8 +3420,17 @@ final userGroupedFollowsProvider =
       yield* ctrl.stream;
     });
 
-/// The logged-in user's existing follow-group names (NIP-51 kind-30000 `d`
-/// tags). Used by the follow-group picker to show existing + allow new.
+/// The logged-in user's existing follow-group names (NIP-51 kind-30000
+/// display names: `name` tag else `d`). Used by the follow-group picker to
+/// show existing + allow new.
+///
+/// Names are derived from the NEWEST known revision per `d` (SQLite rows
+/// seed, relay events update newest-by-createdAt), never appended blindly:
+/// a stale relay revision without a `name` tag would otherwise contribute
+/// the raw UUID `d` as a "group name", and a later newer revision could not
+/// retract it (the "新建分组弹窗里出现 UUID 组名" variant of the same bug).
+/// Settles on EOSE from ALL connected relays (10s timeout backstop) with an
+/// emission after each EOSE — same rationale as [userGroupedFollowsProvider].
 final userGroupNamesProvider = StreamProvider.family<List<String>, String>((
   ref,
   pubkey,
@@ -3390,22 +3438,35 @@ final userGroupNamesProvider = StreamProvider.family<List<String>, String>((
   // Re-run when any kind-30000 set for the user changes.
   ref.watch(kind30000VersionProvider);
 
+  List<String> namesOf(Map<String, Event> byD) {
+    final out = <String>[];
+    final seen = <String>{};
+    for (final e in byD.values) {
+      final n = listDisplayName(e);
+      if (n != null && seen.add(n)) out.add(n);
+    }
+    return List<String>.unmodifiable(out);
+  }
+
   // 1. SQLite snapshot (instant) — kind-30000 sets are persisted by
-  //    EventStoreNotifier. Read d-tags straight from the replaceable rows.
+  //    EventStoreNotifier. Newest persisted revision per `d` (the table is
+  //    PK-deduped by pubkey+kind+d, one row per list).
   final cache = ref.read(localCacheProvider).value;
-  final collected = <String>[];
-  final seen = <String>{};
+  final byD = <String, Event>{}; // d → newest known revision
   if (cache != null) {
     try {
       for (final row in await cache.queryFollowSets(pubkey)) {
-        final name = listDisplayName(_replaceableToEvent(row));
-        if (name != null && seen.add(name)) collected.add(name);
+        final e = _replaceableToEvent(row);
+        final d = _kind30000D(e);
+        if (d.isEmpty) continue;
+        final prev = byD[d];
+        if (prev == null || e.createdAt > prev.createdAt) byD[d] = e;
       }
     } catch (_) {}
   }
-  yield List<String>.unmodifiable(collected);
+  yield namesOf(byD);
 
-  // 2. Relay refresh — first EOSE (not all relays), append any newer names.
+  // 2. Relay refresh — newest revision per `d` across relays.
   final pool = ref.watch(relayPoolProvider);
   final ctrl = StreamController<List<String>>();
   late StreamSubscription<Event> evSub;
@@ -3413,16 +3474,24 @@ final userGroupNamesProvider = StreamProvider.family<List<String>, String>((
   final done = Completer<void>();
   evSub = pool.rawEvents.listen((e) {
     if (e.kind == 30000 && e.pubkey == pubkey) {
-      final name = listDisplayName(e);
-      if (name != null && seen.add(name)) {
-        collected.add(name);
-        ctrl.add(List<String>.unmodifiable(collected));
+      final d = _kind30000D(e);
+      if (d.isEmpty) return;
+      final prev = byD[d];
+      if (prev == null || e.createdAt > prev.createdAt) {
+        byD[d] = e;
+        if (!ctrl.isClosed) ctrl.add(namesOf(byD));
       }
     }
   });
   final subId = nextSubId('groups');
+  final connectedCount = pool.states
+      .where((s) => s.status == RelayStatus.connected)
+      .length;
+  var eoses = 0;
   eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    if (!done.isCompleted) done.complete();
+    eoses++;
+    if (!ctrl.isClosed) ctrl.add(namesOf(byD));
+    if (eoses >= connectedCount && !done.isCompleted) done.complete();
   });
   pool.request(subId, <String, dynamic>{
     'authors': [pubkey],
@@ -3433,7 +3502,7 @@ final userGroupNamesProvider = StreamProvider.family<List<String>, String>((
   });
   done.future.whenComplete(() {
     if (!ctrl.isClosed) {
-      ctrl.add(List<String>.unmodifiable(collected));
+      ctrl.add(namesOf(byD));
       ctrl.close();
     }
   });
@@ -4297,17 +4366,22 @@ Future<void> _addToCategoryList(
   }
 
   // 2. Relay REQ (all author's kind-30000) for lists not yet cached, matched
-  //    by display name.
+  //    by display name. Collects until ALL connected relays EOSE (8s
+  //    timeout) and uses the NEWEST matching revision: different relays
+  //    serve different revisions, and completing on the first match could
+  //    pick a stale one whose `p` roster misses members a newer revision
+  //    added — [followCategory] carries that stale roster over and would
+  //    silently drop those members.
   if (current == null) {
     final completer = Completer<Event?>();
+    Event? best;
     late StreamSubscription<Event> evSub;
     late StreamSubscription<String> eoseSub;
     evSub = pool.rawEvents.listen((e) {
       if (e.kind == 30000 &&
           e.pubkey == identity.pubkeyHex &&
-          !completer.isCompleted &&
           listDisplayName(e) == category) {
-        completer.complete(e);
+        if (best == null || e.createdAt > best!.createdAt) best = e;
       }
     });
     final subId = nextSubId('cat-$category');
@@ -4318,7 +4392,7 @@ Future<void> _addToCategoryList(
     eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
       eoses++;
       if (eoses >= connectedCount && !completer.isCompleted) {
-        completer.complete(null);
+        completer.complete(best);
       }
     });
     pool.request(subId, <String, dynamic>{
@@ -4329,7 +4403,7 @@ Future<void> _addToCategoryList(
     try {
       current = await completer.future.timeout(
         const Duration(seconds: 8),
-        onTimeout: () => null,
+        onTimeout: () => best,
       );
     } finally {
       await evSub.cancel();

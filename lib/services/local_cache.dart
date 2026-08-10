@@ -178,6 +178,16 @@ class LocalCache extends _$LocalCache {
           break;
         }
       }
+      // Newest-wins guard: different relays serve different revisions of the
+      // same replaceable event, and they arrive in arbitrary order (a relay
+      // that missed a rename still serves the older revision).
+      // insertOnConflictUpdate is last-write-wins, so without this check a
+      // stale revision arriving late permanently replaces the newer row —
+      // e.g. a pre-rename kind-30000 with no `name` tag makes the follow
+      // list render as its UUID `d` identifier until the newer revision
+      // happens to be re-ingested (the "列表名偶尔变 UUID，重启恢复" bug).
+      final existing = await queryReplaceable(pubkey, kind, dTag: dTag);
+      if (existing != null && existing.createdAt > createdAt) return;
       await into(replaceableEvents).insertOnConflictUpdate(
         ReplaceableEventsCompanion.insert(
           pubkey: pubkey,

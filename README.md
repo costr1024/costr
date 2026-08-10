@@ -191,6 +191,15 @@ lib/
 - **关注集分组**（`_buildFollowGroups`）：按 kind-30000 的 **`d` tag**（稳定标识）分组，组名取该 d 下
   **最新**修订的 `name` tag（回落 `d`）。Amethyst 把 UUID 放 `d`、人名放 `name`，旧修订无 `name`；
   按显示名分组会把同一列表拆成「中文」「UUID」两条并闪烁——按 `d` 分组塌成一条。
+  **陈旧修订防御**（修「列表名偶尔变 UUID、强退重开恢复」）：不同中继持有同一列表的不同修订（某中继
+  错过了重命名，仍在发无 `name` 的旧版），三处按「最新修订必胜」收敛：① `LocalCache.writeEvent`
+  对 replaceable 事件加 createdAt 新胜守卫（此前 `insertOnConflictUpdate` 后到旧版会永久盖掉新版行）；
+  ② `userGroupedFollowsProvider`/`userGroupNamesProvider` 的中继刷新不再在**首个 EOSE** 收尾——
+  最快中继若恰好只有无 `name` 旧版，组名会回落 UUID 且本次会话不再刷新（只有重启才重拉）；现在等
+  **全部已连接中继 EOSE**（10s 兜底）、每个 EOSE 增量吐一次快照，并用 SQLite 行给中继窗口播种
+  （缓存最新版必胜）；③ `_addToCategoryList` 的中继兜底改为收集到全部 EOSE 后取**显示名匹配的最新
+  修订**（首个命中可能是旧修订，其 `p` 名单会被 `followCategory` 沿用导致静默丢成员）。kind-3 同款：
+  摄取与分组刷新都按 createdAt 新胜，旧版后到不再回退关注列表。
 - **全局搜索**（`/search`）：可见的填充式圆角搜索框 + 全部/帖子/用户 SegmentedButton 筛选（默认全部）。
   搜索框带 **X 一键清空**（Amethyst 式）；把关键词删空同样触发——清空即 `invalidate` 该词的
   帖子/用户搜索 provider（dispose 其 relay REQ/定时器，后台不再继续搜）并清空结果。**零结果不再
@@ -271,7 +280,7 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 ```bash
 flutter pub get          # 安装/刷新依赖
 flutter run -d linux     # 桌面运行（或 android / macos / windows）
-flutter test             # 全套测试（347 个）
+flutter test             # 全套测试（612 个）
 flutter analyze          # 静态分析（须 0 警告）
 dart format lib/ test/   # 格式化
 flutter build linux      # 桌面构建验证
@@ -304,7 +313,7 @@ flutter build linux      # 桌面构建验证
 
 ### 测试
 
-`test/` 下 605 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
+`test/` 下 612 个测试覆盖：纯协议层（bech32/nip19/nip44/identity/event）、relay 池与
 outbox router（`_FakeRelay` 注入，无网络）、event store 去重/排序/上限、feed 过滤与冻结、
 markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪、服务器推荐轮转去重、widget 渲染。
 新增功能请抽纯函数单测覆盖，避免依赖网络/UI。
@@ -634,7 +643,7 @@ content 里带 NIP-18 嵌入 JSON 的转发无需解析 e-tag 直接渲染原帖
 
 ```bash
 flutter analyze          # 0 issue
-flutter test             # 493 个测试
+flutter test             # 612 个测试
 flutter build linux      # 桌面构建
 ```
 
