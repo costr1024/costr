@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.11.2-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.11.2-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.11.3-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.11.3-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta）。
 
 ---
 
@@ -325,6 +325,16 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 **v0.6-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v0.11.3-beta 相对 v0.11.2-beta 的修复**：
+**关注列表自定义组名偶现 UUID、强退重开恢复**——根因是中继持有同一列表的不同修订
+（某中继错过重命名、仍在发无 `name` tag 的旧版），旧代码三处各有一个洞：① SQLite 写入
+「后到即覆盖」、不比 `createdAt`，旧修订晚到就永久盖掉新行；② 分组 provider 在**首个 EOSE**
+就定稿，最快中继若恰是存旧版的那台，组名即回落 UUID `d`，且本会话不再刷新、只有重启才重拉；
+③ `_addToCategoryList` 首个显示名命中即用，可能取到旧修订、连带其旧成员名单。现统一「最新
+修订必胜」：可替换事件写入加 `createdAt` 新胜守卫；分组/组名 provider 等**全部已连接中继
+EOSE**（10s 兜底）收尾、每个 EOSE 增量吐快照并用 SQLite 行播种；`_addToCategoryList` 取显示名
+匹配的**最新**修订；kind-3 同款（顺手修冷启动自定义组短暂显空）。
 
 **v0.11.2-beta 相对 v0.11.1-beta 的修复**：
 **推荐「换一批」改为滚动推荐**——v0.11.1 的去重有个洞：「候选探测失败不触发回绕」，
