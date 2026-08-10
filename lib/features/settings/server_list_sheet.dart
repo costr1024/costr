@@ -18,18 +18,28 @@ import '../../app/theme.dart';
 import '../../services/server_discovery.dart' show discoverySupported;
 
 /// What the recommended servers were verified to do, per category (shown as
-/// a one-line caption under 「为你推荐」). Blossom mentions the tiny test upload
-/// the probe performs — transparency about what "实测" touched.
+/// a one-line caption under 「为你推荐」). Every caption ends with a
+/// self-verification reminder: a probe only proves the server worked AT PROBE
+/// TIME — the user must check it themselves after swapping, ESPECIALLY search
+/// relays (search quality can't be probed automatically at all) and indexers
+/// (handled in [_warningFor] — they have no recommendation block). Blossom
+/// also mentions the tiny test upload the probe performs — transparency about
+/// what "实测" touched.
 String _recoCaptionFor(ServerCategory category) {
   switch (category) {
     case ServerCategory.relay:
-      return '这些服务器经过检测：能连上、免费。推荐来自其他用户公开的服务器列表，不依赖任何中心服务器。';
+      return '这些服务器经过检测：能连上、免费。检测结果只代表当时，'
+          '添加后请自行验证收发是否正常。'
+          '推荐来自其他用户公开的服务器列表，不依赖任何中心服务器。';
     case ServerCategory.search:
-      return '这些服务器经过检测：能连上、免费、支持搜索。推荐来自其他用户公开的服务器列表，不依赖任何中心服务器。';
+      return '这些服务器经过检测：能连上、免费、自报支持搜索。'
+          '但搜索效果好不好无法自动检测，添加后请自己搜几个关键词验证。'
+          '推荐来自其他用户公开的服务器列表，不依赖任何中心服务器。';
     case ServerCategory.indexer:
       return '';
     case ServerCategory.blossom:
-      return '这些图床经过实测：可以免费上传（检测时上传了一个极小的测试文件）。';
+      return '这些图床经过实测：可以免费上传（检测时上传了一个极小的测试文件）。'
+          '之后仍可能失效，添加后可自行上传一张图片验证。';
   }
 }
 
@@ -47,11 +57,14 @@ String _warningFor(ServerCategory category) {
       return '这是高级功能。这里的服务器专门负责搜索功能。'
           '$onlyWhenOffline'
           '如果列表配置错误，搜索时可能搜不到任何结果。'
+          '更换或添加后请自行验证：搜几个关键词，看能否搜到帖子。'
           '$fallback';
     case ServerCategory.indexer:
       return '这是高级功能。这里的服务器用来获取别人的昵称和头像。'
           '$onlyWhenOffline'
           '如果列表配置错误，部分人的昵称、头像可能显示不出来。'
+          '更换或添加后请自行验证可用性：打开一个陌生账号的主页，'
+          '看昵称、头像能否正常显示。'
           '$fallback';
     case ServerCategory.blossom:
       return '这是高级功能。这里的服务器用来存放你上传的图片和视频，'

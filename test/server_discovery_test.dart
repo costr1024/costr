@@ -584,6 +584,205 @@ void main() {
     );
   });
 
+  group('mergeSeenUrls', () {
+    test('appends new urls; re-shown urls move to the end', () {
+      expect(
+        mergeSeenUrls(['wss://a', 'wss://b'], ['wss://c', 'wss://a']),
+        ['wss://b', 'wss://c', 'wss://a'],
+      );
+    });
+
+    test('cap drops the OLDEST entries first', () {
+      expect(
+        mergeSeenUrls(
+          ['wss://1', 'wss://2', 'wss://3'],
+          ['wss://4'],
+          cap: 3,
+        ),
+        ['wss://2', 'wss://3', 'wss://4'],
+      );
+    });
+
+    test('duplicates within one batch collapse', () {
+      expect(
+        mergeSeenUrls(const [], ['wss://a', 'wss://a', 'wss://b']),
+        ['wss://a', 'wss://b'],
+      );
+    });
+  });
+
+  group('ServerDiscovery.recommend — rotation (换一批 dedup)', () {
+    /// 5 relay candidates, all alive, one vote each → URL-ascending order.
+    _FakeDb fiveRelaysDb() {
+      final db = _FakeDb();
+      db.replaceableByKind[10002] = [
+        for (final u in const ['a', 'b', 'c', 'd', 'e'])
+          _row('e$u', 10002, [
+            ['r', 'wss://$u.example'],
+          ]),
+      ];
+      return db;
+    }
+
+    ServerDiscovery smallBatchDiscovery(_FakeDb db) => ServerDiscovery(
+      db: db,
+      httpClient: _nip11(const {}),
+      makeClient: (url) => _ProbeConn(url),
+      candidateCap: 5,
+      recoCap: 2,
+    );
+
+    test('each 换一批 shows NEW urls; wraps to the top when exhausted',
+        () async {
+      final db = fiveRelaysDb();
+      final d = smallBatchDiscovery(db);
+      expect(await d.recommend(ServerCategory.relay), [
+        'wss://a.example',
+        'wss://b.example',
+      ]);
+      expect(await d.recommend(ServerCategory.relay, force: true), [
+        'wss://c.example',
+        'wss://d.example',
+      ]);
+      expect(await d.recommend(ServerCategory.relay, force: true), [
+        'wss://e.example',
+      ]);
+      // Pool exhausted → wrap: the rotation memory resets and drawing starts
+      // from the top again (better to repeat than to show nothing).
+      expect(await d.recommend(ServerCategory.relay, force: true), [
+        'wss://a.example',
+        'wss://b.example',
+      ]);
+      expect(await d.recommend(ServerCategory.relay, force: true), [
+        'wss://c.example',
+        'wss://d.example',
+      ]);
+      // Rotation memory is persisted per category.
+      expect(db.config.containsKey('server_reco_seen:relay'), isTrue);
+    });
+
+    test('failed probes do NOT wrap back to the batch being replaced',
+        () async {
+      final db = _FakeDb();
+      db.replaceableByKind[10002] = [
+        _row('e1', 10002, [
+          ['r', 'wss://alive.example'],
+          ['r', 'wss://dead.example'],
+        ]),
+      ];
+      final d = ServerDiscovery(
+        db: db,
+        httpClient: _nip11(const {}),
+        makeClient: (url) =>
+            _ProbeConn(url, connects: url != 'wss://dead.example'),
+        candidateCap: 5,
+        recoCap: 2,
+      );
+      expect(await d.recommend(ServerCategory.relay), ['wss://alive.example']);
+      // 换一批: the only unseen candidate fails its probe → empty result,
+      // and it must NOT fall back to alive.example (that's exactly the batch
+      // the user asked to replace).
+      expect(await d.recommend(ServerCategory.relay, force: true), isEmpty);
+    });
+
+    test('expired cache restarts the rotation from the top batch', () async {
+      final db = _FakeDb();
+      db.replaceableByKind[10002] = [
+        _row('e1', 10002, [
+          ['r', 'wss://a.example'],
+          ['r', 'wss://b.example'],
+          ['r', 'wss://c.example'],
+        ]),
+      ];
+      final d = smallBatchDiscovery(db);
+      expect(await d.recommend(ServerCategory.relay), [
+        'wss://a.example',
+        'wss://b.example',
+      ]);
+      expect(await d.recommend(ServerCategory.relay, force: true), [
+        'wss://c.example',
+      ]);
+      // Cache expires → the next draw is fresh and resets the rotation.
+      db.config['server_reco:relay'] = jsonEncode({
+        'at': DateTime.now().millisecondsSinceEpoch ~/ 1000 - 25 * 3600,
+        'urls': ['wss://irrelevant.example'],
+      });
+      expect(await d.recommend(ServerCategory.relay), [
+        'wss://a.example',
+        'wss://b.example',
+      ]);
+      expect(await d.recommend(ServerCategory.relay, force: true), [
+        'wss://c.example',
+      ]);
+    });
+
+    test(
+      'first 换一批 without rotation memory excludes the cached (shown) batch',
+      () async {
+        final db = _FakeDb();
+        // Upgrade case: a fresh 24h cache exists but no rotation memory yet —
+        // the cached batch is what the user is looking at, so 换一批 must not
+        // just re-serve it.
+        db.config['server_reco:relay'] = jsonEncode({
+          'at': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          'urls': ['wss://shown.example'],
+        });
+        db.replaceableByKind[10002] = [
+          _row('e1', 10002, [
+            ['r', 'wss://shown.example'],
+            ['r', 'wss://new1.example'],
+            ['r', 'wss://new2.example'],
+          ]),
+        ];
+        final d = ServerDiscovery(
+          db: db,
+          httpClient: _nip11(const {}),
+          makeClient: (url) => _ProbeConn(url),
+          candidateCap: 5,
+          recoCap: 5,
+        );
+        expect(await d.recommend(ServerCategory.relay, force: true), [
+          'wss://new1.example',
+          'wss://new2.example',
+        ]);
+      },
+    );
+
+    test('blossom rotates too (test-upload probes)', () async {
+      final db = _FakeDb();
+      db.replaceableByKind[10063] = [
+        _row('e1', 10063, [
+          ['server', 'https://ba.example'],
+          ['server', 'https://bb.example'],
+          ['server', 'https://bc.example'],
+        ]),
+      ];
+      final d = ServerDiscovery(
+        db: db,
+        identity: Identity.fromPrivkeyHex(_priv),
+        httpClient: _blossom({
+          'ba.example': 200,
+          'bb.example': 200,
+          'bc.example': 200,
+        }),
+        candidateCap: 5,
+        recoCap: 2,
+      );
+      expect(await d.recommend(ServerCategory.blossom), [
+        'https://ba.example',
+        'https://bb.example',
+      ]);
+      expect(await d.recommend(ServerCategory.blossom, force: true), [
+        'https://bc.example',
+      ]);
+      // Exhausted → wrap.
+      expect(await d.recommend(ServerCategory.blossom, force: true), [
+        'https://ba.example',
+        'https://bb.example',
+      ]);
+    });
+  });
+
   group('ServerDiscovery.recommend — edge cases', () {
     test('indexer is unsupported this iteration → always empty', () async {
       final db = _FakeDb();

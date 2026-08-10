@@ -25,6 +25,12 @@
 /// [maxRecommendations], and cached 24h under `server_reco:<category>`
 /// (empty results are NOT cached so a transient network failure doesn't hide
 /// recommendations for a day).
+///
+/// Rotation (「换一批」): a per-category memory of already-recommended URLs is
+/// kept under `server_reco_seen:<category>`. An explicit refresh excludes the
+/// seen URLs so each batch shows NEW servers; when every candidate has been
+/// shown the memory resets (wrap-around) and drawing starts from the top
+/// again — a small pool cannot serve fresh batches forever.
 library;
 
 import 'dart:async';
@@ -41,6 +47,10 @@ import 'local_cache.dart' as cache;
 
 const int maxRecommendations = 10;
 const int maxProbeCandidates = 20;
+/// Rotation memory cap: at most this many already-recommended URLs are kept
+/// per category (~5 full batches). Oldest entries are dropped first, so very
+/// large pools still rotate instead of stalling on a full memory.
+const int maxSeenUrls = 50;
 // Probing is mostly WAITING (WS handshake + NIP-11 fetch, both capped), so a
 // wider pool keeps the total wall time short even when many candidates are
 // GFW-blocked and each burns its full connect timeout.
@@ -50,6 +60,33 @@ const Duration discoveryCacheTtl = Duration(hours: 24);
 /// Config key holding the cached recommendation (`{"at":…, "urls":[…]}`).
 String discoveryCacheKey(ServerCategory category) =>
     'server_reco:${category.name}';
+
+/// Config key holding the rotation memory for 「换一批」: JSON list of URLs
+/// already recommended for this category, oldest first.
+String discoverySeenKey(ServerCategory category) =>
+    'server_reco_seen:${category.name}';
+
+/// Merge freshly-shown [shown] URLs into the rotation memory [seen]:
+/// duplicates collapsed (a re-shown URL moves to the end), order preserved
+/// otherwise, capped at [cap] by dropping the OLDEST entries. Pure so the
+/// rotation bookkeeping is unit-testable without I/O.
+List<String> mergeSeenUrls(
+  List<String> seen,
+  List<String> shown, {
+  int cap = maxSeenUrls,
+}) {
+  final merged = <String>[];
+  final known = <String>{};
+  for (final url in seen) {
+    if (!shown.contains(url) && known.add(url)) merged.add(url);
+  }
+  for (final url in shown) {
+    if (known.add(url)) merged.add(url);
+  }
+  return merged.length <= cap
+      ? merged
+      : merged.sublist(merged.length - cap);
+}
 
 /// Whether discovery can recommend for [category] at all this iteration.
 /// Indexer has no cheap trustworthy signal (see library doc) → the UI hides
@@ -367,34 +404,90 @@ class ServerDiscovery {
   /// Recommended servers for [category] (≤ [recoCap]). Reads the 24h cache
   /// unless [force]; empty list = nothing recommendable (the UI hides the
   /// block). Unsupported categories (indexer, this iteration) → always empty.
+  ///
+  /// [force] (「换一批」) also rotates: URLs already recommended earlier are
+  /// excluded so each refresh shows a NEW batch; when the pool of unseen
+  /// candidates is exhausted the rotation memory resets and drawing starts
+  /// from the top again.
   Future<List<String>> recommend(
     ServerCategory category, {
     bool force = false,
   }) async {
     if (!discoverySupported(category)) return const <String>[];
+    var seen = const <String>[];
     if (!force) {
       final cached = await _readCache(category);
       if (cached != null) return cached;
+      // Fresh draw (first run or cache expired) → the rotation restarts from
+      // the top candidates; drop any stale rotation memory.
+      await _writeSeen(category, const <String>[]);
+    } else {
+      seen = await _readSeen(category);
+      if (seen.isEmpty) {
+        // First rotation after the memory was introduced (or lost): treat the
+        // batch currently in the cache — what the user is looking at right
+        // now — as already shown, so 「换一批」 doesn't just re-serve it.
+        final cached = await _readCache(category);
+        if (cached != null) seen = cached;
+      }
     }
-    final urls = category == ServerCategory.blossom
-        ? await _recommendBlossom()
-        : await _recommendRelays(category);
-    if (urls.isNotEmpty) await _writeCache(category, urls);
+    // (urls, exhaustedBySeen): the flag is true only when the SEEN exclusion
+    // is what emptied the candidate pool — the precise signal that a
+    // wrap-around (reset memory, redraw from the top) may now help. Probe
+    // failures alone must NOT trigger a wrap (that would just re-show the
+    // previous batch the user asked to replace).
+    var (urls, exhaustedBySeen) = category == ServerCategory.blossom
+        ? await _recommendBlossom(excludeSeen: seen.toSet())
+        : await _recommendRelays(category, excludeSeen: seen.toSet());
+    var wrapped = false;
+    if (urls.isEmpty && exhaustedBySeen) {
+      // Every recommendable server already shown → wrap the rotation around
+      // (better to repeat the best servers than to show nothing).
+      (urls, _) = category == ServerCategory.blossom
+          ? await _recommendBlossom(excludeSeen: const <String>{})
+          : await _recommendRelays(category, excludeSeen: const <String>{});
+      wrapped = true;
+    }
+    if (urls.isNotEmpty) {
+      await _writeCache(category, urls);
+      // After a wrap the memory restarts from this batch; otherwise the batch
+      // is appended to what was already shown.
+      await _writeSeen(
+        category,
+        mergeSeenUrls(wrapped ? const <String>[] : seen, urls),
+      );
+    }
     return urls;
   }
 
   // --- relay / search ---
 
-  Future<List<String>> _recommendRelays(ServerCategory category) async {
+  /// Returns `(recommendations, exhaustedBySeen)` — the flag is true when the
+  /// seen-exclusion (not a lack of candidates or failed probes) emptied the
+  /// pool, so the caller can wrap the rotation around.
+  Future<(List<String>, bool)> _recommendRelays(
+    ServerCategory category, {
+    Set<String> excludeSeen = const {},
+  }) async {
     final votes = await _aggregateRelayVotes();
-    if (votes.isEmpty) return const <String>[];
-    final exclude = await _configuredUrls();
+    if (votes.isEmpty) return (const <String>[], false);
+    final configured = await _configuredUrls();
     final candidates = topServerCandidates(
       votes,
-      exclude: exclude,
+      exclude: {...configured, ...excludeSeen},
       limit: candidateCap,
     );
-    if (candidates.isEmpty) return const <String>[];
+    if (candidates.isEmpty) {
+      if (excludeSeen.isEmpty) return (const <String>[], false);
+      // Emptied by the rotation memory? Check whether there'd be candidates
+      // without it — only then does a wrap-around help.
+      final withoutSeen = topServerCandidates(
+        votes,
+        exclude: configured,
+        limit: candidateCap,
+      );
+      return (const <String>[], withoutSeen.isNotEmpty);
+    }
 
     final results = await mapConcurrent(
       candidates,
@@ -419,12 +512,15 @@ class ServerDiscovery {
       passed.add(url);
       if (r.nip11 != null && r.nip11!.isFree) freeConfirmed.add(url);
     }
-    if (passed.isEmpty) return const <String>[];
-    return topServerCandidates(
-      {for (final u in passed) u: votes[u] ?? 0},
-      exclude: const {},
-      boost: freeConfirmed,
-      limit: recoCap,
+    if (passed.isEmpty) return (const <String>[], false);
+    return (
+      topServerCandidates(
+        {for (final u in passed) u: votes[u] ?? 0},
+        exclude: const {},
+        boost: freeConfirmed,
+        limit: recoCap,
+      ),
+      false,
     );
   }
 
@@ -478,10 +574,12 @@ class ServerDiscovery {
 
   // --- blossom ---
 
-  Future<List<String>> _recommendBlossom() async {
+  Future<(List<String>, bool)> _recommendBlossom({
+    Set<String> excludeSeen = const {},
+  }) async {
     final identity = this.identity;
     // Logged out → the test-upload probe can't run; the UI shows a hint.
-    if (identity == null) return const <String>[];
+    if (identity == null) return (const <String>[], false);
 
     final perEvent = <List<String>>[];
     final seenIds = <String>{};
@@ -516,14 +614,22 @@ class ServerDiscovery {
     }
 
     final votes = voteServerUrls(perEvent);
-    if (votes.isEmpty) return const <String>[];
-    final exclude = await _configuredUrls();
+    if (votes.isEmpty) return (const <String>[], false);
+    final configured = await _configuredUrls();
     final candidates = topServerCandidates(
       votes,
-      exclude: exclude,
+      exclude: {...configured, ...excludeSeen},
       limit: candidateCap,
     );
-    if (candidates.isEmpty) return const <String>[];
+    if (candidates.isEmpty) {
+      if (excludeSeen.isEmpty) return (const <String>[], false);
+      final withoutSeen = topServerCandidates(
+        votes,
+        exclude: configured,
+        limit: candidateCap,
+      );
+      return (const <String>[], withoutSeen.isNotEmpty);
+    }
 
     final writable = await mapConcurrent(
       candidates,
@@ -534,8 +640,11 @@ class ServerDiscovery {
     for (var i = 0; i < candidates.length; i++) {
       if (writable[i]) passedVotes[candidates[i]] = votes[candidates[i]] ?? 0;
     }
-    if (passedVotes.isEmpty) return const <String>[];
-    return topServerCandidates(passedVotes, exclude: const {}, limit: recoCap);
+    if (passedVotes.isEmpty) return (const <String>[], false);
+    return (
+      topServerCandidates(passedVotes, exclude: const {}, limit: recoCap),
+      false,
+    );
   }
 
   // --- shared helpers ---
@@ -583,6 +692,31 @@ class ServerDiscovery {
           'urls': urls,
         }),
       );
+    } catch (_) {}
+  }
+
+  // --- rotation memory (「换一批」 dedup) ---
+
+  /// Already-recommended URLs for [category] (oldest first). Empty on any
+  /// read problem — a broken memory must degrade to "no dedup", never crash.
+  Future<List<String>> _readSeen(ServerCategory category) async {
+    try {
+      final raw = await db.readConfig(discoverySeenKey(category));
+      if (raw == null || raw.isEmpty) return const <String>[];
+      final doc = jsonDecode(raw);
+      if (doc is! List) return const <String>[];
+      return doc
+          .whereType<String>()
+          .where((u) => u.isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  Future<void> _writeSeen(ServerCategory category, List<String> urls) async {
+    try {
+      await db.writeConfig(discoverySeenKey(category), jsonEncode(urls));
     } catch (_) {}
   }
 }
