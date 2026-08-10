@@ -107,6 +107,48 @@ final RegExp _mediaTokenRegex = RegExp(
 const int _kCollapseThreshold = 400;
 const double _kCollapsedMaxHeight = 220;
 
+/// While a long post is COLLAPSED, only the first ~this-many chars are run
+/// through the parse pipeline (mention linkify, NIP-27 extraction, media
+/// tokenization, markdown). The collapsed window (220px) shows far less than
+/// this, so nothing visible changes — but per-build cost is bounded. Without
+/// the cap a single 100KB+ post (spam waves seed the firehose with them)
+/// made EVERY rebuild of its card parse 100KB of markdown and build hundreds
+/// of link/media widgets; a feed whose visible cards were such posts froze
+/// the UI thread ("开中文过滤卡死" — the language filter concentrated the
+/// spam). Expanding (展开) parses the full text — an explicit, one-card-at-a
+/// time user action.
+const int _kCollapsedParseCap = 2000;
+
+/// Hard ceiling for the EXPANDED parse too: 展开 is a deliberate action, but
+/// a 100KB+ post still costs ~1s of markdown parsing + thousands of widgets
+/// per tap (and adversarial content can be far larger). 30KB is dozens of
+/// screens of text — more than anyone reads in a card — and keeps the
+/// expanded build bounded. Content beyond it is replaced by a note.
+const int _kExpandedParseCap = 30000;
+
+/// Truncate [text] to at most [cap] code units, cutting at the last
+/// whitespace/newline inside the final 200 chars when possible (avoids
+/// splitting a word/URL mid-token in the visible part) and never splitting a
+/// UTF-16 surrogate pair.
+String _truncateAtBoundary(String text, int cap) {
+  if (text.length <= cap) return text;
+  var end = cap;
+  final floor = cap - 200;
+  for (var i = cap - 1; i > floor; i--) {
+    final ch = text.codeUnitAt(i);
+    if (ch == 0x20 || ch == 0x0A || ch == 0x09) {
+      end = i;
+      break;
+    }
+  }
+  // Never cut between a high and low surrogate.
+  if (end > 0) {
+    final u = text.codeUnitAt(end - 1);
+    if (u >= 0xD800 && u <= 0xDBFF) end--;
+  }
+  return text.substring(0, end);
+}
+
 /// Replace each match of [re] in [text] with [replace(m)], SKIPPING matches
 /// that fall inside a `https?://…` URL (see [entityMatchInUrl]). Entity
 /// matches inside URLs (e.g. npub-subdomain blossom media hosts) must stay
@@ -154,12 +196,29 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
   @override
   Widget build(BuildContext context) {
     final event = widget.event;
+    // Bounded parse source (see [_kCollapsedParseCap] / [_kExpandedParseCap]):
+    // collapsed long posts parse a short prefix; expanded posts parse up to
+    // the hard cap with a note when content is clipped.
+    final isLong = event.content.length > _kCollapseThreshold;
+    final expandedNow = _expanded || !isLong;
+    final String source;
+    final bool hardTruncated;
+    if (!expandedNow) {
+      source = _truncateAtBoundary(event.content, _kCollapsedParseCap);
+      hardTruncated = false;
+    } else if (event.content.length > _kExpandedParseCap) {
+      source = _truncateAtBoundary(event.content, _kExpandedParseCap);
+      hardTruncated = true;
+    } else {
+      source = event.content;
+      hardTruncated = false;
+    }
     // 1. Linkify npub/nprofile mentions — but never ones INSIDE a URL (npub-
     // subdomain blossom media hosts like `https://npub1….blossom.band/x.mp4`;
     // rewriting those broke the URL and its media).
     final pubkeysByEntity = <String, String?>{};
-    for (final m in _pubkeyEntityRegex.allMatches(event.content)) {
-      if (entityMatchInUrl(event.content, m)) continue;
+    for (final m in _pubkeyEntityRegex.allMatches(source)) {
+      if (entityMatchInUrl(source, m)) continue;
       // group(1) = full bare entity (no nostr: prefix).
       final entity = m.group(1)!;
       pubkeysByEntity.putIfAbsent(entity, () => entityToPubkeyHex(entity));
@@ -171,7 +230,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       final name = meta?.bestName;
       if (name != null && name.isNotEmpty) nameByPubkey[pk] = name;
     }
-    final linkified = _replaceOutsideUrls(event.content, _pubkeyEntityRegex, (
+    final linkified = _replaceOutsideUrls(source, _pubkeyEntityRegex, (
       Match m,
     ) {
       final entity = m.group(1)!;
@@ -357,9 +416,24 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       );
     }
 
-    final isLong = event.content.length > _kCollapseThreshold;
+    if (hardTruncated) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            '内容过长，超出部分已省略',
+            style: TextStyle(
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
+              color: CostrColors.of(context).text3,
+            ),
+          ),
+        ),
+      );
+    }
+
     return _CollapseBox(
-      expanded: _expanded || !isLong,
+      expanded: expandedNow,
       canCollapse: isLong,
       onToggle: () => setState(() => _expanded = !_expanded),
       child: Column(
@@ -534,8 +608,16 @@ class _FileChip extends StatelessWidget {
 bool postHasMedia(Event event) {
   // imeta image/video attachments.
   if (event.mediaAttachments.any((m) => m.isImage || m.isVideo)) return true;
-  // Markdown images / bare image-video URLs in the content body.
-  final segs = tokenizeContent(event.content);
+  // Markdown images / bare image-video URLs in the content body. Bounded to
+  // a prefix: this runs on every visible-card build (name-bar proxy toggle),
+  // and adversariously long posts (100KB+ spam) must not be tokenized in
+  // full here — media within the first few KB is plenty for the toggle
+  // decision, and the card itself parses the same bounded prefix while
+  // collapsed (see [_kCollapsedParseCap]).
+  final body = event.content.length > 4000
+      ? event.content.substring(0, 4000)
+      : event.content;
+  final segs = tokenizeContent(body);
   for (final s in segs) {
     if (s is ImageGroupSeg || s is SingleVideoSeg) return true;
   }

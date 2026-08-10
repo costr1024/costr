@@ -507,6 +507,12 @@ class _ReplyParentPreview extends ConsumerWidget {
   const _ReplyParentPreview({required this.parent});
   final Event parent;
 
+  /// Preview source cap: the box shows 3 lines — a few hundred chars is far
+  /// more than fits, and the whitespace-collapse + Text layout cost must not
+  /// scale with adversariously long parent content (100KB+ spam posts).
+  static const int _kPreviewCap = 400;
+  static final RegExp _wsRun = RegExp(r'\s+');
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -521,7 +527,10 @@ class _ReplyParentPreview extends ConsumerWidget {
             ? '此帖可能包含敏感内容'
             // Collapse whitespace so the first lines of the post fill the
             // truncated preview instead of being eaten by blank lines.
-            : content.replaceAll(RegExp(r'\s+'), ' ');
+            : (content.length > _kPreviewCap
+                  ? content.substring(0, _kPreviewCap)
+                  : content)
+                .replaceAll(_wsRun, ' ');
       }
     }
     final meta = ref.watch(metadataProvider(parent.pubkey)).value;
