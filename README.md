@@ -10,9 +10,9 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.11.3-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.11.3-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.0.0** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.0.0/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为正式版（v1.0.0）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
 >
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / **v1.0.0 正式版**）。
 
 ---
 
@@ -325,6 +325,13 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 **v0.6-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v1.0.0 —— 首个正式版**：功能与 v0.11.3-beta 完全一致（同一代码基线，仅去掉 `-beta`
+后缀、versionCode 递增到 33），标志 0.1.x-beta 系列迭代收敛、转入正式版轨道。自 v0.6-beta
+以来累积的完整能力：发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页五 tab、搜索、
+通知中心、多账号、关注分组（NIP-51 kind-30000，Amethyst 兼容）、收藏（NIP-51 + NIP-44 私密）、
+屏蔽列表、媒体代理、服务器节点自定义 + 去中心化推荐、本地 SQLite 缓存秒开。覆盖安装即可从
+任一 0.x-beta 升级，登录 / 关注 / 屏蔽 / 收藏 / 本地缓存全部保留。
 
 **v0.11.3-beta 相对 v0.11.2-beta 的修复**：
 **关注列表自定义组名偶现 UUID、强退重开恢复**——根因是中继持有同一列表的不同修订
