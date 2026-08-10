@@ -661,29 +661,41 @@ void main() {
       expect(db.config.containsKey('server_reco_seen:relay'), isTrue);
     });
 
-    test('failed probes do NOT wrap back to the batch being replaced',
-        () async {
-      final db = _FakeDb();
-      db.replaceableByKind[10002] = [
-        _row('e1', 10002, [
-          ['r', 'wss://alive.example'],
-          ['r', 'wss://dead.example'],
-        ]),
-      ];
-      final d = ServerDiscovery(
-        db: db,
-        httpClient: _nip11(const {}),
-        makeClient: (url) =>
-            _ProbeConn(url, connects: url != 'wss://dead.example'),
-        candidateCap: 5,
-        recoCap: 2,
-      );
-      expect(await d.recommend(ServerCategory.relay), ['wss://alive.example']);
-      // 换一批: the only unseen candidate fails its probe → empty result,
-      // and it must NOT fall back to alive.example (that's exactly the batch
-      // the user asked to replace).
-      expect(await d.recommend(ServerCategory.relay, force: true), isEmpty);
-    });
+    test(
+      'no NEW recommendable server (only unseen one fails probe) rolls back '
+      'to the working top batch instead of going empty',
+      () async {
+        final db = _FakeDb();
+        db.replaceableByKind[10002] = [
+          _row('e1', 10002, [
+            ['r', 'wss://alive.example'],
+            ['r', 'wss://dead.example'],
+          ]),
+        ];
+        final d = ServerDiscovery(
+          db: db,
+          httpClient: _nip11(const {}),
+          makeClient: (url) =>
+              _ProbeConn(url, connects: url != 'wss://dead.example'),
+          candidateCap: 5,
+          recoCap: 2,
+        );
+        expect(await d.recommend(ServerCategory.relay), [
+          'wss://alive.example',
+        ]);
+        // 换一批: the only unseen candidate (dead.example) fails its probe, so
+        // there is no NEW recommendable relay. Rolling semantics → fall back
+        // to the working top batch rather than showing nothing forever.
+        expect(await d.recommend(ServerCategory.relay, force: true), [
+          'wss://alive.example',
+        ]);
+        // The cycle restarts from that batch, so a further 换一批 again tries
+        // the unseen candidate first and lands back on the working batch.
+        expect(await d.recommend(ServerCategory.relay, force: true), [
+          'wss://alive.example',
+        ]);
+      },
+    );
 
     test('expired cache restarts the rotation from the top batch', () async {
       final db = _FakeDb();

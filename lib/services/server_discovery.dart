@@ -26,11 +26,14 @@
 /// (empty results are NOT cached so a transient network failure doesn't hide
 /// recommendations for a day).
 ///
-/// Rotation (「换一批」): a per-category memory of already-recommended URLs is
-/// kept under `server_reco_seen:<category>`. An explicit refresh excludes the
-/// seen URLs so each batch shows NEW servers; when every candidate has been
-/// shown the memory resets (wrap-around) and drawing starts from the top
-/// again — a small pool cannot serve fresh batches forever.
+/// Rotation (「换一批」) is ROLLING, not permanent exclusion: a per-category
+/// memory of already-recommended URLs is kept under
+/// `server_reco_seen:<category>`. An explicit refresh excludes the seen URLs
+/// so each batch shows NEW servers; but as soon as there is no NEW
+/// recommendable server left — every candidate already shown, OR the only
+/// unseen ones fail probing — the memory resets and drawing starts back at
+/// the top (first) batch. Dedup is per-cycle only, so a small pool cycles
+/// through its working servers instead of going empty forever.
 library;
 
 import 'dart:async';
@@ -431,27 +434,27 @@ class ServerDiscovery {
         if (cached != null) seen = cached;
       }
     }
-    // (urls, exhaustedBySeen): the flag is true only when the SEEN exclusion
-    // is what emptied the candidate pool — the precise signal that a
-    // wrap-around (reset memory, redraw from the top) may now help. Probe
-    // failures alone must NOT trigger a wrap (that would just re-show the
-    // previous batch the user asked to replace).
-    var (urls, exhaustedBySeen) = category == ServerCategory.blossom
+    // Rolling recommendation (滚动推荐): dedup is per-CYCLE, not permanent.
+    // Show servers not yet shown this cycle; when there is no NEW
+    // recommendable server left — either every candidate was already shown,
+    // or the only unseen ones fail probing — roll back to the top (first)
+    // batch instead of going empty. Otherwise a few taps of 「换一批」 would
+    // leave the user staring at nothing forever. `seen` empty = genuinely
+    // first draw, nothing to roll back to.
+    var urls = category == ServerCategory.blossom
         ? await _recommendBlossom(excludeSeen: seen.toSet())
         : await _recommendRelays(category, excludeSeen: seen.toSet());
     var wrapped = false;
-    if (urls.isEmpty && exhaustedBySeen) {
-      // Every recommendable server already shown → wrap the rotation around
-      // (better to repeat the best servers than to show nothing).
-      (urls, _) = category == ServerCategory.blossom
+    if (urls.isEmpty && seen.isNotEmpty) {
+      urls = category == ServerCategory.blossom
           ? await _recommendBlossom(excludeSeen: const <String>{})
           : await _recommendRelays(category, excludeSeen: const <String>{});
       wrapped = true;
     }
     if (urls.isNotEmpty) {
       await _writeCache(category, urls);
-      // After a wrap the memory restarts from this batch; otherwise the batch
-      // is appended to what was already shown.
+      // After a wrap the cycle restarts from this batch; otherwise the batch
+      // is appended to what was already shown this cycle.
       await _writeSeen(
         category,
         mergeSeenUrls(wrapped ? const <String>[] : seen, urls),
@@ -462,32 +465,23 @@ class ServerDiscovery {
 
   // --- relay / search ---
 
-  /// Returns `(recommendations, exhaustedBySeen)` — the flag is true when the
-  /// seen-exclusion (not a lack of candidates or failed probes) emptied the
-  /// pool, so the caller can wrap the rotation around.
-  Future<(List<String>, bool)> _recommendRelays(
+  /// Candidates for [category] that pass the probes, excluding [excludeSeen]
+  /// (already shown this rotation cycle) and the configured servers. Empty
+  /// when nothing NEW is recommendable; [recommend] then rolls back to the
+  /// top batch (rolling recommendation — dedup is per-cycle, not permanent).
+  Future<List<String>> _recommendRelays(
     ServerCategory category, {
     Set<String> excludeSeen = const {},
   }) async {
     final votes = await _aggregateRelayVotes();
-    if (votes.isEmpty) return (const <String>[], false);
+    if (votes.isEmpty) return const <String>[];
     final configured = await _configuredUrls();
     final candidates = topServerCandidates(
       votes,
       exclude: {...configured, ...excludeSeen},
       limit: candidateCap,
     );
-    if (candidates.isEmpty) {
-      if (excludeSeen.isEmpty) return (const <String>[], false);
-      // Emptied by the rotation memory? Check whether there'd be candidates
-      // without it — only then does a wrap-around help.
-      final withoutSeen = topServerCandidates(
-        votes,
-        exclude: configured,
-        limit: candidateCap,
-      );
-      return (const <String>[], withoutSeen.isNotEmpty);
-    }
+    if (candidates.isEmpty) return const <String>[];
 
     final results = await mapConcurrent(
       candidates,
@@ -512,15 +506,12 @@ class ServerDiscovery {
       passed.add(url);
       if (r.nip11 != null && r.nip11!.isFree) freeConfirmed.add(url);
     }
-    if (passed.isEmpty) return (const <String>[], false);
-    return (
-      topServerCandidates(
-        {for (final u in passed) u: votes[u] ?? 0},
-        exclude: const {},
-        boost: freeConfirmed,
-        limit: recoCap,
-      ),
-      false,
+    if (passed.isEmpty) return const <String>[];
+    return topServerCandidates(
+      {for (final u in passed) u: votes[u] ?? 0},
+      exclude: const {},
+      boost: freeConfirmed,
+      limit: recoCap,
     );
   }
 
@@ -574,12 +565,15 @@ class ServerDiscovery {
 
   // --- blossom ---
 
-  Future<(List<String>, bool)> _recommendBlossom({
+  /// Blossom candidates that pass the test-upload probe, excluding
+  /// [excludeSeen] + configured servers. Empty when nothing NEW is
+  /// recommendable; [recommend] then rolls back to the top batch.
+  Future<List<String>> _recommendBlossom({
     Set<String> excludeSeen = const {},
   }) async {
     final identity = this.identity;
     // Logged out → the test-upload probe can't run; the UI shows a hint.
-    if (identity == null) return (const <String>[], false);
+    if (identity == null) return const <String>[];
 
     final perEvent = <List<String>>[];
     final seenIds = <String>{};
@@ -614,22 +608,14 @@ class ServerDiscovery {
     }
 
     final votes = voteServerUrls(perEvent);
-    if (votes.isEmpty) return (const <String>[], false);
+    if (votes.isEmpty) return const <String>[];
     final configured = await _configuredUrls();
     final candidates = topServerCandidates(
       votes,
       exclude: {...configured, ...excludeSeen},
       limit: candidateCap,
     );
-    if (candidates.isEmpty) {
-      if (excludeSeen.isEmpty) return (const <String>[], false);
-      final withoutSeen = topServerCandidates(
-        votes,
-        exclude: configured,
-        limit: candidateCap,
-      );
-      return (const <String>[], withoutSeen.isNotEmpty);
-    }
+    if (candidates.isEmpty) return const <String>[];
 
     final writable = await mapConcurrent(
       candidates,
@@ -640,11 +626,8 @@ class ServerDiscovery {
     for (var i = 0; i < candidates.length; i++) {
       if (writable[i]) passedVotes[candidates[i]] = votes[candidates[i]] ?? 0;
     }
-    if (passedVotes.isEmpty) return (const <String>[], false);
-    return (
-      topServerCandidates(passedVotes, exclude: const {}, limit: recoCap),
-      false,
-    );
+    if (passedVotes.isEmpty) return const <String>[];
+    return topServerCandidates(passedVotes, exclude: const {}, limit: recoCap);
   }
 
   // --- shared helpers ---
