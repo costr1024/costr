@@ -20,15 +20,24 @@
 ///   `・` (U+30FB) and prolonged mark `ー` (U+30FC): punctuation that
 ///   Chinese posts use for transliterated names (e.g. `玛丽・居里`), which
 ///   used to false-match kana and leak pure-Chinese posts into Japanese.
-/// - Only the FIRST [_kScanCap] (100) characters are judged: a post's
-///   language is decided by its opening, and the window keeps detection
-///   dirt-cheap even against adversariously long content (it runs on the UI
-///   isolate). Within the window the decision is still by DOMINANT script,
-///   not "any character wins" — otherwise spam could flip a post's class by
-///   seeding a couple of foreign letters into the opening 100 chars.
+/// - Only the FIRST [_kScanCap] (100) NON-URL characters are judged: a
+///   post's language is decided by its opening, and the window keeps
+///   detection dirt-cheap even against adversariously long content (it runs
+///   on the UI isolate). **URL spans (`http(s)://…`) are skipped and do NOT
+///   count toward the window** — a Chinese post that is mostly download /
+///   media links ("v1.0.1 正式版发布，下载地址：https://…") must not read as
+///   English just because the links are Latin. At most [_kMaxSkippedUrls]
+///   (10) links are skipped; on the next one the scan stops and the opening
+///   characters gathered so far decide. Within the window the decision is
+///   still by DOMINANT script, not "any character wins" — otherwise spam
+///   could flip a post's class by seeding a couple of foreign letters into
+///   the opening chars.
 ///
-/// Result: 'ja' / 'ko' / 'zh' / 'en' / null (no letters at all — empty,
-/// numbers-only, punctuation-only, other scripts like Cyrillic).
+/// Result: 'ja' / 'ko' / 'zh' / 'en' / null. null means NO letters were
+/// gathered — empty, pure-link, numbers-only, punctuation-only, or other
+/// scripts (Cyrillic…). Feed filtering shows null-language posts under EVERY
+/// language option (a pure-link post has no language to filter by), see
+/// `currentFeedEventsProvider`.
 library;
 
 const String _langZh = 'zh';
@@ -42,10 +51,37 @@ const String _langKo = 'ko';
 /// on their CJK side while rejecting Latin spam seeded with CJK crumbs.
 const int _kLatinDominance = 3;
 
-/// Judge the language from the first 100 characters only — a post's opening
-/// decides its language, and the small window bounds worst-case cost against
-/// 100KB+ spam content (detection runs on the UI isolate).
+/// Judge from the first 100 NON-URL characters — a post's opening decides
+/// its language; URLs are skipped (not language evidence) and the small
+/// window bounds worst-case cost against 100KB+ spam content (detection
+/// runs on the UI isolate).
 const int _kScanCap = 100;
+
+/// At most this many URL spans are skipped. On the NEXT URL the scan stops
+/// entirely and the language is judged from the characters gathered so far —
+/// a wall of links can't push the decision past the post's opening text,
+/// and a pathological link-farm can't drag the scan deep into the content.
+const int _kMaxSkippedUrls = 10;
+
+/// Hard ceiling on how far the scan may WALK (belt-and-braces alongside
+/// [_kMaxSkippedUrls]: URL spans are skipped without counting toward
+/// [_kScanCap], so one giant URL could otherwise walk far into the content).
+const int _kScanWalkLimit = 20000;
+
+/// True when [s] at [i] begins a URL span (`https://` or `http://`).
+bool _isUrlStart(String s, int i) =>
+    s.startsWith('https://', i) || s.startsWith('http://', i);
+
+/// Advance past the URL starting at [i] — to the next whitespace (or end).
+int _skipUrl(String s, int i) {
+  var j = i;
+  while (j < s.length) {
+    final u = s.codeUnitAt(j);
+    if (u == 0x20 || u == 0x0A || u == 0x0D || u == 0x09) break;
+    j++;
+  }
+  return j;
+}
 
 /// Counted script buckets; only LETTERS are evidence (digits, punctuation,
 /// emoji and CJK punctuation like 。、 are ignored on purpose — they prove
@@ -58,13 +94,32 @@ class _Counts {
 }
 
 /// 'en' if Latin-only or Latin-dominated; else among CJK 'ko' (Hangul) >
-/// 'ja' (kana) > 'zh' (Han); null when the text has no letters at all.
+/// 'ja' (kana) > 'zh' (Han); null when no letters were gathered at all —
+/// either the post is empty, or it is only URLs / numbers / emoji / other
+/// scripts. Feed filtering treats null as "show under every language"
+/// (a pure-link post has no language to filter by), see
+/// `currentFeedEventsProvider`.
 String? detectLanguage(String text) {
   if (text.isEmpty) return null;
   final c = _Counts();
-  final n = text.length < _kScanCap ? text.length : _kScanCap;
-  for (var i = 0; i < n; i++) {
+  var counted = 0; // non-URL characters considered so far
+  var urlsSkipped = 0;
+  var i = 0;
+  final n = text.length;
+  while (i < n && counted < _kScanCap && i < _kScanWalkLimit) {
+    // URL spans are not language evidence — skip them, up to a cap. Past
+    // [_kMaxSkippedUrls] links the scan stops early and the language is
+    // judged from the opening characters gathered so far (a wall of links
+    // can't push the decision past the post's actual text).
+    if (_isUrlStart(text, i)) {
+      urlsSkipped++;
+      if (urlsSkipped > _kMaxSkippedUrls) break;
+      i = _skipUrl(text, i);
+      continue;
+    }
     final u = text.codeUnitAt(i);
+    counted++;
+    i++;
     // Surrogate halves (astral chars — emoji etc.) are not script evidence.
     if (u >= 0xD800 && u <= 0xDFFF) continue;
     if ((u >= 0x0041 && u <= 0x005A) || (u >= 0x0061 && u <= 0x007A)) {

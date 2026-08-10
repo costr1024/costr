@@ -69,6 +69,55 @@ void main() {
       expect(detectLanguage('中' * 20000), 'zh');
     });
 
+    test('URLs are excluded from the opening window', () {
+      // Real regression: a Chinese release announcement that is mostly
+      // download/media links used to read as 'en' because the Latin URL
+      // text dominated the first 100 chars. Links are not language evidence.
+      expect(
+        detectLanguage(
+          '#Costr\nv1.0.1正式版发布，下载地址：\n'
+          'https://github.com/costr1024/costr/releases/download/v1.0.1/app-release.apk\n\n'
+          'https://blossom.ditto.pub/0be66e6b9fd61f241073d50918c69b0aa193a5731d348208b343fb42933aa3ec.jpeg',
+        ),
+        'zh',
+      );
+      // A wall of links first, then Chinese text — still zh.
+      expect(
+        detectLanguage(
+          'https://example.com/a https://example.org/b/c 这是一个中文帖子',
+        ),
+        'zh',
+      );
+      // English post with links stays en.
+      expect(
+        detectLanguage('Check this out https://example.com/xyz great stuff'),
+        'en',
+      );
+      // Pure links → no letters at all → null (shown under every filter).
+      expect(detectLanguage('https://example.com/x'), isNull);
+    });
+
+    test('URL skipping caps at 10 links then judges the opening text', () {
+      // Opening text first, then a link farm: the text decides → zh.
+      final manyUrls = List.generate(
+        15,
+        (i) => 'https://example.com/$i',
+      ).join(' ');
+      expect(detectLanguage('中文内容 $manyUrls'), 'zh');
+      // A wall of >10 links with NO text before them: the scan stops at the
+      // 11th link, nothing was gathered → null (shown under every filter),
+      // and any text AFTER the 11th link is deliberately ignored.
+      expect(detectLanguage(manyUrls), isNull);
+      expect(detectLanguage('$manyUrls 这是中文'), isNull);
+      // Interleaved text + links (≤10 links) still reaches the text → zh.
+      expect(
+        detectLanguage(
+          '中文 https://a.com/1 继续 https://a.com/2 结尾 https://a.com/3',
+        ),
+        'zh',
+      );
+    });
+
     test('empty / numbers-only / emoji / other scripts → null', () {
       expect(detectLanguage(''), isNull);
       expect(detectLanguage('12345'), isNull);

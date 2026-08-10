@@ -2356,8 +2356,13 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
     };
     // [Event.language] is memoized per event instance — the store dedupes by
     // id and reuses instances across rebuilds, so each event's content is
-    // regex-scanned once, not on every 200ms store flush.
-    events = events.where((e) => e.language == want);
+    // scanned once, not on every 200ms store flush. A `null` language (pure
+    // link / numbers / emoji / other-script post) matches EVERY filter: a
+    // post with no detectable language is shown, not silently dropped.
+    events = events.where((e) {
+      final l = e.language;
+      return l == null || l == want;
+    });
   }
   if (tag != null) {
     events = events.where((e) => e.hashtags.contains(tag));
