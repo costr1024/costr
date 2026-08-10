@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **0.11.1-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.11.1-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **0.11.2-beta** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v0.11.2-beta/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为公开测试版。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta）。
 
 ---
 
@@ -316,6 +316,13 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 **v0.6-beta** —— 完整的 Nostr 社交客户端：私钥登录 / 创建账号（NIP-19 `nsec1`）、
 发帖/回复/转发/引用/reaction、全球/关注信息流、用户主页（帖子/回帖/关注/关注者/收藏）、
 搜索、通知中心、本地 SQLite 缓存（冷启动秒出）。单代码库覆盖 Android、iOS、Windows、macOS、Linux。
+
+**v0.11.2-beta 相对 v0.11.1-beta 的修复**：
+**推荐「换一批」改为滚动推荐**——v0.11.1 的去重有个洞：「候选探测失败不触发回绕」，
+若某类服务器只剩探测不通过的候选，点「换一批」会拿到空结果、且之后一直空白，再也看不到
+推荐。去重应是周期内滚动而非永久拉黑：现只要没有「新的可推荐」服务器——候选全都展示过、
+或仅剩的候选探测不通过——就回绕到最初那批重新循环（中继/搜索/图床三类同逻辑），绝不因
+换尽而长期空白；回绕后轮转记忆以该批重启、继续往后滚。
 
 **v0.11.1-beta 相对 v0.11-beta 的修复/新增**：
 **推荐「换一批」轮转去重**——此前每次强制重测都按同一套确定性排序（票数→免费确认→URL）
