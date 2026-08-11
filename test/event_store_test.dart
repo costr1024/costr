@@ -56,13 +56,19 @@ void main() {
       expect(s.add(_e('a', 1)), isTrue); // id reusable after clear
     });
 
-    // --- Eviction priority (the "无法加载更老的帖子" fix) -------------------
+    // --- Eviction priority -------------------------------------------------
     //
     // Old behavior evicted the single oldest event of ANY kind. Reaction
     // churn saturated the cap and every older post fetched by load-more was
     // evicted the instant it was added (it was the oldest thing held), so
-    // backward pagination stalled and the spinner ran forever. Now:
-    // kind-7 → kind-6 → kind-1, and kind-0 metadata is never evicted.
+    // backward pagination stalled and the spinner ran forever. Fix #1 made the
+    // order kind-7 → kind-6 → kind-1 and exempted kind-0. But the global feed
+    // ingests every profile update on the firehose, and never-evicted kind-0
+    // accumulated until it crowded kind-1/6 out of the capped store and the
+    // feed showed nothing ("过会儿全刷没"). Fix #2 therefore makes kind-0
+    // evictable too — but AFTER reactions and BEFORE feed content:
+    // kind-7 → kind-0 → kind-6 → kind-1. Evicted metadata is still in SQLite
+    // (kind-0 is always persisted), so avatars don't regress.
 
     test('over cap, oldest reactions evict before posts', () {
       final s = EventStore(maxEvents: 3);
@@ -94,15 +100,66 @@ void main() {
       expect(s.events.last.id, 'old1');
     });
 
-    test('metadata (kind-0) is never evicted', () {
-      final s = EventStore(maxEvents: 2);
-      s.add(_e('m', 1, kind: 0));
-      s.add(_e('p1', 2));
-      s.add(_e('r1', 3, kind: 7)); // over cap: reaction goes
+    test('metadata evicts BEFORE feed content but AFTER reactions', () {
+      // THE "过会儿全刷没" regression: kind-0 used to be never-evicted, so
+      // firehose profile updates crowded kind-1/6 out of the capped store and
+      // the feed emptied. kind-0 must now be sacrificed before any kind-1/6,
+      // while reactions (cheapest) still go first.
+      final s = EventStore(maxEvents: 4);
+      s.add(_e('m', 1, kind: 0)); // metadata
+      s.add(_e('r', 2, kind: 7)); // reaction
+      s.add(_e('rp', 3, kind: 6)); // repost
+      s.add(_e('p', 4)); // post — store now full
+      // Churn with newer posts; victims must leave in priority order.
+      s.add(_e('p2', 5)); // evicts oldest kind-7 (the reaction)
+      expect(s.byId('r'), isNull);
       expect(s.byId('m'), isNotNull);
-      s.add(_e('p2', 4)); // over cap again: oldest post goes, not metadata
-      expect(s.byId('m'), isNotNull);
-      expect(s.byId('p1'), isNull);
+      s.add(_e('p3', 6)); // evicts oldest kind-0 — feed content protected
+      expect(s.byId('m'), isNull);
+      expect(s.byId('rp'), isNotNull);
+      expect(s.byId('p'), isNotNull);
+      s.add(_e('p4', 7)); // evicts oldest kind-6
+      expect(s.byId('rp'), isNull);
+      s.add(_e('p5', 8)); // evicts oldest kind-1 last
+      expect(s.byId('p'), isNull);
+      expect(s.events.map((e) => e.id), ['p5', 'p4', 'p3', 'p2']);
+    });
+
+    test('kind-0 is replaceable per pubkey: newest wins, older dropped', () {
+      final s = EventStore();
+      Event mk(String id, int t) => Event(
+        id: id,
+        pubkey: 'author',
+        createdAt: t,
+        kind: 0,
+        tags: const [],
+        content: 'c',
+        sig: 's',
+      );
+      expect(s.add(mk('v1', 10)), isTrue);
+      // An OLDER revision than held is dropped outright.
+      expect(s.add(mk('v0', 5)), isFalse);
+      expect(s.byId('v1'), isNotNull);
+      expect(s.byId('v0'), isNull);
+      // A NEWER revision replaces the held one (single slot per author).
+      expect(s.add(mk('v2', 20)), isTrue);
+      expect(s.byId('v1'), isNull);
+      expect(s.byId('v2'), isNotNull);
+      expect(s.length, 1);
+      // A distinct author keeps its own slot.
+      final other = Event(
+        id: 'o1',
+        pubkey: 'someone-else',
+        createdAt: 15,
+        kind: 0,
+        tags: const [],
+        content: 'c',
+        sig: 's',
+      );
+      expect(s.add(other), isTrue);
+      expect(s.byId('o1'), isNotNull);
+      expect(s.byId('v2'), isNotNull);
+      expect(s.length, 2);
     });
 
     test('reposts evict before original posts', () {
@@ -170,10 +227,11 @@ void main() {
       expect(s.contentRevision, greaterThan(c0 + 3));
     });
 
-    test('eviction with the O(1) hint matches the old full-scan order', () {
+    test('eviction with the O(1) hint matches the priority order', () {
       // Mixed interleaved kinds over a small cap; the hinted victim picker must
-      // evict exactly what the legacy "scan from the tail" picker would have:
-      // oldest kind-7 first, then kind-6, then kind-1, never kind-0.
+      // evict in the priority order — oldest kind-7 first, then kind-0, then
+      // kind-6, then kind-1 — exactly what a full tail-scan would pick. This
+      // guards the incremental [_oldestHint] bookkeeping against drift.
       final s = EventStore(maxEvents: 6);
       s.add(_e('meta', 1, kind: 0));
       s.add(_e('r1', 2, kind: 7));
@@ -182,22 +240,22 @@ void main() {
       s.add(_e('rp1', 5, kind: 6));
       s.add(_e('p2', 6));
       // Saturation churn: each new event evicts one. Expected victims in
-      // order: r1 (oldest 7), r2 (next 7), rp1 (oldest 6), p1 (oldest 1).
+      // order: r1 (oldest 7), r2 (next 7), meta (oldest 0), rp1 (oldest 6).
       s.add(_e('p3', 7));
       expect(s.byId('r1'), isNull);
       s.add(_e('p4', 8));
       expect(s.byId('r2'), isNull);
       s.add(_e('p5', 9));
-      expect(s.byId('rp1'), isNull);
+      expect(s.byId('meta'), isNull); // metadata evicts before feed content
+      expect(s.byId('rp1'), isNotNull);
       s.add(_e('p6', 10));
-      expect(s.byId('p1'), isNull);
-      // metadata survives everything
-      expect(s.byId('meta'), isNotNull);
+      expect(s.byId('rp1'), isNull);
+      expect(s.byId('p1'), isNotNull); // posts evict last
       expect(s.length, 6);
       expect(
         s.events.map((e) => e.id),
-        ['p6', 'p5', 'p4', 'p3', 'p2', 'meta'],
-        reason: 'held set matches the legacy eviction result',
+        ['p6', 'p5', 'p4', 'p3', 'p2', 'p1'],
+        reason: 'held set matches the priority-order eviction result',
       );
     });
   });

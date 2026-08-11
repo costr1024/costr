@@ -42,6 +42,17 @@ class EventStore {
   /// next-oldest kind-7 sits ~1 slot from the tail, so the rescan is short).
   final Map<int, int> _oldestHint = {};
 
+  /// kind-0 (profile metadata) indexed by pubkey. kind-0 is NIP-01
+  /// REPLACEABLE: only the newest revision per author is meaningful. The
+  /// global feed subscription has no author filter, so it ingests every
+  /// profile update on the firehose; storing each revision separately let
+  /// kind-0 pile up unboundedly. Because kind-0 used to be exempt from
+  /// eviction, that accumulation crowded kind-1/6 out of the capped store
+  /// until the feed showed nothing ("过会儿全刷没"). This index lets [add]
+  /// replace the held revision with a newer one (and drop older ones) so a
+  /// single author contributes at most ONE kind-0 to the store.
+  final Map<String, Event> _metaByPubkey = {};
+
   void _bumpForAdd(int kind) {
     if (kind == 1 || kind == 6) _contentRevision++;
     if (kind == 1 || kind == 6 || kind == 7) _interactionRevision++;
@@ -62,6 +73,18 @@ class EventStore {
     // (kinds:[0,1,6,7]).
     if (e.kind != 0 && e.kind != 1 && e.kind != 6 && e.kind != 7) return false;
     if (_byId.containsKey(e.id)) return false;
+    if (e.kind == 0) {
+      // Replaceable (NIP-01): keep only the newest kind-0 per author. An
+      // older revision than one already held is dropped outright; a newer one
+      // replaces the held revision so a single author never occupies more than
+      // one metadata slot (see [_metaByPubkey]).
+      final prev = _metaByPubkey[e.pubkey];
+      if (prev != null) {
+        if (e.createdAt < prev.createdAt) return false; // stale revision
+        remove(prev.id); // evict the older revision, newest wins
+      }
+      _metaByPubkey[e.pubkey] = e;
+    }
     _byId[e.id] = e;
     _insertSorted(e);
     _bumpForAdd(e.kind);
@@ -101,15 +124,17 @@ class EventStore {
       if (h >= lo) _oldestHint[k] = h + 1;
     }
     // An event older than the current oldest of its kind becomes the hint.
-    if (e.kind == 1 || e.kind == 6 || e.kind == 7) {
-      final cur = _oldestHint[e.kind];
-      if (cur == null || lo > cur) _oldestHint[e.kind] = lo;
-    }
+    // Every held kind is evictable (kind-0 included), so all need a hint.
+    final cur = _oldestHint[e.kind];
+    if (cur == null || lo > cur) _oldestHint[e.kind] = lo;
   }
 
   void _removeAt(int r) {
     final e = _sorted[r];
     _byId.remove(e.id);
+    if (e.kind == 0 && identical(_metaByPubkey[e.pubkey], e)) {
+      _metaByPubkey.remove(e.pubkey);
+    }
     _sorted.removeAt(r);
     for (final k in _oldestHint.keys.toList()) {
       final h = _oldestHint[k]!;
@@ -121,28 +146,32 @@ class EventStore {
     }
   }
 
-  /// Over-cap eviction priority: OLDEST kind-7 reactions first, then kind-6
-  /// reposts, then kind-1 posts; kind-0 metadata is NEVER evicted.
+  /// Over-cap eviction priority: OLDEST kind-7 reactions first (highest-volume
+  /// and cheapest to lose — just interaction counts), then kind-0 metadata,
+  /// then kind-6 reposts, then kind-1 posts.
   ///
-  /// The old behavior evicted the single oldest event regardless of kind.
-  /// That broke two things at once:
-  /// - Reactions (kind-7) are by far the highest-volume kind on a following
-  ///   feed, so the cap saturated with reaction churn and backward pagination
-  ///   stalled: load-more fetched older POSTS, which sorted to the end and
-  ///   were evicted immediately — the visible feed never got older and the
-  ///   `until` cursor (derived from the oldest held post) never advanced.
-  /// - Kind-0 metadata rows got evicted too, latching stale avatars/names
-  ///   for the rest of the session ("连我的个人信息都是旧的比如头像和背景"
-  ///   on the first launch after an update, fixed only by a restart).
-  /// Reactions are the cheapest to lose (counts on old posts degrade to what
-  /// is held; live counts on recent posts are unaffected), metadata the most
-  /// expensive (every avatar/name in the UI reads it).
+  /// kind-0 sits BEFORE the feed-content kinds (6/1) deliberately: metadata is
+  /// replaceable and re-resolvable from the SQLite tier ([metadataProvider]
+  /// reads SQLite first), whereas kind-1/6 ARE the feed. The previous rule made
+  /// kind-0 never-evictable to stop stale avatars, but the global feed
+  /// subscription ingests every profile update on the firehose, so never-evicted
+  /// kind-0 accumulated and crowded kind-1/6 out of the capped store until the
+  /// feed showed nothing ("过会儿全刷没"). Evicting kind-0 here does not bring
+  /// the stale-avatar bug back: an evicted kind-0 is still in SQLite (kind-0 is
+  /// always persisted), so avatar/name lookups hit the SQLite tier; and the
+  /// user's own/followed metadata is additionally refreshed by the per-pubkey
+  /// metadata providers.
+  ///
+  /// kind-7 still evicts first (unchanged): reactions are by far the
+  /// highest-volume kind on a following feed, and losing old ones only degrades
+  /// counts on old posts. kind-1 posts evict last so backward pagination keeps
+  /// headroom (see [maxEvents]).
   int? _pickEvictionVictimIndex() {
-    for (final kind in const [7, 6, 1]) {
+    for (final kind in const [7, 0, 6, 1]) {
       final idx = _oldestIndexFor(kind);
       if (idx != null) return idx;
     }
-    return null; // only kind-0 left — never evict metadata
+    return null; // store empty — nothing to evict
   }
 
   int? _oldestIndexFor(int kind) {
@@ -195,5 +224,6 @@ class EventStore {
     _byId.clear();
     _sorted.clear();
     _oldestHint.clear();
+    _metaByPubkey.clear();
   }
 }
