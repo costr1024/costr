@@ -228,6 +228,50 @@ Future<bool?> showServerListSheet({
                     ],
                   ),
                   const SizedBox(height: 8),
+                  // The whole action row (恢复默认 | 取消 | 保存) sits right
+                  // under the add field, above the count caption and the
+                  // recommendations: the user's flow is add-a-server → save,
+                  // and the old position (bottom of the sheet, under the reco
+                  // block) forced scrolling past the recommendations to reach
+                  // 保存. Applies to all four categories (one shared sheet).
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: saving
+                            ? null
+                            : () => setState(() {
+                                draft
+                                  ..clear()
+                                  ..addAll(
+                                    normalizeServerList(
+                                      defaultServerListFor(category),
+                                    ),
+                                  );
+                                fieldError = null;
+                              }),
+                        child: const Text('恢复默认'),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: saving ? null : () => Navigator.pop(ctx),
+                        child: const Text('取消'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: saving ? null : save,
+                        child: saving
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('保存'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
                   Text(
                     '共 ${draft.length} 台 · 最多 $maxServersPerCategory 台 · '
                     '至少保留 $min 台',
@@ -344,43 +388,6 @@ Future<bool?> showServerListSheet({
                       },
                     ),
                   const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      TextButton(
-                        onPressed: saving
-                            ? null
-                            : () => setState(() {
-                                draft
-                                  ..clear()
-                                  ..addAll(
-                                    normalizeServerList(
-                                      defaultServerListFor(category),
-                                    ),
-                                  );
-                                fieldError = null;
-                              }),
-                        child: const Text('恢复默认'),
-                      ),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: saving ? null : () => Navigator.pop(ctx),
-                        child: const Text('取消'),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: saving ? null : save,
-                        child: saving
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('保存'),
-                      ),
-                    ],
-                  ),
                 ],
               ),
             ),
