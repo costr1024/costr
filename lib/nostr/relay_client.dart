@@ -40,6 +40,15 @@ abstract class RelayConnection {
   /// Kind-1 (and other) events received from the relay.
   Stream<Event> get events;
 
+  /// Events TAGGED with the subscription id that produced them:
+  /// `(subId, event)`. The wire EVENT frame carries the subId
+  /// (`["EVENT", subId, event]`) but [events] drops it; the pool needs it to
+  /// route subscription-scoped events (the ephemeral global-feed window) to a
+  /// per-subscription handler WITHOUT leaking them into the merged/raw
+  /// streams. Relays echo one EVENT frame per matching subscription, so the
+  /// same event can arrive once per sub — each arrival keeps its own subId.
+  Stream<(String, Event)> get taggedEvents;
+
   /// Emits the subscription id on `["EOSE", subId]`.
   Stream<String> get eose;
 
@@ -112,6 +121,8 @@ class RelayClient implements RelayConnection {
 
   // Long-lived broadcast controllers — survive reconnect (regression fix R3).
   final StreamController<Event> _events = StreamController<Event>.broadcast();
+  final StreamController<(String, Event)> _tagged =
+      StreamController<(String, Event)>.broadcast();
   final StreamController<String> _eose = StreamController<String>.broadcast();
   final StreamController<String> _notices =
       StreamController<String>.broadcast();
@@ -127,6 +138,8 @@ class RelayClient implements RelayConnection {
 
   @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents => _tagged.stream;
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -209,7 +222,12 @@ class RelayClient implements RelayConnection {
         if (sub is String && sub.startsWith('rtt')) {
           if (!_probeFrames.isClosed) _probeFrames.add(sub);
         } else {
-          _events.add(Event.fromMessage(msg[2]));
+          final e = Event.fromMessage(msg[2]);
+          _events.add(e);
+          // Tagged copy keeps the arriving subId so the pool can route
+          // subscription-scoped subs (global-feed window) around the merged
+          // stream. Non-string subIds (malformed frames) route as ''.
+          if (!_tagged.isClosed) _tagged.add(((sub is String ? sub : ''), e));
         }
       } else if (type == 'EOSE' && msg[1] is String) {
         _eose.add(msg[1] as String);
@@ -355,6 +373,7 @@ class RelayClient implements RelayConnection {
       }
     }
     await _events.close();
+    await _tagged.close();
     await _eose.close();
     await _notices.close();
     await _closed.close();

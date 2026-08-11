@@ -48,10 +48,12 @@ void main() {
       final b = _reply('b', _me, 200, replyTo: root);
       final out = threadReplies([b, a1a, a1, a], root);
       // Depth-first, oldest-first within siblings: a, a1, a1a, b.
-      expect(
-        out.map((t) => '${t.event.id}:${t.depth}').toList(),
-        ['a:0', 'a1:1', 'a1a:2', 'b:0'],
-      );
+      expect(out.map((t) => '${t.event.id}:${t.depth}').toList(), [
+        'a:0',
+        'a1:1',
+        'a1a:2',
+        'b:0',
+      ]);
     });
 
     test('newest reply to root does NOT jump above an older sub-thread', () {
@@ -68,14 +70,17 @@ void main() {
       );
     });
 
-    test('reply whose parent is not in the set is reparented to root depth 0', () {
-      // parent 'ghost' isn't among the replies and isn't the root → orphan.
-      final orphan = _reply('o', _me, 100, replyTo: 'ghost');
-      final out = threadReplies([orphan], root);
-      expect(out.length, 1);
-      expect(out.first.event.id, 'o');
-      expect(out.first.depth, 0);
-    });
+    test(
+      'reply whose parent is not in the set is reparented to root depth 0',
+      () {
+        // parent 'ghost' isn't among the replies and isn't the root → orphan.
+        final orphan = _reply('o', _me, 100, replyTo: 'ghost');
+        final out = threadReplies([orphan], root);
+        expect(out.length, 1);
+        expect(out.first.event.id, 'o');
+        expect(out.first.depth, 0);
+      },
+    );
 
     test('reply with no e tags at all is reparented to root depth 0', () {
       final topless = Event(
@@ -121,10 +126,7 @@ void main() {
       final l2 = _reply('l2', _me, 30, replyTo: 'l1');
       final l3 = _reply('l3', _me, 40, replyTo: 'l2');
       final out = threadReplies([l3, l2, l1, l0], root);
-      expect(
-        out.map((t) => t.depth).toList(),
-        [0, 1, 2, 3],
-      );
+      expect(out.map((t) => t.depth).toList(), [0, 1, 2, 3]);
     });
   });
 }

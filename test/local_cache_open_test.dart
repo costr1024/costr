@@ -32,35 +32,37 @@ void main() {
     expect(corrupt, isEmpty);
   });
 
-  test('corrupt inherited DB is quarantined and a fresh cache opened',
-      () async {
-    final dir = await Directory.systemTemp.createTemp('costr_cache_bad');
-    addTearDown(() => dir.delete(recursive: true));
-    final dbPath = '${dir.path}/costr.db';
+  test(
+    'corrupt inherited DB is quarantined and a fresh cache opened',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('costr_cache_bad');
+      addTearDown(() => dir.delete(recursive: true));
+      final dbPath = '${dir.path}/costr.db';
 
-    // Simulate a broken file carried over from an older install — not a
-    // SQLite database at all.
-    await File(dbPath).writeAsString(
-      'this is definitely not a sqlite database',
-    );
+      // Simulate a broken file carried over from an older install — not a
+      // SQLite database at all.
+      await File(
+        dbPath,
+      ).writeAsString('this is definitely not a sqlite database');
 
-    final db = await openLocalCache(dbPath);
-    addTearDown(db.close);
+      final db = await openLocalCache(dbPath);
+      addTearDown(db.close);
 
-    // The replacement cache is fully functional...
-    final row = await db
-        .customSelect('SELECT COUNT(*) AS c FROM events')
-        .getSingle();
-    expect(row.read<int>('c'), 0);
+      // The replacement cache is fully functional...
+      final row = await db
+          .customSelect('SELECT COUNT(*) AS c FROM events')
+          .getSingle();
+      expect(row.read<int>('c'), 0);
 
-    // ...and the broken file was renamed aside (kept for diagnosis), not
-    // silently deleted.
-    final corrupt = dir
-        .listSync()
-        .where((f) => f.path.contains('.corrupt-'))
-        .toList();
-    expect(corrupt, isNotEmpty);
-  });
+      // ...and the broken file was renamed aside (kept for diagnosis), not
+      // silently deleted.
+      final corrupt = dir
+          .listSync()
+          .where((f) => f.path.contains('.corrupt-'))
+          .toList();
+      expect(corrupt, isNotEmpty);
+    },
+  );
 
   test('repeated corruption keeps at most ONE quarantined backup', () async {
     final dir = await Directory.systemTemp.createTemp('costr_cache_repeat');
@@ -111,24 +113,26 @@ void main() {
       expect(await db.readWriteRejectReason(url), isNull);
     });
 
-    test('clearWriteStats drops samples + reasons, keeps other config',
-        () async {
-      final dir = await Directory.systemTemp.createTemp('costr_cache_clear');
-      addTearDown(() => dir.delete(recursive: true));
-      final db = await openLocalCache('${dir.path}/costr.db');
-      addTearDown(db.close);
+    test(
+      'clearWriteStats drops samples + reasons, keeps other config',
+      () async {
+        final dir = await Directory.systemTemp.createTemp('costr_cache_clear');
+        addTearDown(() => dir.delete(recursive: true));
+        final db = await openLocalCache('${dir.path}/costr.db');
+        addTearDown(db.close);
 
-      await db.pushWriteSample('wss://a', true);
-      await db.pushWriteSample('wss://b', false);
-      await db.setWriteRejectReason('wss://b', 'rate-limited');
-      await db.writeConfig('unrelated_key', 'keep me');
+        await db.pushWriteSample('wss://a', true);
+        await db.pushWriteSample('wss://b', false);
+        await db.setWriteRejectReason('wss://b', 'rate-limited');
+        await db.writeConfig('unrelated_key', 'keep me');
 
-      await db.clearWriteStats();
+        await db.clearWriteStats();
 
-      expect(await db.readWriteSamples('wss://a'), isEmpty);
-      expect(await db.readWriteSamples('wss://b'), isEmpty);
-      expect(await db.readWriteRejectReason('wss://b'), isNull);
-      expect(await db.readConfig('unrelated_key'), 'keep me');
-    });
+        expect(await db.readWriteSamples('wss://a'), isEmpty);
+        expect(await db.readWriteSamples('wss://b'), isEmpty);
+        expect(await db.readWriteRejectReason('wss://b'), isNull);
+        expect(await db.readConfig('unrelated_key'), 'keep me');
+      },
+    );
   });
 }

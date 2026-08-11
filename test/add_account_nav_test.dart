@@ -78,12 +78,7 @@ class _StubCache implements cache.LocalCache {
 
 void main() {
   Future<
-    (
-      WidgetTester,
-      _ControllableIdentity,
-      ProviderContainer,
-      void Function()
-    )
+    (WidgetTester, _ControllableIdentity, ProviderContainer, void Function())
   >
   pumpApp(WidgetTester tester) async {
     final identity = _ControllableIdentity();
@@ -108,10 +103,15 @@ void main() {
       if (!disposed) container.dispose();
     });
     await tester.pump();
-    return (tester, identity, container, () {
-      disposed = true;
-      container.dispose();
-    });
+    return (
+      tester,
+      identity,
+      container,
+      () {
+        disposed = true;
+        container.dispose();
+      },
+    );
   }
 
   testWidgets('nsec import via /login?add=1 lands on the home page', (

@@ -639,14 +639,13 @@ List<ContentSeg> tokenizeContent(
   // alternative so the exact full URL wins over an extension-terminated
   // prefix of it.
   final taggedByUrl = <String, MediaAttachment>{
-    for (final m in tagged) if (m.isImage || m.isVideo) m.url: m,
+    for (final m in tagged)
+      if (m.isImage || m.isVideo) m.url: m,
   };
   final regex = taggedByUrl.isEmpty
       ? _mediaTokenRegex
       : RegExp(
-          '$_mdImagePattern|(?<!\\]\\()(?:${taggedByUrl.keys
-              .map(RegExp.escape)
-              .join('|')})|$_bareMediaPattern',
+          '$_mdImagePattern|(?<!\\]\\()(?:${taggedByUrl.keys.map(RegExp.escape).join('|')})|$_bareMediaPattern',
           caseSensitive: false,
         );
 

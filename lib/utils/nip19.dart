@@ -203,10 +203,7 @@ Nevent? neventDecode(String nevent) {
         // leaves kind null — id/relays/author parse from their own TLVs.
         if (len == 4) {
           kind =
-              (value[0] << 24) |
-              (value[1] << 16) |
-              (value[2] << 8) |
-              value[3];
+              (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
         }
     }
     i += 2 + len;

@@ -39,16 +39,19 @@ class _StubCache implements cache.LocalCache {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-NotificationItem _item({required String id, required int time, String? preview}) =>
-    NotificationItem(
-      type: NotificationType.reply,
-      pubkeys: ['p' * 64],
-      extraCount: 0,
-      time: time,
-      preview: preview,
-      id: id,
-      unread: true,
-    );
+NotificationItem _item({
+  required String id,
+  required int time,
+  String? preview,
+}) => NotificationItem(
+  type: NotificationType.reply,
+  pubkeys: ['p' * 64],
+  extraCount: 0,
+  time: time,
+  preview: preview,
+  id: id,
+  unread: true,
+);
 
 Future<(WidgetTester, ProviderContainer, String)> _pump(
   WidgetTester tester,
@@ -88,8 +91,9 @@ Finder _tintedTileOf(String previewText) => find.ancestor(
 );
 
 void main() {
-  testWidgets('jump locates the topmost unread item and flashes it',
-      (tester) async {
+  testWidgets('jump locates the topmost unread item and flashes it', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(800, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -106,7 +110,10 @@ void main() {
     final (_, container, me) = await _pump(tester, items);
 
     final read = container.read(notificationReadProvider(me).notifier);
-    read.markRead([for (var i = 0; i < 25; i++) if (i != 15) 'n$i']);
+    read.markRead([
+      for (var i = 0; i < 25; i++)
+        if (i != 15) 'n$i',
+    ]);
     await tester.pump();
     expect(container.read(unreadNotificationCountProvider(me)), 1);
 
@@ -121,7 +128,11 @@ void main() {
     await tester.pumpAndSettle();
 
     final target = find.textContaining('TARGET-UNREAD');
-    expect(target, findsOneWidget, reason: 'scrolled the unread tile into view');
+    expect(
+      target,
+      findsOneWidget,
+      reason: 'scrolled the unread tile into view',
+    );
     final dy = tester.getTopLeft(target).dy;
     expect(dy, greaterThan(0));
     expect(dy, lessThan(600), reason: 'landed near the top, alignment 0.15');
@@ -138,8 +149,9 @@ void main() {
     expect((after.decoration as BoxDecoration).color, isNot(flash));
   });
 
-  testWidgets('no unread anywhere: falls back to scroll-to-top',
-      (tester) async {
+  testWidgets('no unread anywhere: falls back to scroll-to-top', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(800, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -151,15 +163,11 @@ void main() {
     final (_, container, me) = await _pump(tester, items);
 
     // Everything read; scroll deep down manually first.
-    container
-        .read(notificationReadProvider(me).notifier)
-        .markRead([for (var i = 0; i < 25; i++) 'n$i']);
+    container.read(notificationReadProvider(me).notifier).markRead([
+      for (var i = 0; i < 25; i++) 'n$i',
+    ]);
     await tester.pump();
-    await tester.fling(
-      find.byType(ListView),
-      const Offset(0, -800),
-      1200,
-    );
+    await tester.fling(find.byType(ListView), const Offset(0, -800), 1200);
     await tester.pumpAndSettle();
     expect(find.textContaining('ITEM-0'), findsNothing);
 
@@ -175,8 +183,9 @@ void main() {
     );
   });
 
-  testWidgets('unread only on the other tab: switches tab, then jumps',
-      (tester) async {
+  testWidgets('unread only on the other tab: switches tab, then jumps', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(800, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -199,9 +208,9 @@ void main() {
         _item(id: 'r$i', time: 99900 - i, preview: 'REPLY-$i'),
     ];
     final (_, container, me) = await _pump(tester, items);
-    container
-        .read(notificationReadProvider(me).notifier)
-        .markRead([for (var i = 0; i < 20; i++) 'r$i']);
+    container.read(notificationReadProvider(me).notifier).markRead([
+      for (var i = 0; i < 20; i++) 'r$i',
+    ]);
     await tester.pump();
 
     // Switch to the 提及 tab, where nothing unread is visible.

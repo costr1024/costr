@@ -576,12 +576,11 @@ class LocalCache extends _$LocalCache {
   /// counted auth handshakes and slow-relay races as failures — stale data
   /// that would keep flagging healthy relays after the fix ships.
   Future<void> clearWriteStats() async {
-    await (delete(configTable)
-          ..where(
-            (c) =>
-                c.key.like('relay_write_stats:%') |
-                c.key.like('relay_write_reject:%'),
-          ))
+    await (delete(configTable)..where(
+          (c) =>
+              c.key.like('relay_write_stats:%') |
+              c.key.like('relay_write_reject:%'),
+        ))
         .go();
   }
 

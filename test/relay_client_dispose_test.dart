@@ -51,22 +51,28 @@ void main() {
     await client.dispose().timeout(const Duration(seconds: 3));
   });
 
-  test('measureRtt on a never-connected client returns null, no hang', () async {
-    final server = await ServerSocket.bind('127.0.0.1', 0);
-    final accepted = <Socket>[];
-    server.listen(accepted.add);
-    addTearDown(() async {
-      for (final s in accepted) {
-        try {
-          s.destroy();
-        } catch (_) {}
-      }
-      await server.close();
-    });
-    final client = RelayClient('ws://127.0.0.1:${server.port}')
-      ..connectTimeout = const Duration(milliseconds: 150);
-    await client.connect();
-    expect(await client.measureRtt(timeout: const Duration(milliseconds: 200)), isNull);
-    await client.dispose().timeout(const Duration(seconds: 3));
-  });
+  test(
+    'measureRtt on a never-connected client returns null, no hang',
+    () async {
+      final server = await ServerSocket.bind('127.0.0.1', 0);
+      final accepted = <Socket>[];
+      server.listen(accepted.add);
+      addTearDown(() async {
+        for (final s in accepted) {
+          try {
+            s.destroy();
+          } catch (_) {}
+        }
+        await server.close();
+      });
+      final client = RelayClient('ws://127.0.0.1:${server.port}')
+        ..connectTimeout = const Duration(milliseconds: 150);
+      await client.connect();
+      expect(
+        await client.measureRtt(timeout: const Duration(milliseconds: 200)),
+        isNull,
+      );
+      await client.dispose().timeout(const Duration(seconds: 3));
+    },
+  );
 }

@@ -83,19 +83,26 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.byIcon(Icons.cancel), findsOneWidget,
-        reason: 'restored draft shows the attachment thumbnail');
+    expect(
+      find.byIcon(Icons.cancel),
+      findsOneWidget,
+      reason: 'restored draft shows the attachment thumbnail',
+    );
 
     // User deletes the image URL from the editor text. Drive the editor's
     // own controller (extended_text_field wraps EditableText in custom
     // internals enterText can't see); the change listener still fires.
-    final field =
-        tester.widget<ExtendedTextField>(find.byType(ExtendedTextField));
+    final field = tester.widget<ExtendedTextField>(
+      find.byType(ExtendedTextField),
+    );
     field.controller!.text = 'hello';
     await tester.pump();
 
-    expect(find.byIcon(Icons.cancel), findsNothing,
-        reason: 'thumbnail must follow the deleted URL out');
+    expect(
+      find.byIcon(Icons.cancel),
+      findsNothing,
+      reason: 'thumbnail must follow the deleted URL out',
+    );
   });
 
   testWidgets('removing the thumbnail strips its URL from the text', (
@@ -132,10 +139,14 @@ void main() {
     await tester.tap(find.byIcon(Icons.cancel));
     await tester.pump();
 
-    final field =
-        tester.widget<ExtendedTextField>(find.byType(ExtendedTextField));
-    expect(field.controller!.text, isNot(contains(_url)),
-        reason: 'the removed thumbnail\'s URL must leave the editor');
+    final field = tester.widget<ExtendedTextField>(
+      find.byType(ExtendedTextField),
+    );
+    expect(
+      field.controller!.text,
+      isNot(contains(_url)),
+      reason: 'the removed thumbnail\'s URL must leave the editor',
+    );
     expect(field.controller!.text, contains('hello'));
     expect(find.byIcon(Icons.cancel), findsNothing);
   });

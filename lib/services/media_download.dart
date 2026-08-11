@@ -34,11 +34,14 @@ class MediaDownload {
     String? filename,
   }) async {
     final name = _safeFileName(
-      (filename != null && filename.isNotEmpty) ? filename : _defaultName(url, kind),
+      (filename != null && filename.isNotEmpty)
+          ? filename
+          : _defaultName(url, kind),
     );
     final tempPath = await _downloadToTemp(url, name);
     try {
-      final toGallery = !kIsWeb &&
+      final toGallery =
+          !kIsWeb &&
           (defaultTargetPlatform == TargetPlatform.android ||
               defaultTargetPlatform == TargetPlatform.iOS) &&
           kind != MediaKind.file;

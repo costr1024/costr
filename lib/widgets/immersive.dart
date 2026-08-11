@@ -62,8 +62,7 @@ bool immersiveIsNonUserBackscroll({
   required DragUpdateDetails? dragDetails,
   required double scrollDelta,
   required double pixels,
-}) =>
-    isScrollUpdate && dragDetails == null && scrollDelta < 0 && pixels > 0;
+}) => isScrollUpdate && dragDetails == null && scrollDelta < 0 && pixels > 0;
 
 /// What a scroll notification means for bar visibility.
 enum ImmersiveBarAction { show, hide, none }

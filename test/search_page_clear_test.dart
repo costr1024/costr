@@ -18,16 +18,12 @@ void main() {
     return ProviderScope(
       overrides: [
         immersiveBrowseProvider.overrideWith(() => _ImmersiveOff()),
-        searchUsersProvider.overrideWith(
-          (ref, q) async* {
-            yield const <UserResult>[];
-          },
-        ),
-        searchPostsProvider.overrideWith(
-          (ref, q) async* {
-            yield const <Event>[];
-          },
-        ),
+        searchUsersProvider.overrideWith((ref, q) async* {
+          yield const <UserResult>[];
+        }),
+        searchPostsProvider.overrideWith((ref, q) async* {
+          yield const <Event>[];
+        }),
       ],
       child: const MaterialApp(home: SearchPage()),
     );

@@ -87,7 +87,11 @@ class _ServingRelay implements RelayConnection {
   bool get isConnected => _connected;
 
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -161,7 +165,10 @@ Event _ev({
 
 /// Runs the notification generator against [store] and returns the item ids
 /// produced for the reply-mention.
-Future<List<NotificationItem>> _run(Event myPost, EventStoreNotifier store) async {
+Future<List<NotificationItem>> _run(
+  Event myPost,
+  EventStoreNotifier store,
+) async {
   final me = Identity.fromPrivkeyHex(_priv).pubkeyHex;
   final replyMention = _ev(
     kind: 1,
@@ -251,7 +258,8 @@ void main() {
       final replyMention = _ev(
         kind: 1,
         id: 'their_reply2',
-        pubkey: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        pubkey:
+            'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
         createdAt: 2000,
         content: '回复你的旧帖',
         tags: [

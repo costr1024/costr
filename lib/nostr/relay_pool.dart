@@ -44,6 +44,13 @@ class RelayPool {
   final Set<String> _closeOnEose = {};
   final Map<String, int> _eoseCount = {};
   final LinkedHashSet<String> _seenIds = LinkedHashSet();
+
+  /// Subscription-scoped event routes: subId → handler. Events arriving under
+  /// a routed subId go ONLY to its handler — they never reach the [events] /
+  /// [rawEvents] merged streams, so the capped EventStore (reserved for the
+  /// following feed + related events) never sees the global firehose. The
+  /// global feed's ephemeral window subscribes this way.
+  final Map<String, void Function(Event)> _routeSubs = {};
   bool _mergedWired = false;
   bool _connecting = false;
   int _fetchSeq = 0;
@@ -231,7 +238,20 @@ class RelayPool {
   /// [_wireMerged] on first connect AND by [updateUrls] for connections added
   /// to an already-wired pool.
   void _wireConnection(RelayConnection c) {
-    c.events.listen((e) {
+    c.taggedEvents.listen((arrival) {
+      final subId = arrival.$1;
+      final e = arrival.$2;
+      // Subscription-scoped route (the ephemeral global-feed window): the
+      // handler alone sees these events — they never enter the merged/raw
+      // streams, so the capped store (following feed + related events only)
+      // is never flooded by the firehose. Relay EVENT frames carry the subId,
+      // so the same event arriving under ANOTHER (unrouted) sub still takes
+      // the normal merged path on its own arrival.
+      final route = _routeSubs[subId];
+      if (route != null) {
+        route(e);
+        return;
+      }
       // Raw stream: always emit (consumers dedup themselves) so targeted
       // re-fetches work even when the global feed already saw the event.
       if (!_raw.isClosed) _raw.add(e);
@@ -357,13 +377,25 @@ class RelayPool {
   /// If [closeOnEose] is true (used for the global feed), the subscription is
   /// CLOSED on the first EOSE from any relay, bounding it to a recent snapshot
   /// instead of an unbounded live firehose.
+  ///
+  /// If [onEvent] is given, the subscription is ROUTED: every event arriving
+  /// under [subId] is delivered to the handler ONLY — it never enters the
+  /// merged [events] / [rawEvents] streams. Used by the global feed to keep
+  /// the firehose out of the capped EventStore (following feed + related
+  /// events only). The route is removed by [closeSubscription].
   void request(
     String subId,
     Map<String, dynamic> filter, {
     bool closeOnEose = false,
+    void Function(Event)? onEvent,
   }) {
     _activeSubs[subId] = filter;
     if (closeOnEose) _closeOnEose.add(subId);
+    if (onEvent != null) {
+      _routeSubs[subId] = onEvent;
+    } else {
+      _routeSubs.remove(subId);
+    }
     for (final c in _connections) {
       if (c.isConnected) c.request(subId, filter);
     }
@@ -374,6 +406,7 @@ class RelayPool {
     _activeSubs.remove(subId);
     _closeOnEose.remove(subId);
     _eoseCount.remove(subId);
+    _routeSubs.remove(subId);
     for (final c in _connections) {
       if (c.isConnected) c.closeSubscription(subId);
     }

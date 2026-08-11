@@ -86,7 +86,11 @@ class _FakeConn implements RelayConnection {
   @override
   bool get isConnected => _connected;
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -678,10 +682,7 @@ void main() {
     });
 
     test('does not duplicate momostr if already present', () {
-      final stored = [
-        'wss://wheat.happytavern.co',
-        'wss://relay.momostr.pink',
-      ];
+      final stored = ['wss://wheat.happytavern.co', 'wss://relay.momostr.pink'];
       expect(migrateWheatRelayList(stored), [
         'wss://nostr.data.haus',
         'wss://relay.momostr.pink',

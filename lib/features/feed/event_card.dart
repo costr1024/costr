@@ -528,9 +528,9 @@ class _ReplyParentPreview extends ConsumerWidget {
             // Collapse whitespace so the first lines of the post fill the
             // truncated preview instead of being eaten by blank lines.
             : (content.length > _kPreviewCap
-                  ? content.substring(0, _kPreviewCap)
-                  : content)
-                .replaceAll(_wsRun, ' ');
+                      ? content.substring(0, _kPreviewCap)
+                      : content)
+                  .replaceAll(_wsRun, ' ');
       }
     }
     final meta = ref.watch(metadataProvider(parent.pubkey)).value;

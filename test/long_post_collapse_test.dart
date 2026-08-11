@@ -54,7 +54,9 @@ void main() {
       relayPoolProvider.overrideWith((ref) => RelayPool(const [])),
       bootstrapProvider.overrideWith((ref) async {}),
       identityProvider.overrideWith(() => _Id()),
-      metadataProvider.overrideWith((ref, pk) async* { yield null; }),
+      metadataProvider.overrideWith((ref, pk) async* {
+        yield null;
+      }),
     ],
     child: MaterialApp(
       home: Scaffold(

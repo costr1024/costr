@@ -2,10 +2,8 @@ import 'package:costr/app/providers.dart';
 import 'package:costr/models/event.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _a64 =
-    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const _e64 =
-    'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+const _a64 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _e64 = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const _s128 =
     'ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss';
 
@@ -15,16 +13,15 @@ Event _mk(
   List<List<dynamic>> tags = const [],
   String content = '',
   String pubkey = _a64,
-}) =>
-    Event(
-      id: id,
-      pubkey: pubkey,
-      createdAt: 1,
-      kind: kind,
-      tags: tags,
-      content: content,
-      sig: _s128,
-    );
+}) => Event(
+  id: id,
+  pubkey: pubkey,
+  createdAt: 1,
+  kind: kind,
+  tags: tags,
+  content: content,
+  sig: _s128,
+);
 
 void main() {
   const target = _e64; // the post being replied to
@@ -74,7 +71,12 @@ void main() {
         '4444444444444444444444444444444444444444444444444444444444444444',
         kind: 1,
         tags: [
-          ['e', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', '', 'reply'],
+          [
+            'e',
+            'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+            '',
+            'reply',
+          ],
         ],
         content: 'unrelated',
       );
@@ -87,7 +89,10 @@ void main() {
         kind: 1,
         tags: [
           ['p', _a64],
-          ['e', 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'],
+          [
+            'e',
+            'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+          ],
         ],
         content: 'reply to someone else',
       );

@@ -10,7 +10,8 @@
 // 2. Reposts (kind-6) used to be classified by the wrapper's own content
 //    (empty or the target's JSON) instead of the reposted note the user sees,
 //    so English reposts flooded the 中文 filter. Now a repost is judged by its
-//    reposted note (embedded NIP-18 JSON first, then a store lookup).
+//    reposted note (embedded NIP-18 JSON first, then a feed-source lookup —
+//    the global feed's window / the following feed's store).
 
 import 'dart:convert';
 
@@ -100,8 +101,8 @@ void main() {
   final symbolPost = _post('sym01', 250, '✄------------ 2:25 ------------✄');
   final cyrillicPost = _post('cyr01', 240, 'привет мир');
 
-  // Reposts: embedded-JSON targets need not be in the store; e-tag-only
-  // targets (tgtEn/tgtZh) ARE in the store so the store-lookup path resolves.
+  // Reposts: embedded-JSON targets need not be in the feed source; e-tag-only
+  // targets (tgtEn/tgtZh) ARE in it so the feed-source lookup path resolves.
   final targetEn = _post('tgtEn', 230, 'This is the English original');
   final targetZh = _post('tgtZh', 220, '这是中文原帖');
   final repostEmbEn = _repost(
@@ -142,13 +143,22 @@ void main() {
         languageFilterProvider.overrideWith(() => _LangFilter(f)),
         tagFilterProvider.overrideWith(() => _NoTagFilter()),
         identityProvider.overrideWith(() => _Id()),
-        eventStoreProvider.overrideWith(() => _FixedStore(all)),
+        eventStoreProvider.overrideWith(() => _FixedStore(const [])),
         myMuteSetProvider.overrideWith((ref) => const MuteSet()),
         feedSubscriptionProvider.overrideWith((ref) {}),
         followingOutboxProvider.overrideWith((ref) {}),
       ],
     );
     addTearDown(container.dispose);
+    // The 全球 feed reads the ephemeral GlobalFeedWindow (the capped store is
+    // following-only now), so the corpus is ingested there. Repost targets
+    // (tgtEn/tgtZh) are held in the same window, so the e-tag-only reposts
+    // resolve against it — same lookup path, different tier.
+    final window = container.read(globalFeedWindowProvider.notifier);
+    for (final e in all) {
+      window.ingest(e);
+    }
+    window.flushNow();
     return container;
   }
 

@@ -46,7 +46,11 @@ class _SearchRelay implements RelayConnection {
   bool get isConnected => _connected;
 
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -138,8 +142,7 @@ void main() {
     }
   }
 
-  test(
-      'zero user results resolve to an EMPTY LIST instead of spinning '
+  test('zero user results resolve to an EMPTY LIST instead of spinning '
       'forever (the reported 百度-search bug)', () async {
     await setUpPool(const []); // relay answers EOSE with nothing
     final sub = container.listen(searchUsersProvider('百度'), (_, _) {});
@@ -152,10 +155,7 @@ void main() {
   });
 
   test('user results stream in and resolve', () async {
-    await setUpPool([
-      _meta('a' * 64, '百度贴吧'),
-      _meta('b' * 64, '百度百科'),
-    ]);
+    await setUpPool([_meta('a' * 64, '百度贴吧'), _meta('b' * 64, '百度百科')]);
     final sub = container.listen(searchUsersProvider('百度'), (_, _) {});
     addTearDown(sub.close);
 
@@ -167,12 +167,14 @@ void main() {
     expect(users.map((u) => u.metadata?.name), containsAll(['百度贴吧', '百度百科']));
   });
 
-  test('zero post results also resolve (initial FTS yield already covered it)',
-      () async {
-    await setUpPool(const []);
-    final sub = container.listen(searchPostsProvider('百度'), (_, _) {});
-    addTearDown(sub.close);
-    await pollUntil(() => container.read(searchPostsProvider('百度')).hasValue);
-    expect(container.read(searchPostsProvider('百度')).value, isEmpty);
-  });
+  test(
+    'zero post results also resolve (initial FTS yield already covered it)',
+    () async {
+      await setUpPool(const []);
+      final sub = container.listen(searchPostsProvider('百度'), (_, _) {});
+      addTearDown(sub.close);
+      await pollUntil(() => container.read(searchPostsProvider('百度')).hasValue);
+      expect(container.read(searchPostsProvider('百度')).value, isEmpty);
+    },
+  );
 }

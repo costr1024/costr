@@ -55,15 +55,13 @@ const Duration _kMediaTimeout = Duration(seconds: 8);
 /// GFW-block case.
 class _TimedHttpFileService extends HttpFileService {
   @override
-  Future<FileServiceResponse> get(
-    String url, {
-    Map<String, String>? headers,
-  }) {
+  Future<FileServiceResponse> get(String url, {Map<String, String>? headers}) {
     final h = headers ?? const <String, String>{};
     if (!h.containsKey('User-Agent')) {
       headers = {
         ...h,
-        'User-Agent': 'Costr/0.3 (Nostr client; +https://github.com/costr1024/costr)',
+        'User-Agent':
+            'Costr/0.3 (Nostr client; +https://github.com/costr1024/costr)',
       };
     }
     return super.get(url, headers: headers).timeout(_kMediaTimeout);
@@ -93,9 +91,7 @@ CacheManager get proxyMediaCacheManager =>
 /// post-media path is manual today.
 bool shouldProxyRetry(Object error) {
   final s = error.toString();
-  if (s.contains('404') ||
-      s.contains('Not Found') ||
-      s.contains('not found')) {
+  if (s.contains('404') || s.contains('Not Found') || s.contains('not found')) {
     return false;
   }
   return true;
@@ -139,8 +135,9 @@ class CostrNetworkImage extends StatefulWidget {
 class _CostrNetworkImageState extends State<CostrNetworkImage> {
   @override
   Widget build(BuildContext context) {
-    final effectiveUrl =
-        widget.forceProxy ? proxiedUrl(widget.url) : widget.url;
+    final effectiveUrl = widget.forceProxy
+        ? proxiedUrl(widget.url)
+        : widget.url;
     Widget img = CachedNetworkImage(
       imageUrl: effectiveUrl,
       cacheManager: proxyMediaCacheManager,

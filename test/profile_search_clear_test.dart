@@ -47,7 +47,8 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.platformDispatcher.onMetricsChanged?.call());
 
-    const pk = 'b73d3ed864c50fe656ae62de1098282cf1b9d1f49e6ac6459cb4cbe7b9176ab0';
+    const pk =
+        'b73d3ed864c50fe656ae62de1098282cf1b9d1f49e6ac6459cb4cbe7b9176ab0';
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -55,11 +56,9 @@ void main() {
           bootstrapProvider.overrideWith((ref) async {}),
           identityProvider.overrideWith(() => _LoggedInIdentity()),
           followingStateProvider.overrideWith(() => _EmptyFollowing()),
-          metadataProvider.overrideWith(
-            (ref, k) async* {
-              yield Metadata(name: '某人');
-            },
-          ),
+          metadataProvider.overrideWith((ref, k) async* {
+            yield Metadata(name: '某人');
+          }),
           userGroupedFollowsProvider.overrideWith((ref, k) async* {
             yield const [];
           }),

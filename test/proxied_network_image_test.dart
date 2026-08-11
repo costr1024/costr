@@ -48,7 +48,10 @@ void main() {
     });
 
     test('true for socket / timeout / TLS failures (blocked domain)', () {
-      expect(shouldProxyRetry(const SocketException('host unreachable')), isTrue);
+      expect(
+        shouldProxyRetry(const SocketException('host unreachable')),
+        isTrue,
+      );
       expect(shouldProxyRetry(TimeoutException('timed out')), isTrue);
       expect(shouldProxyRetry(const HandshakeException('TLS reset')), isTrue);
     });

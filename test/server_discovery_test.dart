@@ -89,7 +89,11 @@ class _ProbeConn implements RelayConnection {
   final StreamController<String> _eose = StreamController<String>.broadcast();
 
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -586,28 +590,25 @@ void main() {
 
   group('mergeSeenUrls', () {
     test('appends new urls; re-shown urls move to the end', () {
-      expect(
-        mergeSeenUrls(['wss://a', 'wss://b'], ['wss://c', 'wss://a']),
-        ['wss://b', 'wss://c', 'wss://a'],
-      );
+      expect(mergeSeenUrls(['wss://a', 'wss://b'], ['wss://c', 'wss://a']), [
+        'wss://b',
+        'wss://c',
+        'wss://a',
+      ]);
     });
 
     test('cap drops the OLDEST entries first', () {
       expect(
-        mergeSeenUrls(
-          ['wss://1', 'wss://2', 'wss://3'],
-          ['wss://4'],
-          cap: 3,
-        ),
+        mergeSeenUrls(['wss://1', 'wss://2', 'wss://3'], ['wss://4'], cap: 3),
         ['wss://2', 'wss://3', 'wss://4'],
       );
     });
 
     test('duplicates within one batch collapse', () {
-      expect(
-        mergeSeenUrls(const [], ['wss://a', 'wss://a', 'wss://b']),
-        ['wss://a', 'wss://b'],
-      );
+      expect(mergeSeenUrls(const [], ['wss://a', 'wss://a', 'wss://b']), [
+        'wss://a',
+        'wss://b',
+      ]);
     });
   });
 
@@ -632,8 +633,7 @@ void main() {
       recoCap: 2,
     );
 
-    test('each 换一批 shows NEW urls; wraps to the top when exhausted',
-        () async {
+    test('each 换一批 shows NEW urls; wraps to the top when exhausted', () async {
       final db = fiveRelaysDb();
       final d = smallBatchDiscovery(db);
       expect(await d.recommend(ServerCategory.relay), [
@@ -661,41 +661,36 @@ void main() {
       expect(db.config.containsKey('server_reco_seen:relay'), isTrue);
     });
 
-    test(
-      'no NEW recommendable server (only unseen one fails probe) rolls back '
-      'to the working top batch instead of going empty',
-      () async {
-        final db = _FakeDb();
-        db.replaceableByKind[10002] = [
-          _row('e1', 10002, [
-            ['r', 'wss://alive.example'],
-            ['r', 'wss://dead.example'],
-          ]),
-        ];
-        final d = ServerDiscovery(
-          db: db,
-          httpClient: _nip11(const {}),
-          makeClient: (url) =>
-              _ProbeConn(url, connects: url != 'wss://dead.example'),
-          candidateCap: 5,
-          recoCap: 2,
-        );
-        expect(await d.recommend(ServerCategory.relay), [
-          'wss://alive.example',
-        ]);
-        // 换一批: the only unseen candidate (dead.example) fails its probe, so
-        // there is no NEW recommendable relay. Rolling semantics → fall back
-        // to the working top batch rather than showing nothing forever.
-        expect(await d.recommend(ServerCategory.relay, force: true), [
-          'wss://alive.example',
-        ]);
-        // The cycle restarts from that batch, so a further 换一批 again tries
-        // the unseen candidate first and lands back on the working batch.
-        expect(await d.recommend(ServerCategory.relay, force: true), [
-          'wss://alive.example',
-        ]);
-      },
-    );
+    test('no NEW recommendable server (only unseen one fails probe) rolls back '
+        'to the working top batch instead of going empty', () async {
+      final db = _FakeDb();
+      db.replaceableByKind[10002] = [
+        _row('e1', 10002, [
+          ['r', 'wss://alive.example'],
+          ['r', 'wss://dead.example'],
+        ]),
+      ];
+      final d = ServerDiscovery(
+        db: db,
+        httpClient: _nip11(const {}),
+        makeClient: (url) =>
+            _ProbeConn(url, connects: url != 'wss://dead.example'),
+        candidateCap: 5,
+        recoCap: 2,
+      );
+      expect(await d.recommend(ServerCategory.relay), ['wss://alive.example']);
+      // 换一批: the only unseen candidate (dead.example) fails its probe, so
+      // there is no NEW recommendable relay. Rolling semantics → fall back
+      // to the working top batch rather than showing nothing forever.
+      expect(await d.recommend(ServerCategory.relay, force: true), [
+        'wss://alive.example',
+      ]);
+      // The cycle restarts from that batch, so a further 换一批 again tries
+      // the unseen candidate first and lands back on the working batch.
+      expect(await d.recommend(ServerCategory.relay, force: true), [
+        'wss://alive.example',
+      ]);
+    });
 
     test('expired cache restarts the rotation from the top batch', () async {
       final db = _FakeDb();

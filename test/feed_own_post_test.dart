@@ -103,68 +103,73 @@ void main() {
   }
 
   test(
-      'own post appears in the following feed (you don\'t follow yourself)',
-      () async {
-    const followee = 'feed000000000000000000000000000000000000000000000000000000000';
-    final myPost = _post('mine01', me, 300);
-    final followeePost = _post('theirs01', followee, 200);
-    final strangerPost = _post('stranger1', 'a' * 64, 100);
+    'own post appears in the following feed (you don\'t follow yourself)',
+    () async {
+      const followee =
+          'feed000000000000000000000000000000000000000000000000000000000';
+      final myPost = _post('mine01', me, 300);
+      final followeePost = _post('theirs01', followee, 200);
+      final strangerPost = _post('stranger1', 'a' * 64, 100);
 
-    container = buildContainer(
-      [myPost, followeePost, strangerPost],
-      [followee],
-    );
-    addTearDown(container.dispose);
-    // Keep the feed provider alive while its async deps (identity/follows)
-    // resolve, then wait for the derived list to include the own post.
-    final sub = container.listen(currentFeedEventsProvider, (_, _) {});
-    addTearDown(sub.close);
-    await pollUntil(
-      () => container
+      container = buildContainer(
+        [myPost, followeePost, strangerPost],
+        [followee],
+      );
+      addTearDown(container.dispose);
+      // Keep the feed provider alive while its async deps (identity/follows)
+      // resolve, then wait for the derived list to include the own post.
+      final sub = container.listen(currentFeedEventsProvider, (_, _) {});
+      addTearDown(sub.close);
+      await pollUntil(
+        () => container
+            .read(currentFeedEventsProvider)
+            .any((e) => e.id == 'mine01'),
+      );
+
+      final ids = container
           .read(currentFeedEventsProvider)
-          .any((e) => e.id == 'mine01'),
-    );
+          .map((e) => e.id)
+          .toList();
+      expect(ids, contains('mine01'), reason: 'own post must be in the feed');
+      expect(ids, contains('theirs01'));
+      // Global-firehose strangers stay out of the following feed.
+      expect(ids, isNot(contains('stranger1')));
+      // Newest-first ordering preserved.
+      expect(ids.indexOf('mine01'), lessThan(ids.indexOf('theirs01')));
+    },
+  );
 
-    final ids = container
-        .read(currentFeedEventsProvider)
-        .map((e) => e.id)
-        .toList();
-    expect(ids, contains('mine01'), reason: 'own post must be in the feed');
-    expect(ids, contains('theirs01'));
-    // Global-firehose strangers stay out of the following feed.
-    expect(ids, isNot(contains('stranger1')));
-    // Newest-first ordering preserved.
-    expect(ids.indexOf('mine01'), lessThan(ids.indexOf('theirs01')));
-  });
+  test(
+    'own post survives a simulated refresh (store intact, re-derived)',
+    () async {
+      const followee =
+          'feed000000000000000000000000000000000000000000000000000000000';
+      final myPost = _post('mine01', me, 300);
+      container = buildContainer([myPost], [followee]);
+      addTearDown(container.dispose);
+      final sub = container.listen(currentFeedEventsProvider, (_, _) {});
+      addTearDown(sub.close);
+      await pollUntil(
+        () => container
+            .read(currentFeedEventsProvider)
+            .any((e) => e.id == 'mine01'),
+      );
 
-  test('own post survives a simulated refresh (store intact, re-derived)',
-      () async {
-    const followee = 'feed000000000000000000000000000000000000000000000000000000000';
-    final myPost = _post('mine01', me, 300);
-    container = buildContainer([myPost], [followee]);
-    addTearDown(container.dispose);
-    final sub = container.listen(currentFeedEventsProvider, (_, _) {});
-    addTearDown(sub.close);
-    await pollUntil(
-      () => container
-          .read(currentFeedEventsProvider)
-          .any((e) => e.id == 'mine01'),
-    );
-
-    // First derivation (initial load)…
-    expect(container.read(currentFeedEventsProvider).map((e) => e.id), [
-      'mine01',
-    ]);
-    // …and after an invalidate (what pull-refresh does to the feed drivers),
-    // the re-derived list still contains the own post.
-    container.invalidate(currentFeedEventsProvider);
-    await pollUntil(
-      () => container
-          .read(currentFeedEventsProvider)
-          .any((e) => e.id == 'mine01'),
-    );
-    expect(container.read(currentFeedEventsProvider).map((e) => e.id), [
-      'mine01',
-    ]);
-  });
+      // First derivation (initial load)…
+      expect(container.read(currentFeedEventsProvider).map((e) => e.id), [
+        'mine01',
+      ]);
+      // …and after an invalidate (what pull-refresh does to the feed drivers),
+      // the re-derived list still contains the own post.
+      container.invalidate(currentFeedEventsProvider);
+      await pollUntil(
+        () => container
+            .read(currentFeedEventsProvider)
+            .any((e) => e.id == 'mine01'),
+      );
+      expect(container.read(currentFeedEventsProvider).map((e) => e.id), [
+        'mine01',
+      ]);
+    },
+  );
 }

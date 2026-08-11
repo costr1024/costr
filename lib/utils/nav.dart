@@ -16,7 +16,9 @@ import 'package:go_router/go_router.dart';
 /// (e.g. a reply or parent in the thread) still pushes normally.
 void pushPostDetail(BuildContext context, String id) {
   final matches = GoRouter.of(context).routerDelegate.currentConfiguration;
-  final top = matches.matches.isEmpty ? null : matches.matches.last.matchedLocation;
+  final top = matches.matches.isEmpty
+      ? null
+      : matches.matches.last.matchedLocation;
   if (top == '/n/$id') return;
   context.push('/n/$id');
 }

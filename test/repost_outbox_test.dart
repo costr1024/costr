@@ -41,7 +41,11 @@ class _EmptyRelay implements RelayConnection {
   bool get isConnected => _connected;
 
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -109,16 +113,19 @@ class _SeededRelay extends _EmptyRelay {
 
 final _sig = 's' * 128;
 
-Event _note(String id, {String content = 'the reposted note', String? pubkey}) =>
-    Event(
-      id: id,
-      pubkey: pubkey ?? 'a' * 64,
-      createdAt: 1700000000,
-      kind: 1,
-      tags: const [],
-      content: content,
-      sig: _sig,
-    );
+Event _note(
+  String id, {
+  String content = 'the reposted note',
+  String? pubkey,
+}) => Event(
+  id: id,
+  pubkey: pubkey ?? 'a' * 64,
+  createdAt: 1700000000,
+  kind: 1,
+  tags: const [],
+  content: content,
+  sig: _sig,
+);
 
 cache.EventRow _row(Event e) => cache.EventRow(
   id: e.id,
@@ -174,10 +181,10 @@ class _NullId extends IdentityNotifier {
 }
 
 void main() {
-  test(
-      'repost without embedded JSON / relay hint resolves via the reposted '
+  test('repost without embedded JSON / relay hint resolves via the reposted '
       'author outbox (tier 4)', () async {
-    const authorPk = 'a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5'
+    const authorPk =
+        'a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5'
         'a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5';
     final note = _note('note1', pubkey: authorPk);
     // Kind-6 repost: EMPTY content (no NIP-18 embed) + e tag WITHOUT a relay

@@ -20,14 +20,14 @@ class _Id extends IdentityNotifier {
 }
 
 Event _post({List<List<String>> tags = const []}) => Event(
-      id: 'p' * 64,
-      pubkey: 'a' * 64,
-      createdAt: 100000,
-      kind: 1,
-      tags: tags,
-      content: 'hello',
-      sig: 's' * 128,
-    );
+  id: 'p' * 64,
+  pubkey: 'a' * 64,
+  createdAt: 100000,
+  kind: 1,
+  tags: tags,
+  content: 'hello',
+  sig: 's' * 128,
+);
 
 Future<void> pumpActions(WidgetTester tester, Event event) async {
   await tester.pumpWidget(
@@ -47,8 +47,9 @@ Future<void> pumpActions(WidgetTester tester, Event event) async {
 }
 
 void main() {
-  testWidgets('picker offers a wide unicode grid (not just 2 rows)',
-      (tester) async {
+  testWidgets('picker offers a wide unicode grid (not just 2 rows)', (
+    tester,
+  ) async {
     await pumpActions(tester, _post());
     await tester.tap(find.byIcon(Icons.favorite_border));
     await tester.pumpAndSettle();
@@ -66,9 +67,11 @@ void main() {
   testWidgets('custom emoji from the post tags are offered', (tester) async {
     await pumpActions(
       tester,
-      _post(tags: [
-        ['emoji', 'pepe', 'https://example.com/pepe.png'],
-      ]),
+      _post(
+        tags: [
+          ['emoji', 'pepe', 'https://example.com/pepe.png'],
+        ],
+      ),
     );
     await tester.tap(find.byIcon(Icons.favorite_border));
     await tester.pumpAndSettle();
@@ -79,10 +82,16 @@ void main() {
     // an unconditional `:pepe:` Text here and no tooltip. In the test env the
     // image sits in its placeholder state, so the new chip shows NO text at
     // all (on-device a dead image falls back to the :code: text instead).
-    expect(find.byTooltip(':pepe:'), findsOneWidget,
-        reason: 'the post\'s own custom emoji must be offered');
-    expect(find.text(':pepe:'), findsNothing,
-        reason: 'no :code: text rendered next to the emoji image');
+    expect(
+      find.byTooltip(':pepe:'),
+      findsOneWidget,
+      reason: 'the post\'s own custom emoji must be offered',
+    );
+    expect(
+      find.text(':pepe:'),
+      findsNothing,
+      reason: 'no :code: text rendered next to the emoji image',
+    );
   });
 
   testWidgets('picking a unicode emoji publishes a kind-7', (tester) async {

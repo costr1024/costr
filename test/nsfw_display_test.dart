@@ -46,7 +46,9 @@ void main() {
           bootstrapProvider.overrideWith((ref) async {}),
           identityProvider.overrideWith(() => _Id()),
           nsfwSettingsProvider.overrideWith(() => _NsfwOff()),
-          metadataProvider.overrideWith((ref, pk) async* { yield null; }),
+          metadataProvider.overrideWith((ref, pk) async* {
+            yield null;
+          }),
           reactionsProvider.overrideWith((ref, id) => const {}),
           followedTagsProvider.overrideWith(() => _EmptyTags()),
         ],

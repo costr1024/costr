@@ -13,6 +13,8 @@ class _FakeRelay implements RelayConnection {
   @override
   final String url;
   final StreamController<Event> _events = StreamController<Event>.broadcast();
+  final StreamController<(String, Event)> _tagged =
+      StreamController<(String, Event)>.broadcast();
   final StreamController<String> _eose = StreamController<String>.broadcast();
   final StreamController<String> _notices =
       StreamController<String>.broadcast();
@@ -30,6 +32,8 @@ class _FakeRelay implements RelayConnection {
 
   @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents => _tagged.stream;
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -67,13 +71,25 @@ class _FakeRelay implements RelayConnection {
   Future<void> dispose() async {
     wasDisposed = true;
     await _events.close();
+    await _tagged.close();
     await _eose.close();
     await _notices.close();
     await _oks.close();
     await _auths.close();
   }
 
-  void emit(Event e) => _events.add(e);
+  void emit(Event e) {
+    _events.add(e);
+    if (!_tagged.isClosed) _tagged.add(('sub', e));
+  }
+
+  /// Emit under an explicit subId — lets tests exercise the pool's
+  /// subscription-scoped routing ([RelayPool.request] `onEvent`).
+  void emitTagged(String subId, Event e) {
+    _events.add(e);
+    if (!_tagged.isClosed) _tagged.add((subId, e));
+  }
+
   void emitEose(String subId) => _eose.add(subId);
   void emitOk(RelayOk ok) => _oks.add(ok);
   void emitAuth(String challenge) => _auths.add(challenge);
@@ -596,71 +612,80 @@ void main() {
       await pool.dispose();
     });
 
-    test('onWriteVerdict: NIP-42 auth-required is NOT recorded (transient)',
-        () async {
-      // An auth-required rejection is the NIP-42 handshake, not a write
-      // failure: the pool answers the AUTH challenge and retries. Counting it
-      // against the relay is what made healthy auth-gated relays (e.g. the
-      // user's own relay.bostr.online) show a falsely-low 发帖成功率.
-      final fast = _FakeRelay('wss://fast');
-      final auth = _FakeRelay('wss://auth');
-      final pool = RelayPool([fast, auth]);
-      await pool.connect();
-      final verdicts = <String, bool>{};
-      pool.onWriteVerdict = (url, ok, reason) => verdicts[url] = ok;
-      final ev = _event('wv3');
-      final fut = pool.publishAndWait(
-        ev,
-        retryDelays: const [Duration(milliseconds: 30)],
-        perRoundTimeout: const Duration(milliseconds: 60),
-      );
-      await Future<void>.delayed(Duration.zero);
-      // fast accepts (success); auth rejects with auth-required (transient).
-      fast.emitOk(RelayOk(ev.id, true, '', url: 'wss://fast'));
-      auth.emitOk(
-        RelayOk(ev.id, false, 'auth-required: please auth', url: 'wss://auth'),
-      );
-      final ok = await fut;
-      expect(ok.ok, isTrue);
-      // Only fast's acceptance is recorded; the auth rejection is skipped.
-      expect(verdicts, {'wss://fast': true});
-      expect(verdicts.containsKey('wss://auth'), isFalse);
-      await pool.dispose();
-    });
+    test(
+      'onWriteVerdict: NIP-42 auth-required is NOT recorded (transient)',
+      () async {
+        // An auth-required rejection is the NIP-42 handshake, not a write
+        // failure: the pool answers the AUTH challenge and retries. Counting it
+        // against the relay is what made healthy auth-gated relays (e.g. the
+        // user's own relay.bostr.online) show a falsely-low 发帖成功率.
+        final fast = _FakeRelay('wss://fast');
+        final auth = _FakeRelay('wss://auth');
+        final pool = RelayPool([fast, auth]);
+        await pool.connect();
+        final verdicts = <String, bool>{};
+        pool.onWriteVerdict = (url, ok, reason) => verdicts[url] = ok;
+        final ev = _event('wv3');
+        final fut = pool.publishAndWait(
+          ev,
+          retryDelays: const [Duration(milliseconds: 30)],
+          perRoundTimeout: const Duration(milliseconds: 60),
+        );
+        await Future<void>.delayed(Duration.zero);
+        // fast accepts (success); auth rejects with auth-required (transient).
+        fast.emitOk(RelayOk(ev.id, true, '', url: 'wss://fast'));
+        auth.emitOk(
+          RelayOk(
+            ev.id,
+            false,
+            'auth-required: please auth',
+            url: 'wss://auth',
+          ),
+        );
+        final ok = await fut;
+        expect(ok.ok, isTrue);
+        // Only fast's acceptance is recorded; the auth rejection is skipped.
+        expect(verdicts, {'wss://fast': true});
+        expect(verdicts.containsKey('wss://auth'), isFalse);
+        await pool.dispose();
+      },
+    );
 
-    test('onWriteVerdict: duplicate:false counts as success (event stored)',
-        () async {
-      // A relay answering ok:false with a `duplicate:` reason already HAS the
-      // event (NIP-20) — that is a successful publish outcome, not a failure,
-      // and must not be retried.
-      final fast = _FakeRelay('wss://fast');
-      final dup = _FakeRelay('wss://dup');
-      final pool = RelayPool([fast, dup]);
-      await pool.connect();
-      final verdicts = <String, bool>{};
-      pool.onWriteVerdict = (url, ok, reason) => verdicts[url] = ok;
-      final ev = _event('wv4');
-      final fut = pool.publishAndWait(
-        ev,
-        retryDelays: const [Duration(milliseconds: 30)],
-        perRoundTimeout: const Duration(milliseconds: 60),
-      );
-      await Future<void>.delayed(Duration.zero);
-      fast.emitOk(RelayOk(ev.id, true, '', url: 'wss://fast'));
-      dup.emitOk(
-        RelayOk(ev.id, false, 'duplicate: have this event', url: 'wss://dup'),
-      );
-      final ok = await fut;
-      expect(ok.ok, isTrue);
-      // dup's duplicate:false lands a hair after fast's accept closed the
-      // round early; flush the delivery chain so it is recorded.
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-      // dup's duplicate:false is normalized to success (effectiveOk).
-      expect(verdicts, {'wss://fast': true, 'wss://dup': true});
-      // dup was published exactly once — a duplicate is never re-sent.
-      expect(dup.sent.where((m) => m[0] == 'EVENT').length, 1);
-      await pool.dispose();
-    });
+    test(
+      'onWriteVerdict: duplicate:false counts as success (event stored)',
+      () async {
+        // A relay answering ok:false with a `duplicate:` reason already HAS the
+        // event (NIP-20) — that is a successful publish outcome, not a failure,
+        // and must not be retried.
+        final fast = _FakeRelay('wss://fast');
+        final dup = _FakeRelay('wss://dup');
+        final pool = RelayPool([fast, dup]);
+        await pool.connect();
+        final verdicts = <String, bool>{};
+        pool.onWriteVerdict = (url, ok, reason) => verdicts[url] = ok;
+        final ev = _event('wv4');
+        final fut = pool.publishAndWait(
+          ev,
+          retryDelays: const [Duration(milliseconds: 30)],
+          perRoundTimeout: const Duration(milliseconds: 60),
+        );
+        await Future<void>.delayed(Duration.zero);
+        fast.emitOk(RelayOk(ev.id, true, '', url: 'wss://fast'));
+        dup.emitOk(
+          RelayOk(ev.id, false, 'duplicate: have this event', url: 'wss://dup'),
+        );
+        final ok = await fut;
+        expect(ok.ok, isTrue);
+        // dup's duplicate:false lands a hair after fast's accept closed the
+        // round early; flush the delivery chain so it is recorded.
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        // dup's duplicate:false is normalized to success (effectiveOk).
+        expect(verdicts, {'wss://fast': true, 'wss://dup': true});
+        // dup was published exactly once — a duplicate is never re-sent.
+        expect(dup.sent.where((m) => m[0] == 'EVENT').length, 1);
+        await pool.dispose();
+      },
+    );
 
     test('slow relay late verdict is recorded and NOT re-sent', () async {
       // After the first relay accepts, publishAndWait returns early but keeps
@@ -806,5 +831,149 @@ void main() {
       expect(a.wasDisposed, isFalse);
       await pool.dispose();
     });
+  });
+
+  group('subscription-scoped routing (onEvent)', () {
+    // The global firehose must NEVER reach the merged streams: the capped
+    // EventStore is reserved for the following feed + related events. A
+    // request() with onEvent routes every event arriving under that subId to
+    // the handler ONLY.
+    test(
+      'routed sub events go to the handler, not to events/rawEvents',
+      () async {
+        final a = _FakeRelay('wss://a');
+        final pool = RelayPool([a]);
+        await pool.connect();
+        final routed = <String>[];
+        final merged = <String>[];
+        final raw = <String>[];
+        final s1 = pool.events.listen((e) => merged.add(e.id));
+        final s2 = pool.rawEvents.listen((e) => raw.add(e.id));
+
+        pool.request('costr:global:1', {
+          'kinds': [1],
+        }, onEvent: (e) => routed.add(e.id));
+        a.emitTagged('costr:global:1', _event('firehose1'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(routed, ['firehose1']);
+        expect(
+          merged,
+          isEmpty,
+          reason: 'routed events must skip merged stream',
+        );
+        expect(raw, isEmpty, reason: 'routed events must skip raw stream');
+        await s1.cancel();
+        await s2.cancel();
+        await pool.dispose();
+      },
+    );
+
+    test('unrouted subs still flow to the merged streams', () async {
+      final a = _FakeRelay('wss://a');
+      final pool = RelayPool([a]);
+      await pool.connect();
+      final routed = <String>[];
+      final merged = <String>[];
+      final s1 = pool.events.listen((e) => merged.add(e.id));
+
+      pool.request('costr:global:1', {
+        'kinds': [1],
+      }, onEvent: (e) => routed.add(e.id));
+      pool.request('costr:feed:1', {
+        'kinds': [1],
+      });
+      // Same event arrives under BOTH subs (relays echo one EVENT frame per
+      // matching subscription): the routed arrival is handler-only, the
+      // unrouted arrival takes the normal merged path.
+      a.emitTagged('costr:global:1', _event('dup1'));
+      a.emitTagged('costr:feed:1', _event('dup1'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(routed, ['dup1']);
+      expect(merged, ['dup1']);
+      await s1.cancel();
+      await pool.dispose();
+    });
+
+    test(
+      'closeSubscription removes the route (later events merge normally)',
+      () async {
+        final a = _FakeRelay('wss://a');
+        final pool = RelayPool([a]);
+        await pool.connect();
+        final routed = <String>[];
+        final merged = <String>[];
+        final s1 = pool.events.listen((e) => merged.add(e.id));
+
+        pool.request('costr:global:1', {
+          'kinds': [1],
+        }, onEvent: (e) => routed.add(e.id));
+        pool.closeSubscription('costr:global:1');
+        a.emitTagged('costr:global:1', _event('late1'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(routed, isEmpty, reason: 'route must be gone after CLOSE');
+        expect(merged, ['late1']);
+        await s1.cancel();
+        await pool.dispose();
+      },
+    );
+
+    test(
+      'closeOnEose still closes a routed sub after ALL relays EOSE',
+      () async {
+        final a = _FakeRelay('wss://a');
+        final b = _FakeRelay('wss://b');
+        final pool = RelayPool([a, b]);
+        await pool.connect();
+        pool.request(
+          'costr:global:9',
+          {
+            'kinds': [1],
+          },
+          closeOnEose: true,
+          onEvent: (e) {},
+        );
+
+        a.emitEose('costr:global:9');
+        await Future<void>.delayed(Duration.zero);
+        expect(a.sent.where((m) => m[0] == 'CLOSE'), isEmpty);
+
+        b.emitEose('costr:global:9');
+        await Future<void>.delayed(Duration.zero);
+        expect(a.sent.last, ['CLOSE', 'costr:global:9']);
+        expect(b.sent.last, ['CLOSE', 'costr:global:9']);
+        await pool.dispose();
+      },
+    );
+
+    test(
+      'request without onEvent UN-routes a previously routed subId',
+      () async {
+        final a = _FakeRelay('wss://a');
+        final pool = RelayPool([a]);
+        await pool.connect();
+        final routed = <String>[];
+        final merged = <String>[];
+        final s1 = pool.events.listen((e) => merged.add(e.id));
+
+        pool.request('s', {
+          'kinds': [1],
+        }, onEvent: (e) => routed.add(e.id));
+        // Re-issue without a handler (e.g. a code path that re-requests the
+        // same id as a normal store-bound sub).
+        pool.request('s', {
+          'kinds': [1],
+        });
+        a.emitTagged('s', _event('x1'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(routed, isEmpty);
+        expect(merged, ['x1']);
+        await s1.cancel();
+        await pool.dispose();
+      },
+    );
   });
 }

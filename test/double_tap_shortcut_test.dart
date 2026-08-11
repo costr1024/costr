@@ -47,20 +47,23 @@ void main() {
     var childTaps = 0;
     var clock = Duration.zero;
     await tester.pumpWidget(
-        _harness(() => fires++, () => childTaps++, () => clock));
+      _harness(() => fires++, () => childTaps++, () => clock),
+    );
     await tap(tester, tester.getCenter(find.byType(ElevatedButton)));
     await tester.pumpAndSettle();
     expect(childTaps, 1);
     expect(fires, 0);
   });
 
-  testWidgets('double tap: shortcut fires once, child keeps both taps',
-      (tester) async {
+  testWidgets('double tap: shortcut fires once, child keeps both taps', (
+    tester,
+  ) async {
     var fires = 0;
     var childTaps = 0;
     var clock = Duration.zero;
     await tester.pumpWidget(
-        _harness(() => fires++, () => childTaps++, () => clock));
+      _harness(() => fires++, () => childTaps++, () => clock),
+    );
     final at = tester.getCenter(find.byType(ElevatedButton));
     await tap(tester, at);
     clock += const Duration(milliseconds: 120);
@@ -70,8 +73,9 @@ void main() {
     expect(fires, 1);
   });
 
-  testWidgets('triple tap fires once (tap3 starts a fresh sequence)',
-      (tester) async {
+  testWidgets('triple tap fires once (tap3 starts a fresh sequence)', (
+    tester,
+  ) async {
     var fires = 0;
     var clock = Duration.zero;
     await tester.pumpWidget(_harness(() => fires++, () {}, () => clock));
@@ -108,8 +112,9 @@ void main() {
     expect(fires, 0);
   });
 
-  testWidgets('a drag (down + move + up) leaves no tap candidate',
-      (tester) async {
+  testWidgets('a drag (down + move + up) leaves no tap candidate', (
+    tester,
+  ) async {
     var fires = 0;
     var clock = Duration.zero;
     await tester.pumpWidget(_harness(() => fires++, () {}, () => clock));
@@ -126,8 +131,9 @@ void main() {
     expect(fires, 0, reason: 'drag + single tap is not a double tap');
   });
 
-  testWidgets('onDoubleTapAt reports the second tap-down position',
-      (tester) async {
+  testWidgets('onDoubleTapAt reports the second tap-down position', (
+    tester,
+  ) async {
     final positions = <Offset>[];
     var clock = Duration.zero;
     await tester.pumpWidget(
@@ -157,8 +163,9 @@ void main() {
     expect(positions.single, second - shortcutTopLeft);
   });
 
-  testWidgets('onDoubleTapAt-only shortcut fires; child keeps both taps',
-      (tester) async {
+  testWidgets('onDoubleTapAt-only shortcut fires; child keeps both taps', (
+    tester,
+  ) async {
     var fires = 0;
     var childTaps = 0;
     var clock = Duration.zero;

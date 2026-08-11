@@ -146,7 +146,9 @@ Future<String> requestZapInvoice({
   final pr = j['pr']?.toString();
   if (pr == null || pr.isEmpty) {
     final reason = j['reason']?.toString();
-    throw ZapException(reason != null && reason.isNotEmpty ? '闪电服务器拒绝：$reason' : '未取到发票');
+    throw ZapException(
+      reason != null && reason.isNotEmpty ? '闪电服务器拒绝：$reason' : '未取到发票',
+    );
   }
   return pr;
 }

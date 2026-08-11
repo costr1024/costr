@@ -22,6 +22,7 @@ import '../utils/nip19.dart';
 import '../utils/language.dart';
 import '../nostr/actions.dart';
 import '../nostr/event_store.dart';
+import '../nostr/global_feed_window.dart';
 import '../nostr/identity.dart';
 import '../nostr/interaction_cache.dart';
 import '../nostr/outbox_router.dart';
@@ -2129,9 +2130,24 @@ final feedSubscriptionProvider = Provider<void>((ref) {
   final subId = nextSubId('feed');
   // Keep subscription open (no closeOnEose) so live reactions (kind-7) +
   // metadata (kind-0) continue arriving after the initial snapshot.
-  // EventStore cap bounds memory; throttled emission bounds CPU.
-  pool.request(subId, buildFeedFilter(mode, follows), closeOnEose: false);
-  ref.onDispose(() => pool.closeSubscription(subId));
+  // ROUTED into the ephemeral [GlobalFeedWindow] via onEvent: firehose
+  // events never enter the capped EventStore (reserved for the following
+  // feed + related events), so the firehose can no longer saturate the
+  // store and evict following-feed reactions. The window bounds memory;
+  // the notifier throttles emission (200ms) so the UI rebuilds ≤5×/s.
+  final window = ref.read(globalFeedWindowProvider.notifier);
+  pool.request(
+    subId,
+    buildFeedFilter(mode, follows),
+    closeOnEose: false,
+    onEvent: window.ingest,
+  );
+  ref.onDispose(() {
+    pool.closeSubscription(subId);
+    // Ephemeral by decision: leaving the global tab (mode switch, leaving
+    // the feed page, logout) drops everything the firehose brought in.
+    window.clear();
+  });
 });
 
 /// Build the NIP-65 outbox routing map for [follows]: relay URL → the
@@ -2302,9 +2318,21 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   // list + every visible card stop rebuilding on reaction churn ("全球 tab
   // 下滑卡顿" fix). The store is then READ (not watched) — the revision
   // dependency already arranges a rebuild whenever its content changed.
-  ref.watch(feedContentRevisionProvider);
-  final all = ref.read(eventStoreProvider);
   final mode = ref.watch(feedModeProvider);
+  // Feed content source. FOLLOWING: the shared capped store. GLOBAL: the
+  // ephemeral firehose window — the store no longer holds firehose events,
+  // so 全球 is read straight from the window (scan target drops from up to
+  // 20000 store events to ≤ ~1000 window posts; the language/tag/mute
+  // filters below are memo-per-event and unchanged). Same revision gating:
+  // the window's `content` revision bumps only on kind-1/6 arrivals.
+  final List<Event> all;
+  if (mode == FeedMode.global) {
+    ref.watch(globalFeedWindowProvider.select((s) => s.content));
+    all = ref.read(globalFeedWindowProvider.notifier).window.posts;
+  } else {
+    ref.watch(feedContentRevisionProvider);
+    all = ref.read(eventStoreProvider);
+  }
   final lang = ref.watch(languageFilterProvider);
   final tag = ref.watch(tagFilterProvider);
 
@@ -2461,6 +2489,13 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
   for (final e in store) {
     if (e.id == id) return e;
   }
+  // 2.5 Ephemeral global window: firehose posts live ONLY here while the
+  // 全球 tab is open (quote/reply/ancestor lookups from global cards).
+  final windowPost = ref
+      .read(globalFeedWindowProvider.notifier)
+      .window
+      .postById(id);
+  if (windowPost != null) return windowPost;
   // 3. Relay REQ broadcast to the main pool. Capped at 8s; resolves early
   //    (null) once EVERY relay has answered EOSE/CLOSED with nothing, so a
   //    fast all-miss doesn't make the detail page sit out the full timeout.
@@ -3790,6 +3825,118 @@ final interactionCacheProvider =
       InteractionCacheNotifier.new,
     );
 
+/// Reactive view of [GlobalFeedWindow]: three revision counters, selected
+/// individually by consumers so kind-7 churn never rebuilds the post list
+/// (same gating [feedContentRevisionProvider] applies to the store).
+class GlobalFeedWindowState {
+  const GlobalFeedWindowState({
+    this.content = 0,
+    this.interactions = 0,
+    this.metadata = 0,
+  });
+  final int content;
+  final int interactions;
+  final int metadata;
+
+  @override
+  bool operator ==(Object other) =>
+      other is GlobalFeedWindowState &&
+      other.content == content &&
+      other.interactions == interactions &&
+      other.metadata == metadata;
+
+  @override
+  int get hashCode => Object.hash(content, interactions, metadata);
+}
+
+/// Ephemeral firehose window for the 全球 tab — see [GlobalFeedWindow]. The
+/// capped [EventStore] is reserved for the following feed + related events;
+/// the routed global subscription feeds this window instead, so the
+/// firehose can no longer saturate the store and evict following-feed
+/// reactions. Memory-only, never persisted, cleared on leaving the tab.
+///
+/// Firehose events arrive ~40/s; the state emission is THROTTLED to the
+/// same 200ms cadence the store flush uses, so dependents rebuild ≤5×/s
+/// regardless of firehose rate (per-event emission would be a rebuild storm
+/// = the 全球 tab scroll jank all over again).
+class GlobalFeedWindowNotifier extends Notifier<GlobalFeedWindowState> {
+  GlobalFeedWindow _window = GlobalFeedWindow();
+  GlobalFeedWindow get window => _window;
+  Timer? _flush;
+  bool _dirty = false;
+
+  /// Same leak guard as EventStoreNotifier / InteractionCacheNotifier: an
+  /// account switch drops the previous account's window.
+  String? _builtForAccount;
+
+  @override
+  GlobalFeedWindowState build() {
+    final accountKey = ref.watch(
+      identityProvider.select((v) => v.value?.pubkeyHex),
+    );
+    if (_builtForAccount != accountKey) {
+      _builtForAccount = accountKey;
+      _window = GlobalFeedWindow();
+    }
+    ref.onDispose(() {
+      _flush?.cancel();
+      _flush = null;
+    });
+    return _snapshot();
+  }
+
+  GlobalFeedWindowState _snapshot() => GlobalFeedWindowState(
+    content: _window.contentRevision,
+    interactions: _window.interactionRevision,
+    metadata: _window.metadataRevision,
+  );
+
+  /// Routed firehose events land here (feedSubscriptionProvider live sub +
+  /// feed_page's global load-more). Mutation is immediate; notification is
+  /// throttled.
+  void ingest(Event e) {
+    if (!_window.ingest(e)) return;
+    _dirty = true;
+    _flush ??= Timer(const Duration(milliseconds: 200), () {
+      _flush = null;
+      if (_dirty) {
+        _dirty = false;
+        state = _snapshot();
+      }
+    });
+  }
+
+  /// Force the pending state emit NOW (mirrors [EventStoreNotifier.flushNow]).
+  /// Feed's load-more calls this after a backward page lands so the
+  /// "did the feed actually extend?" check reads the new revision instead of
+  /// a stale pre-flush snapshot (which would falsely trigger the empty-page
+  /// cooldown).
+  void flushNow() {
+    _flush?.cancel();
+    _flush = null;
+    if (_dirty) {
+      _dirty = false;
+      state = _snapshot();
+    }
+  }
+
+  /// Drop the whole window: leaving the global tab (user decision: 全球信息
+  /// 流不需要任何缓存，包括 sqlite 和内存).
+  void clear() {
+    _flush?.cancel();
+    _flush = null;
+    _dirty = false;
+    if (_window.isEmpty) return;
+    _window.clear();
+    state = _snapshot();
+  }
+}
+
+final globalFeedWindowProvider =
+    NotifierProvider<GlobalFeedWindowNotifier, GlobalFeedWindowState>(
+      GlobalFeedWindowNotifier.new,
+    );
+
 /// Per-target interaction stats over the held store: reply/repost counts,
 /// reaction tallies and the user's own reaction, keyed by the referenced
 /// e-tag target id.
@@ -3839,8 +3986,14 @@ class InteractionIndexNotifier
     // tallies visible on a saturated firehose, where the store evicts its
     // kind-7 copies ~25ms after arrival.
     ref.watch(interactionCacheProvider);
+    // …or when the ephemeral global window's interactions change (live
+    // firehose reactions/reposts on the 全球 tab's own posts — those never
+    // enter the store either). Selects ONLY the interactions revision, so
+    // post/metadata arrivals don't rebuild the index.
+    ref.watch(globalFeedWindowProvider.select((s) => s.interactions));
     final store = ref.read(eventStoreProvider); // read: no extra subscription
     final interactionCache = ref.read(interactionCacheProvider.notifier).cache;
+    final globalWindow = ref.read(globalFeedWindowProvider.notifier).window;
     final me = ref.watch(identityProvider).value?.pubkeyHex;
 
     final replies = <String, int>{};
@@ -3848,9 +4001,10 @@ class InteractionIndexNotifier
     final reactions = <String, Map<String, ({int count, String? emojiUrl})>>{};
     final myReactions = <String, Event>{};
     final targets = <String>{}; // per-event distinct e-tag targets (buffer)
-    // kind-6/7 ids already tallied from the store — the cache merge skips
-    // them so an event held in BOTH tiers counts exactly once.
-    final seenInStore = <String>{};
+    // Event ids already tallied from an EARLIER tier — the store scan fills
+    // it, the cache + window merges skip held duplicates so an event present
+    // in several tiers counts exactly once.
+    final seenIds = <String>{};
 
     // Shared aggregation for one kind-6/7/16 event over [targets] (filled
     // by the caller before invoking).
@@ -3912,6 +4066,7 @@ class InteractionIndexNotifier
     for (final e in store) {
       if (e.kind != 1 && e.kind != 6 && e.kind != 7) continue;
       if (!fillTargets(e)) continue;
+      seenIds.add(e.id);
       if (e.kind == 1) {
         for (final t in targets) {
           // Skip the post itself (a kind-1 with a self-referential e tag,
@@ -3920,7 +4075,6 @@ class InteractionIndexNotifier
           replies[t] = (replies[t] ?? 0) + 1;
         }
       } else {
-        seenInStore.add(e.id);
         tallyInteraction(e);
       }
     }
@@ -3929,9 +4083,28 @@ class InteractionIndexNotifier
     // entered the store — own publishes on a quiet feed do, but evicted
     // fetch results don't). Same aggregation, minus events already counted.
     for (final e in interactionCache.events) {
-      if (seenInStore.contains(e.id)) continue;
+      if (seenIds.contains(e.id)) continue;
+      seenIds.add(e.id);
       if (!fillTargets(e)) continue;
       tallyInteraction(e);
+    }
+
+    // Global-window tier: live firehose interactions on 全球-tab posts. The
+    // window also holds kind-1 posts (potential replies) — aggregate exactly
+    // like the store loop. Empty unless the global tab is/was open this
+    // session (the window is cleared on leaving it).
+    for (final e in globalWindow.events) {
+      if (seenIds.contains(e.id)) continue;
+      seenIds.add(e.id);
+      if (!fillTargets(e)) continue;
+      if (e.kind == 1) {
+        for (final t in targets) {
+          if (t == e.id) continue;
+          replies[t] = (replies[t] ?? 0) + 1;
+        }
+      } else {
+        tallyInteraction(e);
+      }
     }
 
     final next = <String, PostInteractionStats>{};
@@ -5127,7 +5300,8 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
       } catch (_) {}
     }
   }
-  // 2. In-memory EventStore (kind-0 may have arrived via global feed).
+  // 2. In-memory EventStore (kind-0 arrives via the following/outbox subs
+  // and targeted fetches; the global firehose no longer feeds the store).
   if (cached == null) {
     for (final e in ref.read(eventStoreProvider)) {
       if (e.kind == 0 && e.pubkey == pubkey) {
@@ -5140,6 +5314,23 @@ final metadataProvider = StreamProvider.family<Metadata?, String>((
         } catch (_) {}
         break;
       }
+    }
+  }
+  // 2.5 Ephemeral global window: while the 全球 tab is open, strangers'
+  // kind-0 lives ONLY here (never stored, never persisted — user decision).
+  if (cached == null) {
+    final metaEvent = ref
+        .read(globalFeedWindowProvider.notifier)
+        .window
+        .metadataFor(pubkey);
+    if (metaEvent != null) {
+      try {
+        final json = jsonDecode(metaEvent.content);
+        if (json is Map<String, dynamic>) {
+          cached = Metadata.fromJson(json, tags: metaEvent.tags);
+          cachedCreatedAt = metaEvent.createdAt;
+        }
+      } catch (_) {}
     }
   }
   if (cached != null) yield cached;

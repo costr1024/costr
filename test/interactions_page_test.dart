@@ -84,10 +84,9 @@ Future<void> pumpActions(WidgetTester tester, List<Event> store) async {
         metadataProvider.overrideWith((ref, pk) async* {
           yield const Metadata(displayName: '小明');
         }),
-        interactorsProvider.overrideWith((ref, id) async => [
-          _reposter,
-          _liker,
-        ]),
+        interactorsProvider.overrideWith(
+          (ref, id) async => [_reposter, _liker],
+        ),
       ],
       child: MaterialApp.router(
         routerConfig: GoRouter(
@@ -99,9 +98,8 @@ Future<void> pumpActions(WidgetTester tester, List<Event> store) async {
               routes: [
                 GoRoute(
                   path: '/interactions/:id',
-                  builder: (_, s) => InteractionsPage(
-                    id: s.pathParameters['id']!,
-                  ),
+                  builder: (_, s) =>
+                      InteractionsPage(id: s.pathParameters['id']!),
                 ),
               ],
             ),

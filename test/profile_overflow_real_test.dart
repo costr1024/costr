@@ -108,12 +108,12 @@ void main() {
             bootstrapProvider.overrideWith((ref) async {}),
             identityProvider.overrideWith(() => _LoggedInIdentity()),
             followingStateProvider.overrideWith(() => _EmptyFollowing()),
-            metadataProvider.overrideWith((ref, pk) async* { yield _tallMeta(pk); }),
-            userGroupedFollowsProvider.overrideWith(
-              (ref, pk) async* {
-                yield const [];
-              },
-            ),
+            metadataProvider.overrideWith((ref, pk) async* {
+              yield _tallMeta(pk);
+            }),
+            userGroupedFollowsProvider.overrideWith((ref, pk) async* {
+              yield const [];
+            }),
             userFollowersProvider.overrideWith((ref, pk) async* {
               yield const [];
             }),

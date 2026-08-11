@@ -11,10 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Metadata _meta(String name, {List<List<String>> tags = const []}) =>
-    Metadata.fromJson(
-      <String, dynamic>{'name': name},
-      tags: tags,
-    );
+    Metadata.fromJson(<String, dynamic>{'name': name}, tags: tags);
 
 void main() {
   test('Metadata.fromJson parses emoji tags into customEmoji', () {
@@ -30,8 +27,10 @@ void main() {
       'winnie': 'https://example.com/w.png',
       'cat': 'https://example.com/c.png',
     });
-    expect(Metadata.fromJson(<String, dynamic>{'name': 'x'}).customEmoji,
-        isEmpty);
+    expect(
+      Metadata.fromJson(<String, dynamic>{'name': 'x'}).customEmoji,
+      isEmpty,
+    );
   });
 
   testWidgets('known shortcode becomes an inline image', (tester) async {
@@ -43,7 +42,7 @@ void main() {
             meta: _meta(
               '科代 :winnie:',
               tags: [
-                ['emoji', 'winnie', 'https://example.com/w.png']
+                ['emoji', 'winnie', 'https://example.com/w.png'],
               ],
             ),
           ),
@@ -66,10 +65,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: DisplayName(
-            pubkey: 'a' * 64,
-            meta: _meta('name :nope: here'),
-          ),
+          body: DisplayName(pubkey: 'a' * 64, meta: _meta('name :nope: here')),
         ),
       ),
     );
@@ -110,7 +106,7 @@ void main() {
         meta: _meta(
           '科代 :winnie:',
           tags: [
-            ['emoji', 'winnie', 'https://example.com/w.png']
+            ['emoji', 'winnie', 'https://example.com/w.png'],
           ],
         ),
         style: style,
@@ -129,15 +125,22 @@ void main() {
       expect(spans.length, 1);
       final span = spans.single as TextSpan;
       expect(span.text, '普通名字');
-      expect(span.style, style,
-          reason: 'spans carry the style explicitly — they get dropped into '
-              'a foreign RichText (notification title) where inheritance '
-              'would not apply');
+      expect(
+        span.style,
+        style,
+        reason:
+            'spans carry the style explicitly — they get dropped into '
+            'a foreign RichText (notification title) where inheritance '
+            'would not apply',
+      );
     });
 
     test('no metadata → npub fallback span', () {
-      final spans =
-          displayNameSpans(pubkey: 'a' * 64, meta: null, style: style);
+      final spans = displayNameSpans(
+        pubkey: 'a' * 64,
+        meta: null,
+        style: style,
+      );
       expect(spans.length, 1);
       expect((spans.single as TextSpan).text, contains('npub'));
     });

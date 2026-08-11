@@ -5,7 +5,8 @@ import 'package:costr/nostr/actions.dart';
 import 'package:costr/nostr/identity.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _priv = '0000000000000000000000000000000000000000000000000000000000000001';
+const _priv =
+    '0000000000000000000000000000000000000000000000000000000000000001';
 
 void main() {
   final id = Identity.fromPrivkeyHex(_priv);
@@ -28,7 +29,12 @@ void main() {
 
     test('private round-trip: encrypt then muteSetOf recovers the pubkey', () {
       final pk = 'b'.padLeft(64, 'b');
-      final e = actions.muteList(null, entry: ['p', pk], add: true, publicList: false);
+      final e = actions.muteList(
+        null,
+        entry: ['p', pk],
+        add: true,
+        publicList: false,
+      );
       final set = actions.muteSetOf(e);
       expect(set.pubkeys, contains(pk));
       expect(set.pubkeys.length, 1);
@@ -49,8 +55,18 @@ void main() {
 
     test('private add preserves prior private + public entries', () {
       final pk1 = 'c'.padLeft(64, 'c');
-      var e = actions.muteList(null, entry: ['p', pk1], add: true, publicList: false);
-      e = actions.muteList(e, entry: ['word', 'ad'], add: true, publicList: false);
+      var e = actions.muteList(
+        null,
+        entry: ['p', pk1],
+        add: true,
+        publicList: false,
+      );
+      e = actions.muteList(
+        e,
+        entry: ['word', 'ad'],
+        add: true,
+        publicList: false,
+      );
       final set = actions.muteSetOf(e);
       expect(set.pubkeys, contains(pk1));
       expect(set.words, contains('ad'));
@@ -58,7 +74,12 @@ void main() {
 
     test('remove a private entry', () {
       final pk = 'd'.padLeft(64, 'd');
-      var e = actions.muteList(null, entry: ['p', pk], add: true, publicList: false);
+      var e = actions.muteList(
+        null,
+        entry: ['p', pk],
+        add: true,
+        publicList: false,
+      );
       e = actions.muteList(e, entry: ['p', pk], add: false, publicList: false);
       final set = actions.muteSetOf(e);
       expect(set.pubkeys, isEmpty);
@@ -66,14 +87,29 @@ void main() {
 
     test('public + private union in muteSetOf', () {
       // Public p + word tags, plus encrypted private p.
-      final pub = actions.muteList(null, entry: ['p', 'e'.padLeft(64, 'e')], add: true, publicList: true);
-      final both = actions.muteList(pub, entry: ['p', 'f'.padLeft(64, 'f')], add: true, publicList: false);
+      final pub = actions.muteList(
+        null,
+        entry: ['p', 'e'.padLeft(64, 'e')],
+        add: true,
+        publicList: true,
+      );
+      final both = actions.muteList(
+        pub,
+        entry: ['p', 'f'.padLeft(64, 'f')],
+        add: true,
+        publicList: false,
+      );
       final set = actions.muteSetOf(both);
       expect(set.pubkeys.length, 2);
     });
 
     test('hashtag mute lowercased + t tag', () {
-      final e = actions.muteList(null, entry: ['t', 'NSFW'], add: true, publicList: true);
+      final e = actions.muteList(
+        null,
+        entry: ['t', 'NSFW'],
+        add: true,
+        publicList: true,
+      );
       final set = actions.muteSetOf(e);
       expect(set.hashtags, contains('nsfw'));
     });

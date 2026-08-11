@@ -58,8 +58,10 @@ void main() {
   });
 
   group('CostrColors.of(context)', () {
-    Future<CostrPalette> resolvePalette(WidgetTester tester, ThemeMode mode)
-    async {
+    Future<CostrPalette> resolvePalette(
+      WidgetTester tester,
+      ThemeMode mode,
+    ) async {
       late CostrPalette resolved;
       await tester.pumpWidget(
         MaterialApp(

@@ -8,10 +8,19 @@ import 'package:costr/nostr/actions.dart';
 import 'package:costr/nostr/identity.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _priv = '0000000000000000000000000000000000000000000000000000000000000001';
+const _priv =
+    '0000000000000000000000000000000000000000000000000000000000000001';
 
 Event _k30000(List<List<dynamic>> tags, {String id = 'id', String pk = 'pk'}) =>
-    Event(id: id, pubkey: pk, createdAt: 0, kind: 30000, tags: tags, content: '', sig: 's');
+    Event(
+      id: id,
+      pubkey: pk,
+      createdAt: 0,
+      kind: 30000,
+      tags: tags,
+      content: '',
+      sig: 's',
+    );
 
 Matcher _tag(List<String> t) => contains(equals(t));
 
@@ -28,8 +37,14 @@ void main() {
       // d tag is a UUID v4 (8-4-4-4-12, not the human name).
       final d = e.tags.firstWhere((t) => t[0] == 'd');
       expect(d[1], isNot('好友'));
-      expect(d[1], matches(RegExp(
-          r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')));
+      expect(
+        d[1],
+        matches(
+          RegExp(
+            r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+          ),
+        ),
+      );
       // p tag included.
       expect(e.tags, _tag(['p', 'pk-followed', '']));
       // client tag.
@@ -37,24 +52,26 @@ void main() {
       expect(id.verifyEventSignature(id: e.id, sig: e.sig), isTrue);
     });
 
-    test('editing existing list preserves Amethyst UUID d + name + rebuilds p',
-        () {
-      final current = _k30000([
-        ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
-        ['name', '真人用户'],
-        ['alt', 'real users'],
-        ['p', 'old-pk', ''],
-      ]);
-      final e = actions.followCategory(current, 'new-pk', '真人用户');
-      // d preserved verbatim.
-      expect(e.tags, _tag(['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b']));
-      // name + metadata preserved.
-      expect(e.tags, _tag(['name', '真人用户']));
-      expect(e.tags, _tag(['alt', 'real users']));
-      // old-pk kept, new-pk added.
-      expect(e.tags, _tag(['p', 'old-pk', '']));
-      expect(e.tags, _tag(['p', 'new-pk', '']));
-    });
+    test(
+      'editing existing list preserves Amethyst UUID d + name + rebuilds p',
+      () {
+        final current = _k30000([
+          ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
+          ['name', '真人用户'],
+          ['alt', 'real users'],
+          ['p', 'old-pk', ''],
+        ]);
+        final e = actions.followCategory(current, 'new-pk', '真人用户');
+        // d preserved verbatim.
+        expect(e.tags, _tag(['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b']));
+        // name + metadata preserved.
+        expect(e.tags, _tag(['name', '真人用户']));
+        expect(e.tags, _tag(['alt', 'real users']));
+        // old-pk kept, new-pk added.
+        expect(e.tags, _tag(['p', 'old-pk', '']));
+        expect(e.tags, _tag(['p', 'new-pk', '']));
+      },
+    );
   });
 
   group('NostrActions.renameFollowSet', () {
@@ -93,7 +110,13 @@ void main() {
       final e = actions.deleteFollowSet(current);
       expect(e.kind, 5);
       // a-coordinate = 30000:<signing pubkey>:<d> — deletes every version.
-      expect(e.tags, _tag(['a', '30000:${id.pubkeyHex}:f40fa7f0-8441-4eae-8b55-f605699da40b']));
+      expect(
+        e.tags,
+        _tag([
+          'a',
+          '30000:${id.pubkeyHex}:f40fa7f0-8441-4eae-8b55-f605699da40b',
+        ]),
+      );
       // e tag points at the current event id (best-effort for e-keyed clients).
       expect(e.tags, _tag(['e', 'ev-id-123']));
       // Amethyst parity: author `p` + original `kind`.
@@ -110,23 +133,25 @@ void main() {
       expect(g.memberCount, 3);
     });
 
-    test('custom group: counts all p tags in source, not just followed members',
-        () {
-      // List has 5 members but only 2 are still in the user's kind-3 follows.
-      final source = _k30000([
-        ['d', 'uuid-1'],
-        ['name', '科技'],
-        ['p', 'm1', ''],
-        ['p', 'm2', ''],
-        ['p', 'm3', ''],
-        ['p', 'm4', ''],
-        ['p', 'm5', ''],
-      ]);
-      final g = FollowGroup('科技', ['m1', 'm2'], source: source);
-      // True count is 5 (Amethyst shows this), NOT 2 (followed ∩ group).
-      expect(g.memberCount, 5);
-      expect(g.pubkeys.length, 2); // rows render only followed members
-    });
+    test(
+      'custom group: counts all p tags in source, not just followed members',
+      () {
+        // List has 5 members but only 2 are still in the user's kind-3 follows.
+        final source = _k30000([
+          ['d', 'uuid-1'],
+          ['name', '科技'],
+          ['p', 'm1', ''],
+          ['p', 'm2', ''],
+          ['p', 'm3', ''],
+          ['p', 'm4', ''],
+          ['p', 'm5', ''],
+        ]);
+        final g = FollowGroup('科技', ['m1', 'm2'], source: source);
+        // True count is 5 (Amethyst shows this), NOT 2 (followed ∩ group).
+        expect(g.memberCount, 5);
+        expect(g.pubkeys.length, 2); // rows render only followed members
+      },
+    );
   });
 
   group('NostrActions.followedHashtags (kind-10015 + NIP-44, Amethyst)', () {
@@ -146,8 +171,7 @@ void main() {
       expect(actions.followedHashtagTags(e), ['bing每日一图']);
     });
 
-    test('add to existing (decrypt → modify → re-encrypt) preserves prior',
-        () {
+    test('add to existing (decrypt → modify → re-encrypt) preserves prior', () {
       final first = actions.followedHashtags(null, add: '股市行情');
       final second = actions.followedHashtags(first, add: 'bing每日一图');
       final tags = actions.followedHashtagTags(second);

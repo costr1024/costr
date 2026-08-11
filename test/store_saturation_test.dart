@@ -23,14 +23,14 @@ import 'package:costr/nostr/event_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Event mk(int kind, int i, int createdAt, {String? pubkey}) => Event(
-      id: '${kind}_$i',
-      pubkey: pubkey ?? 'p${i % 500}',
-      createdAt: createdAt,
-      kind: kind,
-      tags: const [],
-      content: 'c$i',
-      sig: 's',
-    );
+  id: '${kind}_$i',
+  pubkey: pubkey ?? 'p${i % 500}',
+  createdAt: createdAt,
+  kind: kind,
+  tags: const [],
+  content: 'c$i',
+  sig: 's',
+);
 
 ({int k16, int k7, int k0, int k6}) counts(EventStore s) {
   var k16 = 0;
@@ -81,12 +81,17 @@ void main() {
     final c = counts(store);
     // Invariant 2: the feed content survives the flood.
     expect(c.k16, greaterThan(0), reason: 'feed must not empty');
-    expect(minK16AfterSaturation, greaterThan(0),
-        reason: 'feed must not empty at any saturated sample');
+    expect(
+      minK16AfterSaturation,
+      greaterThan(0),
+      reason: 'feed must not empty at any saturated sample',
+    );
     expect(store.length, lessThanOrEqualTo(cap));
     // ignore: avoid_print
-    print('flood end: len=${store.length} k1/6=${c.k16} k7=${c.k7} '
-        'k0=${c.k0} minK16=$minK16AfterSaturation');
+    print(
+      'flood end: len=${store.length} k1/6=${c.k16} k7=${c.k7} '
+      'k0=${c.k0} minK16=$minK16AfterSaturation',
+    );
   });
 
   test('repeated profile updates by the same authors do not accumulate', () {
@@ -105,8 +110,11 @@ void main() {
       }
     }
     final c = counts(store);
-    expect(c.k0, lessThanOrEqualTo(300),
-        reason: 'one metadata slot per author');
+    expect(
+      c.k0,
+      lessThanOrEqualTo(300),
+      reason: 'one metadata slot per author',
+    );
     expect(c.k16, greaterThan(0));
     expect(store.length, lessThanOrEqualTo(cap));
     // ignore: avoid_print
@@ -126,10 +134,15 @@ void main() {
       expect(store.length, lessThanOrEqualTo(cap));
     }
     final c = counts(store);
-    expect(c.k16, greaterThan(cap ~/ 4),
-        reason: 'posts+reposts should dominate a healthy feed');
+    expect(
+      c.k16,
+      greaterThan(cap ~/ 4),
+      reason: 'posts+reposts should dominate a healthy feed',
+    );
     // ignore: avoid_print
-    print('realistic end: len=${store.length} k1/6=${c.k16} k7=${c.k7} '
-        'k0=${c.k0}');
+    print(
+      'realistic end: len=${store.length} k1/6=${c.k16} k7=${c.k7} '
+      'k0=${c.k0}',
+    );
   });
 }

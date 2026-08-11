@@ -50,6 +50,7 @@ import 'local_cache.dart' as cache;
 
 const int maxRecommendations = 10;
 const int maxProbeCandidates = 20;
+
 /// Rotation memory cap: at most this many already-recommended URLs are kept
 /// per category (~5 full batches). Oldest entries are dropped first, so very
 /// large pools still rotate instead of stalling on a full memory.
@@ -86,9 +87,7 @@ List<String> mergeSeenUrls(
   for (final url in shown) {
     if (known.add(url)) merged.add(url);
   }
-  return merged.length <= cap
-      ? merged
-      : merged.sublist(merged.length - cap);
+  return merged.length <= cap ? merged : merged.sublist(merged.length - cap);
 }
 
 /// Whether discovery can recommend for [category] at all this iteration.

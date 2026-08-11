@@ -107,9 +107,7 @@ void main() {
           }),
           interactorsProvider.overrideWith((ref, id) async => const <Event>[]),
         ],
-        child: const MaterialApp(
-          home: PostDetailPage(id: 'the_reply'),
-        ),
+        child: const MaterialApp(home: PostDetailPage(id: 'the_reply')),
       ),
     );
     await tester.pumpAndSettle();
@@ -156,11 +154,7 @@ void main() {
         ['p', 'c' * 64],
       ],
     );
-    await pumpPage(
-      tester,
-      chain: [root, focused],
-      known: [root, focused],
-    );
+    await pumpPage(tester, chain: [root, focused], known: [root, focused]);
 
     expect(find.textContaining('上面的对话没加载出来'), findsNothing);
   });

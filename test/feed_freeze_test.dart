@@ -4,14 +4,14 @@ import 'package:costr/models/event.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Event _ev(String id, int t) => Event(
-      id: id,
-      pubkey: 'pk',
-      createdAt: t,
-      kind: 1,
-      tags: const [],
-      content: '',
-      sig: 's',
-    );
+  id: id,
+  pubkey: 'pk',
+  createdAt: t,
+  kind: 1,
+  tags: const [],
+  content: '',
+  sig: 's',
+);
 
 void main() {
   // Event has no value equality; compare by (id, createdAt) tuples.
@@ -19,11 +19,7 @@ void main() {
       es.map((e) => (e.id, e.createdAt)).toList();
 
   // Sorted newest-first, as the EventStore presents them.
-  final events = <Event>[
-    _ev('c', 30),
-    _ev('b', 20),
-    _ev('a', 10),
-  ];
+  final events = <Event>[_ev('c', 30), _ev('b', 20), _ev('a', 10)];
   // The snapshot captured at freeze time (all three were visible).
   final snapshot = <String>{'c', 'b', 'a'};
 
@@ -86,12 +82,7 @@ void main() {
   test('null snapshot + barrier falls back to strictly-older rule', () {
     // No snapshot (older code path): only strictly-older-than-barrier + barrier
     // itself visible; same-second and newer held. Barrier b@20.
-    final live = <Event>[
-      _ev('a', 20),
-      _ev('b', 20),
-      _ev('d', 20),
-      _ev('z', 5),
-    ];
+    final live = <Event>[_ev('a', 20), _ev('b', 20), _ev('d', 20), _ev('z', 5)];
     final visible = frozenVisible(live, 20, 'b', null);
     // b@20 is the barrier: createdAt == 20 is NOT < 20, and not in a snapshot.
     // It must still show (it's the post being read) — the barrier id check

@@ -20,14 +20,18 @@ class _Id extends IdentityNotifier {
 }
 
 void main() {
-  testWidgets('custom emoji :shortcode: renders an inline image', (tester) async {
+  testWidgets('custom emoji :shortcode: renders an inline image', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           relayPoolProvider.overrideWith((ref) => RelayPool(const [])),
           bootstrapProvider.overrideWith((ref) async {}),
           identityProvider.overrideWith(() => _Id()),
-          metadataProvider.overrideWith((ref, pk) async* { yield null; }),
+          metadataProvider.overrideWith((ref, pk) async* {
+            yield null;
+          }),
         ],
         child: MaterialApp(
           home: Scaffold(
@@ -60,7 +64,9 @@ void main() {
           relayPoolProvider.overrideWith((ref) => RelayPool(const [])),
           bootstrapProvider.overrideWith((ref) async {}),
           identityProvider.overrideWith(() => _Id()),
-          metadataProvider.overrideWith((ref, pk) async* { yield null; }),
+          metadataProvider.overrideWith((ref, pk) async* {
+            yield null;
+          }),
         ],
         child: MaterialApp(
           home: Scaffold(

@@ -128,12 +128,15 @@ String? detectLanguage(String text) {
       c.latin++;
     } else if ((u >= 0x4E00 && u <= 0x9FFF) || // CJK Unified Ideographs
         (u >= 0x3400 && u <= 0x4DBF) || // Extension A
-        (u >= 0xF900 && u <= 0xFAFF)) { // Compatibility Ideographs
+        (u >= 0xF900 && u <= 0xFAFF)) {
+      // Compatibility Ideographs
       c.han++;
     } else if ((u >= 0x3041 && u <= 0x309F) || // Hiragana
-        (u >= 0x30A1 && u <= 0x30FA)) { // Katakana letters (no ・ー, see doc)
+        (u >= 0x30A1 && u <= 0x30FA)) {
+      // Katakana letters (no ・ー, see doc)
       c.kana++;
-    } else if (u >= 0xAC00 && u <= 0xD7AF) { // Hangul syllables
+    } else if (u >= 0xAC00 && u <= 0xD7AF) {
+      // Hangul syllables
       c.hangul++;
     }
   }
@@ -196,9 +199,8 @@ bool hasAnyLetter(String text) {
 /// silently eat e.g. a Chinese user's link-only share.
 bool containsUrl(String text) {
   if (text.isEmpty) return false;
-  final window =
-      text.length > _kScanWalkLimit
-          ? text.substring(0, _kScanWalkLimit)
-          : text;
+  final window = text.length > _kScanWalkLimit
+      ? text.substring(0, _kScanWalkLimit)
+      : text;
   return _urlRegexForSearch.hasMatch(window);
 }

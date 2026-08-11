@@ -58,7 +58,10 @@ void main() {
 
     expect(find.text('已复制图片链接'), findsOneWidget);
     final data = await Clipboard.getData('text/plain');
-    expect(data?.text, 'https://example.com/a.png',
-        reason: 'origin URL (first image), not a proxy mirror');
+    expect(
+      data?.text,
+      'https://example.com/a.png',
+      reason: 'origin URL (first image), not a proxy mirror',
+    );
   });
 }

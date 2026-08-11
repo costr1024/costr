@@ -33,18 +33,21 @@ void main() {
       await idle.future; // must complete — _send awaits exactly this
     });
 
-    test('overlapping uploads: idle only after the LAST one finishes', () async {
-      final t = UploadTracker();
-      t.started();
-      t.started();
-      final idle = t.idle!;
-      t.finished();
-      expect(t.uploading, isTrue, reason: 'one upload still in flight');
-      expect(idle.isCompleted, isFalse);
-      t.finished();
-      expect(t.uploading, isFalse);
-      await idle.future;
-    });
+    test(
+      'overlapping uploads: idle only after the LAST one finishes',
+      () async {
+        final t = UploadTracker();
+        t.started();
+        t.started();
+        final idle = t.idle!;
+        t.finished();
+        expect(t.uploading, isTrue, reason: 'one upload still in flight');
+        expect(idle.isCompleted, isFalse);
+        t.finished();
+        expect(t.uploading, isFalse);
+        await idle.future;
+      },
+    );
 
     test('failure flag clears at the start of a fresh round', () {
       final t = UploadTracker();

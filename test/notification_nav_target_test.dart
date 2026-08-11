@@ -57,7 +57,11 @@ class _FakeRelay implements RelayConnection {
   bool get isConnected => _connected;
 
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -205,17 +209,20 @@ void main() {
   });
 
   group('notificationNavTarget', () {
-    NotificationItem item(NotificationType t, {String? target, String? source}) =>
-        NotificationItem(
-          type: t,
-          pubkeys: ['b' * 64],
-          extraCount: 0,
-          time: 1,
-          targetEventId: target,
-          sourceEventId: source,
-          id: 'k',
-          unread: true,
-        );
+    NotificationItem item(
+      NotificationType t, {
+      String? target,
+      String? source,
+    }) => NotificationItem(
+      type: t,
+      pubkeys: ['b' * 64],
+      extraCount: 0,
+      time: 1,
+      targetEventId: target,
+      sourceEventId: source,
+      id: 'k',
+      unread: true,
+    );
 
     test('reaction opens the liked post, not the like event', () {
       final i = item(

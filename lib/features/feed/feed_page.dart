@@ -185,8 +185,10 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       // Did the page actually extend the feed? If the oldest visible post
       // didn't move back, record an empty attempt so the trigger backs off
       // (instead of spinning on every further scroll tick at the bottom).
-      // Flush the debounced store first so `after` reflects what just landed.
+      // Flush the debounced store/window first so `after` reflects what just
+      // landed (following load-more → store; global load-more → window).
       ref.read(eventStoreProvider.notifier).flushNow();
+      ref.read(globalFeedWindowProvider.notifier).flushNow();
       final after = ref.read(currentFeedEventsProvider);
       final oldestAfter = after.isEmpty
           ? null
@@ -211,12 +213,15 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final filter = buildFeedFilter(FeedMode.global, follows);
     filter['kinds'] = [1, 6];
     filter['until'] = until;
+    // ROUTED into the ephemeral window (same as the live sub): the backward
+    // page never touches the capped store.
+    final window = ref.read(globalFeedWindowProvider.notifier);
     final subId = nextSubId('more');
     final done = Completer<void>();
     final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
       if (!done.isCompleted) done.complete();
     });
-    pool.request(subId, filter, closeOnEose: true);
+    pool.request(subId, filter, closeOnEose: true, onEvent: window.ingest);
     final t = Timer(const Duration(seconds: 5), () {
       if (!done.isCompleted) done.complete();
     });
@@ -332,10 +337,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
               child: SegmentedButton<FeedMode>(
                 segments: const [
                   ButtonSegment(value: FeedMode.global, label: Text('全球')),
-                  ButtonSegment(
-                    value: FeedMode.following,
-                    label: Text('关注'),
-                  ),
+                  ButtonSegment(value: FeedMode.following, label: Text('关注')),
                 ],
                 selected: {mode},
                 onSelectionChanged: (Set<FeedMode> s) {

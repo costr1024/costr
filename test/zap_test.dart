@@ -35,7 +35,8 @@ void main() {
     test('parses a payRequest with allowsNostr', () async {
       final pay = await resolveLnurlPay(
         'alice@example.com',
-        (uri) async => '{"callback":"https://x.com/cb?a=1",'
+        (uri) async =>
+            '{"callback":"https://x.com/cb?a=1",'
             '"minSendable":1000,"maxSendable":10000000,'
             '"metadata":"m",'
             '"allowsNostr":true,"nostrPubkey":"abc"}',
@@ -79,37 +80,37 @@ void main() {
       allowsNostr: true,
     );
 
-    test('allowsNostr: signs kind-9734 + requests with amount/nostr/lnurl',
-        () async {
-      Uri? called;
-      final invoice = await requestZapInvoice(
-        pay: pay,
-        amountMsat: 5000,
-        recipientPubkey: _signer.pubkeyHex,
-        signer: _signer,
-        relays: const ['wss://relay.a/'],
-        zappedNoteId: 'noteid',
-        httpGet: (uri) async {
-          called = uri;
-          return '{"pr":"lnbc50u1p...","r":"ok"}';
-        },
-      );
-      expect(invoice, 'lnbc50u1p...');
-      expect(called, isNotNull);
-      expect(called!.queryParameters['amount'], '5000');
-      expect(called!.queryParameters['lnurl'], 'https://x.com/cb');
-      final nostr = called!.queryParameters['nostr'];
-      expect(nostr, isNotNull);
-      // The nostr param is the signed kind-9734 event JSON (array form).
-      final ev = nostr!.startsWith('{')
-          ? Uri.decodeComponent(nostr)
-          : nostr;
-      // It should contain kind 9734 and the p/e/amount tags.
-      expect(ev, contains('"kind":9734'));
-      expect(ev, contains(_signer.pubkeyHex));
-      expect(ev, contains('"noteid"'));
-      expect(ev, contains('"amount","5000"'));
-    });
+    test(
+      'allowsNostr: signs kind-9734 + requests with amount/nostr/lnurl',
+      () async {
+        Uri? called;
+        final invoice = await requestZapInvoice(
+          pay: pay,
+          amountMsat: 5000,
+          recipientPubkey: _signer.pubkeyHex,
+          signer: _signer,
+          relays: const ['wss://relay.a/'],
+          zappedNoteId: 'noteid',
+          httpGet: (uri) async {
+            called = uri;
+            return '{"pr":"lnbc50u1p...","r":"ok"}';
+          },
+        );
+        expect(invoice, 'lnbc50u1p...');
+        expect(called, isNotNull);
+        expect(called!.queryParameters['amount'], '5000');
+        expect(called!.queryParameters['lnurl'], 'https://x.com/cb');
+        final nostr = called!.queryParameters['nostr'];
+        expect(nostr, isNotNull);
+        // The nostr param is the signed kind-9734 event JSON (array form).
+        final ev = nostr!.startsWith('{') ? Uri.decodeComponent(nostr) : nostr;
+        // It should contain kind 9734 and the p/e/amount tags.
+        expect(ev, contains('"kind":9734'));
+        expect(ev, contains(_signer.pubkeyHex));
+        expect(ev, contains('"noteid"'));
+        expect(ev, contains('"amount","5000"'));
+      },
+    );
 
     test('no allowsNostr: plain LNURL-pay (amount only, no nostr)', () async {
       final plainPay = LnurlPayRequest(

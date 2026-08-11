@@ -186,7 +186,11 @@ void main() {
         <dynamic>[
           <dynamic>['t', '煎蛋'],
           <dynamic>['image', 'http://img.toto.im/mw600/a.jpg', 'image/jpeg'],
-          <dynamic>['image', 'https://img.wangmoyu.com/mw600/b.jpeg', 'image/jpeg'],
+          <dynamic>[
+            'image',
+            'https://img.wangmoyu.com/mw600/b.jpeg',
+            'image/jpeg',
+          ],
         ],
         'http://img.toto.im/mw600/a.jpg\nhttps://img.wangmoyu.com/mw600/b.jpeg',
         'sig',
@@ -272,48 +276,54 @@ void main() {
       );
       // root marker
       expect(
-        repost(Event(
-          id: '',
-          pubkey: '',
-          createdAt: 0,
-          kind: 6,
-          tags: [
-            ['e', repostedId, 'wss://x', 'root'],
-          ],
-          content: '',
-          sig: '',
-        )).repostedEventId,
+        repost(
+          Event(
+            id: '',
+            pubkey: '',
+            createdAt: 0,
+            kind: 6,
+            tags: [
+              ['e', repostedId, 'wss://x', 'root'],
+            ],
+            content: '',
+            sig: '',
+          ),
+        ).repostedEventId,
         repostedId,
       );
       // legacy positional (empty marker)
       expect(
-        repost(Event(
-          id: '',
-          pubkey: '',
-          createdAt: 0,
-          kind: 6,
-          tags: [
-            ['e', repostedId],
-          ],
-          content: '',
-          sig: '',
-        )).repostedEventId,
+        repost(
+          Event(
+            id: '',
+            pubkey: '',
+            createdAt: 0,
+            kind: 6,
+            tags: [
+              ['e', repostedId],
+            ],
+            content: '',
+            sig: '',
+          ),
+        ).repostedEventId,
         repostedId,
       );
       // mention tags are NOT reposted-of
       expect(
-        repost(Event(
-          id: '',
-          pubkey: '',
-          createdAt: 0,
-          kind: 6,
-          tags: [
-            ['e', 'm' * 64, '', 'mention'],
-            ['e', repostedId, '', 'root'],
-          ],
-          content: '',
-          sig: '',
-        )).repostedEventId,
+        repost(
+          Event(
+            id: '',
+            pubkey: '',
+            createdAt: 0,
+            kind: 6,
+            tags: [
+              ['e', 'm' * 64, '', 'mention'],
+              ['e', repostedId, '', 'root'],
+            ],
+            content: '',
+            sig: '',
+          ),
+        ).repostedEventId,
         repostedId,
       );
       // a non-repost has no repostedEventId

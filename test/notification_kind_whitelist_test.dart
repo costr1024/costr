@@ -55,7 +55,11 @@ class _PushRelay implements RelayConnection {
   bool get isConnected => _connected;
 
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -166,9 +170,7 @@ void main() {
     }
     await Future<void>.delayed(const Duration(milliseconds: 600));
 
-    final list = container.read(
-      notificationsProvider(me),
-    ).value;
+    final list = container.read(notificationsProvider(me)).value;
     expect(list, isNotNull);
     expect(list, isEmpty, reason: 'non 1/3/6/7 kinds must never notify');
   });

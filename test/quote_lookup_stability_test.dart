@@ -26,14 +26,14 @@ class _LiveStore extends EventStoreNotifier {
 }
 
 Event _post(String id, int createdAt) => Event(
-      id: id,
-      pubkey: 'a' * 64,
-      createdAt: createdAt,
-      kind: 1,
-      tags: const [],
-      content: 'x',
-      sig: 's' * 128,
-    );
+  id: id,
+  pubkey: 'a' * 64,
+  createdAt: createdAt,
+  kind: 1,
+  tags: const [],
+  content: 'x',
+  sig: 's' * 128,
+);
 
 ProviderContainer _buildContainer(_LiveStore store) {
   return ProviderContainer(
@@ -47,8 +47,7 @@ ProviderContainer _buildContainer(_LiveStore store) {
 }
 
 void main() {
-  test('store flushes do not restart an in-flight eventById lookup',
-      () async {
+  test('store flushes do not restart an in-flight eventById lookup', () async {
     final store = _LiveStore();
     final container = _buildContainer(store);
     addTearDown(container.dispose);
@@ -66,9 +65,13 @@ void main() {
     }
 
     final f2 = container.read(eventByIdProvider(missing).future);
-    expect(identical(f1, f2), isTrue,
-        reason: 'store flushes must not rebuild/restart the lookup — the '
-            'pending future must stay the SAME across flushes');
+    expect(
+      identical(f1, f2),
+      isTrue,
+      reason:
+          'store flushes must not rebuild/restart the lookup — the '
+          'pending future must stay the SAME across flushes',
+    );
   });
 
   test('store flushes do not restart an in-flight quote lookup', () async {
@@ -86,8 +89,11 @@ void main() {
     }
 
     final f2 = container.read(quotedEventProvider(missing).future);
-    expect(identical(f1, f2), isTrue,
-        reason: 'the quote lookup must survive live store flushes');
+    expect(
+      identical(f1, f2),
+      isTrue,
+      reason: 'the quote lookup must survive live store flushes',
+    );
   });
 
   test('store hit still resolves the lookup instantly', () async {

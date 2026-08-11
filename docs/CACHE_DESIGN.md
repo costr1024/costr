@@ -41,18 +41,23 @@ costr 当前所有数据（帖子、metadata、reactions、关注列表）纯内
 **数据流**：
 
 ```
-中继事件到达
+中继事件到达 (EVENT 帧自带到达订阅 id)
   │
-  ├─→ RelayPool._merged (dedup by id)
-  │     │
-  │     ├─→ EventStoreNotifier (内存 LRU 5000，UI 热数据)
-  │     │     └─ 触发 200ms throttle → state = store.events
-  │     │
-  │     └─→ _persist() (条件性写入 SQLite — 仅社交关系链)
-  │           ├─ 可变事件 (kind 0/3/10000+/30000+) → 始终写入 (小, 去重)
-  │           └─ 不可变事件 (kind 1/7) → 仅当作者在社交关系链中时写入
-  │               社交关系链 = 我关注的人 + 关注我的人 + 自己
-  │               全球信息流的随机用户事件不持久化 (仅内存, 节省空间)
+  ├─→ 订阅级路由 (RelayPool._routeSubs)
+  │     └─ 全球信息流订阅 (onEvent) ──→ GlobalFeedWindow (纯内存临时窗口)
+  │           ≤1000 帖倒序 / 仅窗口内帖的互动 ≤5000 / 每人最新 kind-0 ≤5000
+  │           不进合并流、不进 EventStore、不写 SQLite，离开全球 tab 整窗清空
+  │
+  └─→ RelayPool._merged (dedup by id，其余订阅)
+        │
+        ├─→ EventStoreNotifier (内存 LRU，UI 热数据 — 仅关注流 + 相关事件)
+        │     └─ 触发 200ms throttle → state = store.events
+        │
+        └─→ _persist() (条件性写入 SQLite — 仅社交关系链)
+              ├─ 可变事件 (kind 0/3/10000+/30000+) → 始终写入 (小, 去重)
+              └─ 不可变事件 (kind 1/7) → 仅当作者在社交关系链中时写入
+                  社交关系链 = 我关注的人 + 关注我的人 + 自己
+                  全球信息流的随机用户事件不持久化 (节省空间)
   │
 UI Provider 读取
   │
@@ -83,7 +88,10 @@ UI Provider 读取
 - 关注我的人（来自 userFollowersProvider 的 `#p` 查询结果）
 - 我自己
 
-**不缓存**：全球信息流中随机用户的 kind 1/7 事件。这些只在内存 LRU 中暂存供浏览，不写入 SQLite，避免缓存膨胀。后续如需 2 层社交关系链缓存（关注的人关注的人），扩展 `socialGraphProvider` 即可。
+**不缓存**：全球信息流中随机用户的任何事件——既不写 SQLite（`_persist` 社交关系链门控），
+也不进内存事件库（20000 条上限只装关注流 + 相关事件）。火水经 RelayPool 订阅级路由直入
+`GlobalFeedWindow` 纯内存临时窗口（见上文数据流图），离开全球 tab / 切账号即整窗清空。
+后续如需 2 层社交关系链缓存（关注的人关注的人），扩展 `socialGraphProvider` 即可。
 
 ---
 
@@ -440,7 +448,8 @@ path: ^1.9.0               # 路径操作
 
 - 不替换 RelayPool（中继层不变，SQLite 是持久化层 + 缓存源）
 - 不替换 Riverpod（状态管理不变）
-- 不替换 EventStore 内存层（保留 LRU 5000 作 UI 热数据，SQLite 是持久化后端）
+- 不替换 EventStore 内存层（保留作 UI 热数据——自 v1.0.7 起只装关注流 + 相关事件，
+  全球火水走 GlobalFeedWindow 临时窗口；SQLite 是持久化后端）
 - 不做嵌入式 relay（nostrdb/Citrine，过于复杂）
 - 不做分布式同步（单设备本地缓存）
 

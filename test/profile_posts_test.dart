@@ -45,7 +45,11 @@ class _FilteringRelay implements RelayConnection {
   bool get isConnected => _connected;
 
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -112,8 +116,10 @@ class _FilteringRelay implements RelayConnection {
 /// so nothing of theirs was ever persisted).
 class _EmptyCache implements cache.LocalCache {
   @override
-  Future<List<cache.EventRow>> queryUserPosts(String pubkey, {int limit = 100})
-      async => const [];
+  Future<List<cache.EventRow>> queryUserPosts(
+    String pubkey, {
+    int limit = 100,
+  }) async => const [];
 
   @override
   Future<cache.ReplaceableEvent?> queryReplaceable(
@@ -151,10 +157,10 @@ Event _note(String id, String pubkey, int createdAt) => Event(
 );
 
 void main() {
-  test(
-      'profile loads the author\'s OLDER history, not just posts newer than '
+  test('profile loads the author\'s OLDER history, not just posts newer than '
       'the partial cache (no `since` anchor)', () async {
-    const author = 'a111111111111111111111111111111111111111111111111111111111111111';
+    const author =
+        'a111111111111111111111111111111111111111111111111111111111111111';
     // Partial cache: two recent posts glimpsed in the global feed.
     final recent1 = _note('recent1', author, 1000);
     final recent2 = _note('recent2', author, 1001);
@@ -195,13 +201,7 @@ void main() {
       final v = container.read(userPostsProvider(author)).value;
       if (v == null) return false;
       final ids = v.map((e) => e.id).toSet();
-      return ids.containsAll({
-        'recent1',
-        'recent2',
-        'old1',
-        'old2',
-        'old3',
-      });
+      return ids.containsAll({'recent1', 'recent2', 'old1', 'old2', 'old3'});
     }
 
     while (!hasAll()) {

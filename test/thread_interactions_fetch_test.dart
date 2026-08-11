@@ -72,7 +72,11 @@ class _FakeRelay implements RelayConnection {
   bool get isConnected => _connected;
 
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -91,8 +95,8 @@ class _FakeRelay implements RelayConnection {
   @override
   void request(String subId, Map<String, dynamic> filter) {
     reqs.add(filter);
-    final kinds = (filter['kinds'] as List<dynamic>?)?.cast<int>() ??
-        const <int>[];
+    final kinds =
+        (filter['kinds'] as List<dynamic>?)?.cast<int>() ?? const <int>[];
     if (filter['ids'] != null) {
       _events.add(_post());
     } else if (kinds.contains(7)) {
@@ -181,82 +185,81 @@ class _ProxyOff extends ProxyMediaNotifier {
 }
 
 void main() {
-  testWidgets(
-    'thread open fetches reactions; like chevron + list appear',
-    (tester) async {
-      final relay = _FakeRelay('wss://a');
-      final pool = RelayPool([relay]);
-      await pool.connect();
-      addTearDown(pool.dispose);
+  testWidgets('thread open fetches reactions; like chevron + list appear', (
+    tester,
+  ) async {
+    final relay = _FakeRelay('wss://a');
+    final pool = RelayPool([relay]);
+    await pool.connect();
+    addTearDown(pool.dispose);
 
-      await tester.runAsync(() async {
-        await tester.pumpWidget(
-          ProviderScope(
-            overrides: [
-              relayPoolProvider.overrideWith((ref) => pool),
-              localCacheProvider.overrideWith((ref) async => _StubCache()),
-              identityProvider.overrideWith(() => _NullId()),
-              // Peripheral render stubs — the store/pool ingestion path under
-              // test stays REAL (eventStoreProvider, interactionIndexProvider,
-              // reactionsProvider, postCountsProvider, interactorsProvider).
-              nsfwSettingsProvider.overrideWith(() => _Nsfw()),
-              metadataProvider.overrideWith((ref, pk) async* {
-                yield null;
-              }),
-              userStatusProvider.overrideWith((ref, pk) async* {
-                yield null;
-              }),
-              followedTagsProvider.overrideWith(() => _EmptyTags()),
-              proxyMediaEnabledProvider.overrideWith(() => _ProxyOff()),
-            ],
-            child: MaterialApp.router(
-              routerConfig: GoRouter(
-                initialLocation: '/post/$_postId',
-                routes: [
-                  GoRoute(
-                    path: '/post/:id',
-                    builder: (_, s) =>
-                        PostDetailPage(id: s.pathParameters['id']!),
-                  ),
-                  GoRoute(
-                    path: '/interactions/:id',
-                    builder: (_, s) =>
-                        InteractionsPage(id: s.pathParameters['id']!),
-                  ),
-                ],
-              ),
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            relayPoolProvider.overrideWith((ref) => pool),
+            localCacheProvider.overrideWith((ref) async => _StubCache()),
+            identityProvider.overrideWith(() => _NullId()),
+            // Peripheral render stubs — the store/pool ingestion path under
+            // test stays REAL (eventStoreProvider, interactionIndexProvider,
+            // reactionsProvider, postCountsProvider, interactorsProvider).
+            nsfwSettingsProvider.overrideWith(() => _Nsfw()),
+            metadataProvider.overrideWith((ref, pk) async* {
+              yield null;
+            }),
+            userStatusProvider.overrideWith((ref, pk) async* {
+              yield null;
+            }),
+            followedTagsProvider.overrideWith(() => _EmptyTags()),
+            proxyMediaEnabledProvider.overrideWith(() => _ProxyOff()),
+          ],
+          child: MaterialApp.router(
+            routerConfig: GoRouter(
+              initialLocation: '/post/$_postId',
+              routes: [
+                GoRoute(
+                  path: '/post/:id',
+                  builder: (_, s) =>
+                      PostDetailPage(id: s.pathParameters['id']!),
+                ),
+                GoRoute(
+                  path: '/interactions/:id',
+                  builder: (_, s) =>
+                      InteractionsPage(id: s.pathParameters['id']!),
+                ),
+              ],
             ),
           ),
-        );
-        await tester.pump();
-        // Let the lookups + the interactions REQ answer, then the store's
-        // 200ms flush (real timers — runAsync zone).
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-        await tester.pump();
-        await Future<void>.delayed(const Duration(milliseconds: 350));
-        await tester.pump();
-      });
-
-      // The thread issued the interactions REQ: kinds [6,16,7] #e [post].
-      expect(
-        relay.reqs.any(
-          (f) =>
-              (f['kinds'] as List<dynamic>?)?.contains(7) == true &&
-              (f['#e'] as List<dynamic>?)?.contains(_postId) == true,
         ),
-        isTrue,
-        reason: 'opening the thread must query reactions/reposts by #e',
       );
+      await tester.pump();
+      // Let the lookups + the interactions REQ answer, then the store's
+      // 200ms flush (real timers — runAsync zone).
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await tester.pump();
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      await tester.pump();
+    });
 
-      // The fetched reaction reached the store-derived tallies: the
-      // down-chevron entry is offered on the focused card.
-      expect(find.byIcon(Icons.expand_more_rounded), findsOneWidget);
+    // The thread issued the interactions REQ: kinds [6,16,7] #e [post].
+    expect(
+      relay.reqs.any(
+        (f) =>
+            (f['kinds'] as List<dynamic>?)?.contains(7) == true &&
+            (f['#e'] as List<dynamic>?)?.contains(_postId) == true,
+      ),
+      isTrue,
+      reason: 'opening the thread must query reactions/reposts by #e',
+    );
 
-      // And it opens the 「点赞与转发」list with the liker's row.
-      await tester.tap(find.byIcon(Icons.expand_more_rounded));
-      await tester.pumpAndSettle();
-      expect(find.text('点赞与转发'), findsOneWidget);
-      expect(find.text('点赞了这条帖子'), findsOneWidget);
-    },
-  );
+    // The fetched reaction reached the store-derived tallies: the
+    // down-chevron entry is offered on the focused card.
+    expect(find.byIcon(Icons.expand_more_rounded), findsOneWidget);
+
+    // And it opens the 「点赞与转发」list with the liker's row.
+    await tester.tap(find.byIcon(Icons.expand_more_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('点赞与转发'), findsOneWidget);
+    expect(find.text('点赞了这条帖子'), findsOneWidget);
+  });
 }

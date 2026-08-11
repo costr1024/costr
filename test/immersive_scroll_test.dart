@@ -15,15 +15,14 @@ void main() {
     double pixels,
     double? scrollDelta, {
     double accumulated = 0,
-  }) =>
-      immersiveBarActionFromPixels(
-        pixels: pixels,
-        scrollDelta: scrollDelta,
-        isUserUpdate: true,
-        accumulated: accumulated,
-        threshold: threshold,
-        showThreshold: showThreshold,
-      );
+  }) => immersiveBarActionFromPixels(
+    pixels: pixels,
+    scrollDelta: scrollDelta,
+    isUserUpdate: true,
+    accumulated: accumulated,
+    threshold: threshold,
+    showThreshold: showThreshold,
+  );
 
   test('at top (pixels <= 0) → show', () {
     expect(act(0, 50), ImmersiveBarAction.show);
@@ -199,7 +198,8 @@ void main() {
       expect(
         container.read(appBarsVisibleProvider),
         isFalse,
-        reason: 'corrective pull-backs must not re-show the chrome during a '
+        reason:
+            'corrective pull-backs must not re-show the chrome during a '
             'fast DOWN scroll',
       );
       final position = tester

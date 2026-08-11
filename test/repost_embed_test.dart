@@ -10,16 +10,15 @@ import 'package:flutter_test/flutter_test.dart';
 
 final _sig = 's' * 128;
 
-Event _note(String id, {String content = 'hi', String? pubkey}) =>
-    Event(
-      id: id,
-      pubkey: pubkey ?? 'p' * 64,
-      createdAt: 1,
-      kind: 1,
-      tags: const [],
-      content: content,
-      sig: _sig,
-    );
+Event _note(String id, {String content = 'hi', String? pubkey}) => Event(
+  id: id,
+  pubkey: pubkey ?? 'p' * 64,
+  createdAt: 1,
+  kind: 1,
+  tags: const [],
+  content: content,
+  sig: _sig,
+);
 
 Event _repost({
   required String id,
@@ -71,11 +70,7 @@ void main() {
 
     test('returns null for malformed JSON content', () {
       final note = _note('n1');
-      final repost = _repost(
-        id: 'rp1',
-        reposted: note,
-        content: 'not-json',
-      );
+      final repost = _repost(id: 'rp1', reposted: note, content: 'not-json');
       expect(parseEmbeddedRepost(repost), isNull);
     });
 
@@ -107,10 +102,7 @@ void main() {
         reposted: note,
         repostedRelay: 'wss://relay.bostr.online/',
       );
-      expect(
-        repostRelayHints(repost, 'n1'),
-        ['wss://relay.bostr.online/'],
-      );
+      expect(repostRelayHints(repost, 'n1'), ['wss://relay.bostr.online/']);
     });
 
     test('ignores hints on e-tags for other ids', () {

@@ -19,8 +19,7 @@ import 'package:costr/services/local_cache.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _pk =
-    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _pk = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 Future<void> writeSet(
   LocalCache db, {
@@ -67,33 +66,35 @@ void main() {
       await db.close();
     });
 
-    test('stale kind-30000 arriving late does NOT overwrite newer row',
-        () async {
-      // Newer revision (post-rename, carries the human name)…
-      await writeSet(
-        db,
-        id: 'new',
-        createdAt: 200,
-        tags: [
-          ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
-          ['name', '真人用户'],
-        ],
-      );
-      // …then a stale revision (pre-rename, name stripped) lands afterwards.
-      await writeSet(
-        db,
-        id: 'stale',
-        createdAt: 100,
-        tags: [
-          ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
-        ],
-      );
-      final rows = await db.queryFollowSets(_pk);
-      expect(rows.length, 1);
-      expect(rows.single.id, 'new');
-      expect(rows.single.createdAt, 200);
-      expect(rows.single.tagsJson, contains('真人用户'));
-    });
+    test(
+      'stale kind-30000 arriving late does NOT overwrite newer row',
+      () async {
+        // Newer revision (post-rename, carries the human name)…
+        await writeSet(
+          db,
+          id: 'new',
+          createdAt: 200,
+          tags: [
+            ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
+            ['name', '真人用户'],
+          ],
+        );
+        // …then a stale revision (pre-rename, name stripped) lands afterwards.
+        await writeSet(
+          db,
+          id: 'stale',
+          createdAt: 100,
+          tags: [
+            ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
+          ],
+        );
+        final rows = await db.queryFollowSets(_pk);
+        expect(rows.length, 1);
+        expect(rows.single.id, 'new');
+        expect(rows.single.createdAt, 200);
+        expect(rows.single.tagsJson, contains('真人用户'));
+      },
+    );
 
     test('newer kind-30000 replaces an older row', () async {
       await writeSet(
@@ -185,50 +186,56 @@ void main() {
   group('_buildFollowGroups newest-revision display name', () {
     test('stale nameless revision + newer named revision → human name', () {
       // Stale revision first in the input (arrival order must not matter).
-      final groups = buildFollowGroupsForTest(const ['pk1'], [
-        _k30000(
-          id: 'stale',
-          createdAt: 100,
-          tags: [
-            ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
-            ['p', 'pk1'],
-          ],
-        ),
-        _k30000(
-          id: 'new',
-          createdAt: 200,
-          tags: [
-            ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
-            ['name', '真人用户'],
-            ['p', 'pk1'],
-          ],
-        ),
-      ]);
+      final groups = buildFollowGroupsForTest(
+        const ['pk1'],
+        [
+          _k30000(
+            id: 'stale',
+            createdAt: 100,
+            tags: [
+              ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
+              ['p', 'pk1'],
+            ],
+          ),
+          _k30000(
+            id: 'new',
+            createdAt: 200,
+            tags: [
+              ['d', 'f40fa7f0-8441-4eae-8b55-f605699da40b'],
+              ['name', '真人用户'],
+              ['p', 'pk1'],
+            ],
+          ),
+        ],
+      );
       expect(groups.length, 2); // 默认分组 + the custom group
       expect(groups[1].name, '真人用户');
       expect(groups[1].source?.id, 'new');
     });
 
     test('newest revision wins regardless of input order', () {
-      final groups = buildFollowGroupsForTest(const ['pk1'], [
-        _k30000(
-          id: 'new',
-          createdAt: 200,
-          tags: [
-            ['d', 'uuid-d'],
-            ['name', '真人用户'],
-            ['p', 'pk1'],
-          ],
-        ),
-        _k30000(
-          id: 'stale',
-          createdAt: 100,
-          tags: [
-            ['d', 'uuid-d'],
-            ['p', 'pk1'],
-          ],
-        ),
-      ]);
+      final groups = buildFollowGroupsForTest(
+        const ['pk1'],
+        [
+          _k30000(
+            id: 'new',
+            createdAt: 200,
+            tags: [
+              ['d', 'uuid-d'],
+              ['name', '真人用户'],
+              ['p', 'pk1'],
+            ],
+          ),
+          _k30000(
+            id: 'stale',
+            createdAt: 100,
+            tags: [
+              ['d', 'uuid-d'],
+              ['p', 'pk1'],
+            ],
+          ),
+        ],
+      );
       expect(groups[1].name, '真人用户');
     });
 

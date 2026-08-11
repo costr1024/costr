@@ -93,9 +93,16 @@ void main() {
     expect(feedNotifs, 1);
     expect(interNotifs, 1);
 
-    store.add(_e('r1', 110, kind: 7, tags: [
-      ['e', 'p1'],
-    ])); // kind-7 → interaction only
+    store.add(
+      _e(
+        'r1',
+        110,
+        kind: 7,
+        tags: [
+          ['e', 'p1'],
+        ],
+      ),
+    ); // kind-7 → interaction only
     await _flush();
     expect(feedNotifs, 1, reason: 'reaction churn must not rebuild the feed');
     expect(interNotifs, 2);
@@ -105,9 +112,16 @@ void main() {
     expect(feedNotifs, 1);
     expect(interNotifs, 2);
 
-    store.add(_e('rp1', 130, kind: 6, tags: [
-      ['e', 'p1'],
-    ])); // kind-6 → both
+    store.add(
+      _e(
+        'rp1',
+        130,
+        kind: 6,
+        tags: [
+          ['e', 'p1'],
+        ],
+      ),
+    ); // kind-6 → both
     await _flush();
     expect(feedNotifs, 2);
     expect(interNotifs, 3);
@@ -124,23 +138,60 @@ void main() {
     await container.read(identityProvider.future);
 
     store.add(_e('post1', 100, pubkey: me));
-    store.add(_e('reply1', 110, tags: [
-      ['e', 'post1', '', 'reply'],
-      ['p', me],
-    ]));
-    store.add(_e('repost1', 120, kind: 6, tags: [
-      ['e', 'post1'],
-    ]));
-    store.add(_e('react1', 130, kind: 7, content: '+', tags: [
-      ['e', 'post1'],
-    ]));
-    store.add(_e('react2', 140, kind: 7, content: ':fire:', tags: [
-      ['e', 'post1'],
-      ['emoji', 'fire', 'https://x/fire.png'],
-    ]));
-    store.add(_e('myreact', 150, kind: 7, pubkey: me, tags: [
-      ['e', 'post1'],
-    ]));
+    store.add(
+      _e(
+        'reply1',
+        110,
+        tags: [
+          ['e', 'post1', '', 'reply'],
+          ['p', me],
+        ],
+      ),
+    );
+    store.add(
+      _e(
+        'repost1',
+        120,
+        kind: 6,
+        tags: [
+          ['e', 'post1'],
+        ],
+      ),
+    );
+    store.add(
+      _e(
+        'react1',
+        130,
+        kind: 7,
+        content: '+',
+        tags: [
+          ['e', 'post1'],
+        ],
+      ),
+    );
+    store.add(
+      _e(
+        'react2',
+        140,
+        kind: 7,
+        content: ':fire:',
+        tags: [
+          ['e', 'post1'],
+          ['emoji', 'fire', 'https://x/fire.png'],
+        ],
+      ),
+    );
+    store.add(
+      _e(
+        'myreact',
+        150,
+        kind: 7,
+        pubkey: me,
+        tags: [
+          ['e', 'post1'],
+        ],
+      ),
+    );
     await _flush();
 
     final index = container.read(interactionIndexProvider);
@@ -157,10 +208,16 @@ void main() {
     // A reply that e-tags TWO targets counts once per target (legacy
     // per-provider semantics).
     store.add(_e('root', 90));
-    store.add(_e('reply2', 160, tags: [
-      ['e', 'root', '', 'root'],
-      ['e', 'post1', '', 'reply'],
-    ]));
+    store.add(
+      _e(
+        'reply2',
+        160,
+        tags: [
+          ['e', 'root', '', 'root'],
+          ['e', 'post1', '', 'reply'],
+        ],
+      ),
+    );
     await _flush();
     final index2 = container.read(interactionIndexProvider);
     expect(index2['post1']!.replies, 2);
@@ -173,9 +230,16 @@ void main() {
     container.read(eventStoreProvider);
 
     store.add(_e('post1', 100));
-    store.add(_e('react1', 110, kind: 7, tags: [
-      ['e', 'post1'],
-    ]));
+    store.add(
+      _e(
+        'react1',
+        110,
+        kind: 7,
+        tags: [
+          ['e', 'post1'],
+        ],
+      ),
+    );
     await _flush();
     final before = container.read(interactionIndexProvider)['post1'];
 
@@ -183,17 +247,31 @@ void main() {
     // must be carried over BY IDENTITY so its per-card providers don't
     // rebuild.
     store.add(_e('post2', 200));
-    store.add(_e('react2', 210, kind: 7, tags: [
-      ['e', 'post2'],
-    ]));
+    store.add(
+      _e(
+        'react2',
+        210,
+        kind: 7,
+        tags: [
+          ['e', 'post2'],
+        ],
+      ),
+    );
     await _flush();
     final after = container.read(interactionIndexProvider)['post1'];
     expect(identical(before, after), isTrue);
 
     // A new reaction ON post1 replaces its stats object.
-    store.add(_e('react3', 220, kind: 7, tags: [
-      ['e', 'post1'],
-    ]));
+    store.add(
+      _e(
+        'react3',
+        220,
+        kind: 7,
+        tags: [
+          ['e', 'post1'],
+        ],
+      ),
+    );
     await _flush();
     final changed = container.read(interactionIndexProvider)['post1'];
     expect(identical(before, changed), isFalse);

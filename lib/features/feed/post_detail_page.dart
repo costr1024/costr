@@ -156,7 +156,10 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
                     // their miss, so without it the parent stays missing for
                     // the whole session even after the relay recovers.
                     if (chain.isNotEmpty && chain.first.isReply)
-                      _AncestorsRetryRow(top: chain.first, focusedId: widget.id),
+                      _AncestorsRetryRow(
+                        top: chain.first,
+                        focusedId: widget.id,
+                      ),
                     for (final e in ancestors) EventCard(event: e),
                     if (ancestors.isNotEmpty) ...[
                       const SizedBox(height: 4),

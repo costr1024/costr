@@ -49,7 +49,11 @@ class _FakeRelay implements RelayConnection {
   bool get isConnected => _connected;
 
   @override
+  @override
   Stream<Event> get events => _events.stream;
+  @override
+  Stream<(String, Event)> get taggedEvents =>
+      _events.stream.map((e) => ('fake', e));
   @override
   Stream<String> get eose => _eose.stream;
   @override
@@ -143,9 +147,7 @@ class _ReplyCache implements cache.LocalCache {
       tagsJson: tagsJson,
       receivedAt: 0,
     );
-    _tags[id] = tags
-        .map((t) => List<dynamic>.from(t as Iterable))
-        .toList();
+    _tags[id] = tags.map((t) => List<dynamic>.from(t as Iterable)).toList();
   }
 
   @override
@@ -153,9 +155,7 @@ class _ReplyCache implements cache.LocalCache {
     return _rows.values.where((r) {
       if (r.kind != 1) return false;
       final tags = _tags[r.id] ?? const <List<dynamic>>[];
-      return tags.any(
-        (t) => t.length >= 2 && t[0] == 'e' && t[1] == eventId,
-      );
+      return tags.any((t) => t.length >= 2 && t[0] == 'e' && t[1] == eventId);
     }).toList();
   }
 
@@ -262,8 +262,7 @@ void main() {
     });
   }
 
-  test(
-      'root cause: once the one-shot load closes, late relay arrivals never '
+  test('root cause: once the one-shot load closes, late relay arrivals never '
       'reach the reply list (stale until invalidated)', () async {
     await setUpPools();
     final parent = _note(id: 'parent1', pubkey: 'a' * 64);
@@ -289,8 +288,7 @@ void main() {
     expect(container.read(repliesProvider('parent1')).value, isEmpty);
   });
 
-  test(
-      'fix: awaited cacheThreadEvent + invalidate(repliesProvider) shows the '
+  test('fix: awaited cacheThreadEvent + invalidate(repliesProvider) shows the '
       'just-published reply immediately', () async {
     await setUpPools();
     final parent = _note(id: 'parent2', pubkey: 'b' * 64);
@@ -325,8 +323,7 @@ void main() {
     expect(list.map((e) => e.id), contains('reply2'));
   });
 
-  test(
-      'nested reply: replying to a REPLY invalidates the ROOT thread list '
+  test('nested reply: replying to a REPLY invalidates the ROOT thread list '
       'too, so the 2nd-level reply shows in the open root thread', () async {
     await setUpPools();
     // Root post A + first-level reply B (already visible in A's thread).
@@ -343,9 +340,7 @@ void main() {
     // Persist B the way the real thread view does (cacheThreadEvent keeps the
     // tagsJson intact — seedEvent blanks it, which would strip B's e tags on
     // reconstruction and make isReplyToEvent reject it).
-    await container
-        .read(eventStoreProvider.notifier)
-        .cacheThreadEvent(replyB);
+    await container.read(eventStoreProvider.notifier).cacheThreadEvent(replyB);
 
     // The open thread page under compose watches the ROOT's replies list.
     final sub = container.listen(repliesProvider('root3'), (_, _) {});

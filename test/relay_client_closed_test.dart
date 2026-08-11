@@ -27,11 +27,13 @@ void main() {
         if (msg[0] == 'REQ') {
           // Reject the subscription instead of answering it — exactly what
           // relay.ditto.pub does when the per-connection sub cap is hit.
-          ws.add(jsonEncode([
-            'CLOSED',
-            msg[1],
-            'rate-limited: too many subscriptions',
-          ]));
+          ws.add(
+            jsonEncode([
+              'CLOSED',
+              msg[1],
+              'rate-limited: too many subscriptions',
+            ]),
+          );
         }
       });
     });
@@ -44,28 +46,32 @@ void main() {
     await server.close(force: true);
   });
 
-  test('relay-CLOSED sub emits a synthesized EOSE so waiters can settle',
-      () async {
-    final client = RelayClient('ws://127.0.0.1:${server.port}');
-    addTearDown(client.dispose);
-    await client.connect();
-    expect(client.isConnected, isTrue);
+  test(
+    'relay-CLOSED sub emits a synthesized EOSE so waiters can settle',
+    () async {
+      final client = RelayClient('ws://127.0.0.1:${server.port}');
+      addTearDown(client.dispose);
+      await client.connect();
+      expect(client.isConnected, isTrue);
 
-    final eoseSeen = client.eose.first;
-    final closedSeen = client.closed.first;
-    client.request('costr:note:7', <String, dynamic>{
-      'ids': ['x' * 64],
-    });
+      final eoseSeen = client.eose.first;
+      final closedSeen = client.closed.first;
+      client.request('costr:note:7', <String, dynamic>{
+        'ids': ['x' * 64],
+      });
 
-    expect(await eoseSeen.timeout(const Duration(seconds: 5)), 'costr:note:7',
-        reason: 'CLOSED must synthesize an EOSE for the rejected sub');
-    final closed = await closedSeen.timeout(const Duration(seconds: 5));
-    expect(closed.$1, 'costr:note:7');
-    expect(closed.$2, contains('rate-limited'));
-  });
+      expect(
+        await eoseSeen.timeout(const Duration(seconds: 5)),
+        'costr:note:7',
+        reason: 'CLOSED must synthesize an EOSE for the rejected sub',
+      );
+      final closed = await closedSeen.timeout(const Duration(seconds: 5));
+      expect(closed.$1, 'costr:note:7');
+      expect(closed.$2, contains('rate-limited'));
+    },
+  );
 
-  test('rtt-probe subs are excluded from the CLOSED->EOSE synthesis',
-      () async {
+  test('rtt-probe subs are excluded from the CLOSED->EOSE synthesis', () async {
     final client = RelayClient('ws://127.0.0.1:${server.port}');
     addTearDown(client.dispose);
     await client.connect();

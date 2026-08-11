@@ -2,17 +2,21 @@ import 'package:costr/app/providers.dart';
 import 'package:costr/models/event.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Event _k10002(String id, String pubkey, List<List<dynamic>> tags,
-        {int createdAt = 100}) =>
-    Event(
-      id: id,
-      pubkey: pubkey,
-      createdAt: createdAt,
-      kind: 10002,
-      tags: tags,
-      content: '',
-      sig: 'ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss',
-    );
+Event _k10002(
+  String id,
+  String pubkey,
+  List<List<dynamic>> tags, {
+  int createdAt = 100,
+}) => Event(
+  id: id,
+  pubkey: pubkey,
+  createdAt: createdAt,
+  kind: 10002,
+  tags: tags,
+  content: '',
+  sig:
+      'ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss',
+);
 
 void main() {
   const pk = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -25,7 +29,8 @@ void main() {
       kind: 1,
       tags: const [],
       content: '',
-      sig: 'ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss',
+      sig:
+          'ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss',
     );
     expect(RelayList.parse(e), isNull);
   });

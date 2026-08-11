@@ -184,4 +184,68 @@ void main() {
     final stats = container.read(interactionIndexProvider)[_postId]!;
     expect(stats.myReaction!.id, 'new'.padRight(64, '0'));
   });
+
+  // --- Global window tier -------------------------------------------------
+  // The 全球 firehose never enters the capped store: its posts/interactions
+  // live in the ephemeral GlobalFeedWindow. The index must merge that tier
+  // too, so live reactions/reposts on 全球-tab posts render, and leaving the
+  // tab (window.clear) drops them again.
+
+  test('window-only reaction on a window post is tallied', () async {
+    final container = await makeContainer(store: []);
+    addTearDown(container.dispose);
+
+    final window = container.read(globalFeedWindowProvider.notifier);
+    window.ingest(_post()); // the post lives ONLY in the window
+    window.ingest(_reaction(id: 'wlike'));
+    window.flushNow(); // skip the 200ms throttle (same as feed load-more)
+
+    final stats = container.read(interactionIndexProvider)[_postId]!;
+    expect(stats.reactions['👍']?.count, 1);
+  });
+
+  test('an event held in store AND window counts exactly once', () async {
+    final like = _reaction(id: 'dup2');
+    final container = await makeContainer(store: [_post(), like]);
+    addTearDown(container.dispose);
+
+    final window = container.read(globalFeedWindowProvider.notifier);
+    window.ingest(_post());
+    window.ingest(like); // same id re-delivered on the firehose path
+    window.flushNow();
+
+    final stats = container.read(interactionIndexProvider)[_postId]!;
+    expect(stats.reactions['👍']?.count, 1);
+  });
+
+  test('window.kind-6 repost bumps the repost count', () async {
+    final container = await makeContainer(store: []);
+    addTearDown(container.dispose);
+
+    final window = container.read(globalFeedWindowProvider.notifier);
+    window.ingest(_post());
+    window.ingest(_reaction(id: 'wrp', kind: 6, content: ''));
+    window.flushNow();
+
+    final stats = container.read(interactionIndexProvider)[_postId]!;
+    expect(stats.reposts, 1);
+  });
+
+  test('leaving the 全球 tab (window.clear) drops the window tallies', () async {
+    final container = await makeContainer(store: []);
+    addTearDown(container.dispose);
+
+    final window = container.read(globalFeedWindowProvider.notifier);
+    window.ingest(_post());
+    window.ingest(_reaction(id: 'gone'));
+    window.flushNow();
+    expect(
+      container.read(interactionIndexProvider)[_postId]?.reactions['👍']?.count,
+      1,
+    );
+
+    window.clear(); // feedSubscriptionProvider's onDispose does this
+    final stats = container.read(interactionIndexProvider)[_postId];
+    expect(stats?.reactions ?? const {}, isEmpty);
+  });
 }

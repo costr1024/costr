@@ -326,7 +326,11 @@ class NostrActions {
     final seen = <String>{};
     if (current != null && current.content.isNotEmpty) {
       try {
-        final decoded = nip44Decrypt(id.privkeyHex, id.pubkeyHex, current.content);
+        final decoded = nip44Decrypt(
+          id.privkeyHex,
+          id.pubkeyHex,
+          current.content,
+        );
         final arr = jsonDecode(decoded);
         if (arr is List) {
           for (final t in arr) {
@@ -673,6 +677,7 @@ class NostrActions {
       }
       return true;
     }
+
     if (add) {
       if (!target.any((t) => eq(t, entry))) target.add(entry);
     } else {

@@ -89,14 +89,14 @@ class _LiveStore extends EventStoreNotifier {
 }
 
 Event _post(String id, String pubkey, int createdAt) => Event(
-      id: id,
-      pubkey: pubkey,
-      createdAt: createdAt,
-      kind: 1,
-      tags: const [],
-      content: 'post $id with some content to give the card height',
-      sig: 's' * 128,
-    );
+  id: id,
+  pubkey: pubkey,
+  createdAt: createdAt,
+  kind: 1,
+  tags: const [],
+  content: 'post $id with some content to give the card height',
+  sig: 's' * 128,
+);
 
 ProviderContainer _buildContainer({
   required _LiveStore store,
@@ -156,8 +156,10 @@ ScrollMetrics feedMetrics(WidgetTester tester) {
   final states = tester.stateList<ScrollableState>(find.byType(Scrollable));
   return states
       .map((s) => s.position)
-      .fold<ScrollMetrics>(states.first.position,
-          (a, b) => b.maxScrollExtent > a.maxScrollExtent ? b : a);
+      .fold<ScrollMetrics>(
+        states.first.position,
+        (a, b) => b.maxScrollExtent > a.maxScrollExtent ? b : a,
+      );
 }
 
 double maxFeedExtent(WidgetTester tester) {
@@ -189,8 +191,9 @@ void main() {
   statusLineTests();
   doubleTapTests();
 
-  testWidgets('following: single firm down-scroll hides chrome',
-      (tester) async {
+  testWidgets('following: single firm down-scroll hides chrome', (
+    tester,
+  ) async {
     final store = _LiveStore();
     for (var i = 0; i < 40; i++) {
       store.store.add(_post('e$i', _followee, 100000 - i * 10));
@@ -203,14 +206,21 @@ void main() {
     await fingerScroll(tester, const Offset(300, 400), [
       for (var i = 0; i < 10; i++) const Offset(0, -30),
     ]);
-    expect(feedMetrics(tester).pixels, greaterThan(100),
-        reason: 'the drag must actually scroll the feed list');
-    expect(container.read(appBarsVisibleProvider), isFalse,
-        reason: 'firm down-scroll must hide the chrome');
+    expect(
+      feedMetrics(tester).pixels,
+      greaterThan(100),
+      reason: 'the drag must actually scroll the feed list',
+    );
+    expect(
+      container.read(appBarsVisibleProvider),
+      isFalse,
+      reason: 'firm down-scroll must hide the chrome',
+    );
   });
 
-  testWidgets('following: repeated short down-scrolls hide chrome',
-      (tester) async {
+  testWidgets('following: repeated short down-scrolls hide chrome', (
+    tester,
+  ) async {
     final store = _LiveStore();
     for (var i = 0; i < 40; i++) {
       store.store.add(_post('e$i', _followee, 100000 - i * 10));
@@ -227,12 +237,16 @@ void main() {
         const Offset(0, -20),
       ]);
     }
-    expect(container.read(appBarsVisibleProvider), isFalse,
-        reason: 'accumulated short down-scrolls must hide the chrome');
+    expect(
+      container.read(appBarsVisibleProvider),
+      isFalse,
+      reason: 'accumulated short down-scrolls must hide the chrome',
+    );
   });
 
-  testWidgets('following: down-scroll hides while live events arrive',
-      (tester) async {
+  testWidgets('following: down-scroll hides while live events arrive', (
+    tester,
+  ) async {
     final store = _LiveStore();
     for (var i = 0; i < 40; i++) {
       store.store.add(_post('e$i', _followee, 100000 - i * 10));
@@ -256,8 +270,11 @@ void main() {
       const Offset(0, -60),
       const Offset(0, -60),
     ]);
-    expect(container.read(appBarsVisibleProvider), isFalse,
-        reason: 'chrome must hide even while live events rebuild the list');
+    expect(
+      container.read(appBarsVisibleProvider),
+      isFalse,
+      reason: 'chrome must hide even while live events rebuild the list',
+    );
   });
 
   testWidgets('following: hide → up show → down hide again', (tester) async {
@@ -288,12 +305,16 @@ void main() {
       const Offset(0, -100),
       const Offset(0, -100),
     ]);
-    expect(container.read(appBarsVisibleProvider), isFalse,
-        reason: 'second down-scroll must hide the chrome again');
+    expect(
+      container.read(appBarsVisibleProvider),
+      isFalse,
+      reason: 'second down-scroll must hide the chrome again',
+    );
   });
 
-  testWidgets('following: hide survives scroll while list grows at top',
-      (tester) async {
+  testWidgets('following: hide survives scroll while list grows at top', (
+    tester,
+  ) async {
     // The cold-following pattern: user is at the top while events stream in
     // (list rebuilds every arrival), THEN starts scrolling down.
     final store = _LiveStore();
@@ -326,9 +347,9 @@ void main() {
 // the chrome show/hide logic with horizontal metrics.
 
 Finder _hScrollFinder() => find.byWidgetPredicate(
-      (Widget w) =>
-          w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
-    );
+  (Widget w) =>
+      w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
+);
 
 /// Center of the first status line that is currently inside the viewport.
 /// Waits (pumps) until at least one status line is rendered.
@@ -347,8 +368,9 @@ Future<Offset> _visibleStatusCenter(WidgetTester tester) async {
 }
 
 void statusLineTests() {
-  testWidgets('horizontal swipe of a status line does NOT flip the chrome',
-      (tester) async {
+  testWidgets('horizontal swipe of a status line does NOT flip the chrome', (
+    tester,
+  ) async {
     final store = _LiveStore();
     for (var i = 0; i < 40; i++) {
       store.store.add(_post('e$i', _followee, 100000 - i * 10));
@@ -374,10 +396,16 @@ void statusLineTests() {
     }
     await g.up();
     await tester.pumpAndSettle();
-    expect(feedMetrics(tester).pixels, before,
-        reason: 'horizontal status swipe must not scroll the feed');
-    expect(container.read(appBarsVisibleProvider), isFalse,
-        reason: 'horizontal status swipe must not re-show the chrome');
+    expect(
+      feedMetrics(tester).pixels,
+      before,
+      reason: 'horizontal status swipe must not scroll the feed',
+    );
+    expect(
+      container.read(appBarsVisibleProvider),
+      isFalse,
+      reason: 'horizontal status swipe must not re-show the chrome',
+    );
 
     // And a swipe back must not hide-then-show-flip either.
     final g2 = await tester.startGesture(await _visibleStatusCenter(tester));
@@ -387,12 +415,16 @@ void statusLineTests() {
     }
     await g2.up();
     await tester.pumpAndSettle();
-    expect(container.read(appBarsVisibleProvider), isFalse,
-        reason: 'horizontal status swipe must not flip chrome visibility');
+    expect(
+      container.read(appBarsVisibleProvider),
+      isFalse,
+      reason: 'horizontal status swipe must not flip chrome visibility',
+    );
   });
 
-  testWidgets('visible chrome is not hidden by a horizontal status swipe',
-      (tester) async {
+  testWidgets('visible chrome is not hidden by a horizontal status swipe', (
+    tester,
+  ) async {
     final store = _LiveStore();
     for (var i = 0; i < 40; i++) {
       store.store.add(_post('e$i', _followee, 100000 - i * 10));
@@ -417,8 +449,11 @@ void statusLineTests() {
     }
     await g.up();
     await tester.pumpAndSettle();
-    expect(container.read(appBarsVisibleProvider), isTrue,
-        reason: 'horizontal scroll must never hide the vertical chrome');
+    expect(
+      container.read(appBarsVisibleProvider),
+      isTrue,
+      reason: 'horizontal scroll must never hide the vertical chrome',
+    );
   });
 }
 
@@ -436,8 +471,9 @@ void doubleTapTests() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('feed: double-tap the tab row jumps back to the newest post',
-      (tester) async {
+  testWidgets('feed: double-tap the tab row jumps back to the newest post', (
+    tester,
+  ) async {
     final store = _LiveStore();
     for (var i = 0; i < 60; i++) {
       store.store.add(_post('e$i', _followee, 100000 - i * 10));
@@ -452,8 +488,11 @@ void doubleTapTests() {
     ]);
     final deep = feedMetrics(tester).pixels;
     expect(deep, greaterThan(200));
-    expect(container.read(appBarsVisibleProvider), isFalse,
-        reason: 'chrome hides once deep in the feed');
+    expect(
+      container.read(appBarsVisibleProvider),
+      isFalse,
+      reason: 'chrome hides once deep in the feed',
+    );
 
     // The tab row is part of the hidden chrome — a real user scrolls up a
     // touch to bring it back, THEN double-taps it.
@@ -462,55 +501,75 @@ void doubleTapTests() {
       const Offset(0, 40),
     ]);
     expect(container.read(appBarsVisibleProvider), isTrue);
-    expect(feedMetrics(tester).pixels, greaterThan(100),
-        reason: 'still deep — only the chrome came back');
+    expect(
+      feedMetrics(tester).pixels,
+      greaterThan(100),
+      reason: 'still deep — only the chrome came back',
+    );
 
     // Double-tap the 全球/关注 tab row.
     await doubleTap(
-        tester, tester.getCenter(find.byType(SegmentedButton<FeedMode>)));
-    expect(feedMetrics(tester).pixels, 0,
-        reason: 'double-tap must return to the top of the feed');
-    expect(container.read(appBarsVisibleProvider), isTrue,
-        reason: 'chrome must be visible again at the top');
+      tester,
+      tester.getCenter(find.byType(SegmentedButton<FeedMode>)),
+    );
+    expect(
+      feedMetrics(tester).pixels,
+      0,
+      reason: 'double-tap must return to the top of the feed',
+    );
+    expect(
+      container.read(appBarsVisibleProvider),
+      isTrue,
+      reason: 'chrome must be visible again at the top',
+    );
   });
 
-  testWidgets('feed: double-tap releases the read freeze (pending posts land)',
-      (tester) async {
-    final store = _LiveStore();
-    for (var i = 0; i < 60; i++) {
-      store.store.add(_post('e$i', _followee, 100000 - i * 10));
-    }
-    final container = _buildContainer(store: store);
-    addTearDown(container.dispose);
-    await pumpFeed(tester, container);
+  testWidgets(
+    'feed: double-tap releases the read freeze (pending posts land)',
+    (tester) async {
+      final store = _LiveStore();
+      for (var i = 0; i < 60; i++) {
+        store.store.add(_post('e$i', _followee, 100000 - i * 10));
+      }
+      final container = _buildContainer(store: store);
+      addTearDown(container.dispose);
+      await pumpFeed(tester, container);
 
-    // Scroll down (sets the freeze), then new posts arrive while frozen.
-    await fingerScroll(tester, const Offset(300, 450), [
-      for (var i = 0; i < 5; i++) const Offset(0, -60),
-    ]);
-    store.add(_post('fresh1', _followee, 900000));
-    await tester.pump(const Duration(milliseconds: 100));
-    // The newest visible post is still the freeze-time one.
-    expect(find.text('post fresh1 with some content to give the card height'),
+      // Scroll down (sets the freeze), then new posts arrive while frozen.
+      await fingerScroll(tester, const Offset(300, 450), [
+        for (var i = 0; i < 5; i++) const Offset(0, -60),
+      ]);
+      store.add(_post('fresh1', _followee, 900000));
+      await tester.pump(const Duration(milliseconds: 100));
+      // The newest visible post is still the freeze-time one.
+      expect(
+        find.text('post fresh1 with some content to give the card height'),
         findsNothing,
-        reason: 'new post is held back while frozen');
+        reason: 'new post is held back while frozen',
+      );
 
-    // Scroll up a touch so the (hidden) tab row is visible again, then
-    // double-tap back to the top → freeze releases → newest post shows.
-    await fingerScroll(tester, const Offset(300, 450), [
-      const Offset(0, 40),
-      const Offset(0, 40),
-    ]);
-    await doubleTap(
-        tester, tester.getCenter(find.byType(SegmentedButton<FeedMode>)));
-    expect(feedMetrics(tester).pixels, 0);
-    expect(find.text('post fresh1 with some content to give the card height'),
+      // Scroll up a touch so the (hidden) tab row is visible again, then
+      // double-tap back to the top → freeze releases → newest post shows.
+      await fingerScroll(tester, const Offset(300, 450), [
+        const Offset(0, 40),
+        const Offset(0, 40),
+      ]);
+      await doubleTap(
+        tester,
+        tester.getCenter(find.byType(SegmentedButton<FeedMode>)),
+      );
+      expect(feedMetrics(tester).pixels, 0);
+      expect(
+        find.text('post fresh1 with some content to give the card height'),
         findsOneWidget,
-        reason: 'releasing at the top must unhold the pending post');
-  });
+        reason: 'releasing at the top must unhold the pending post',
+      );
+    },
+  );
 
-  testWidgets('feed: single tap still switches mode without double-tap delay',
-      (tester) async {
+  testWidgets('feed: single tap still switches mode without double-tap delay', (
+    tester,
+  ) async {
     final store = _LiveStore();
     for (var i = 0; i < 40; i++) {
       store.store.add(_post('e$i', _followee, 100000 - i * 10));
@@ -523,8 +582,12 @@ void doubleTapTests() {
     // Single tap on 全球.
     await tester.tap(find.text('全球'));
     await tester.pump(const Duration(milliseconds: 120));
-    expect(container.read(feedModeProvider), FeedMode.global,
-        reason: 'a single tap must switch the mode promptly — the wrapping '
-            'double-tap listener must not hold the tap hostage');
+    expect(
+      container.read(feedModeProvider),
+      FeedMode.global,
+      reason:
+          'a single tap must switch the mode promptly — the wrapping '
+          'double-tap listener must not hold the tap hostage',
+    );
   });
 }
