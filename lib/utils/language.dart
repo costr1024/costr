@@ -35,9 +35,11 @@
 ///
 /// Result: 'ja' / 'ko' / 'zh' / 'en' / null. null means NO letters were
 /// gathered — empty, pure-link, numbers-only, punctuation-only, or other
-/// scripts (Cyrillic…). Feed filtering shows null-language posts under EVERY
-/// language option (a pure-link post has no language to filter by), see
-/// `currentFeedEventsProvider`.
+/// scripts (Cyrillic…). null is deliberately ambiguous and the FEED decides
+/// what it means (see `currentFeedEventsProvider` + [hasAnyLetter] /
+/// [containsUrl]): foreign-script text (letters present but none zh/en/ja)
+/// matches no language filter, pure-link posts stay visible under every
+/// option, and empty/symbol/number/emoji posts are dropped.
 library;
 
 const String _langZh = 'zh';
@@ -96,9 +98,9 @@ class _Counts {
 /// 'en' if Latin-only or Latin-dominated; else among CJK 'ko' (Hangul) >
 /// 'ja' (kana) > 'zh' (Han); null when no letters were gathered at all —
 /// either the post is empty, or it is only URLs / numbers / emoji / other
-/// scripts. Feed filtering treats null as "show under every language"
-/// (a pure-link post has no language to filter by), see
-/// `currentFeedEventsProvider`.
+/// scripts. null is ambiguous on purpose; the FEED resolves it (pure-link
+/// posts stay visible, foreign-script / empty / symbol posts are dropped) —
+/// see `currentFeedEventsProvider`, [hasAnyLetter], [containsUrl].
 String? detectLanguage(String text) {
   if (text.isEmpty) return null;
   final c = _Counts();
@@ -141,4 +143,62 @@ String? detectLanguage(String text) {
   if (c.hangul > 0) return _langKo;
   if (c.kana > 0) return _langJa;
   return _langZh;
+}
+
+/// Any Unicode letter, ANY script (Cyrillic, Arabic, Thai, Devanagari, …
+/// included — `\p{L}`). Compiled once; [hasAnyLetter] is only reached for
+/// posts [detectLanguage] already returned null for, so it is off the hot path.
+final RegExp _anyLetterRegex = RegExp(r'\p{L}', unicode: true);
+
+/// Same `https?://` span test [_isUrlStart] uses, as a whole-string scan.
+final RegExp _urlRegexForSearch = RegExp(r'https?://');
+
+/// True when [text] contains at least one Unicode letter of ANY script,
+/// counting only characters OUTSIDE `http(s)://…` spans (same URL-skipping as
+/// [detectLanguage], so the two always agree about what was evidence).
+///
+/// Feed filtering uses this to split the posts [detectLanguage] returned null
+/// for into two very different groups:
+/// - **foreign-script text** (Cyrillic «привет», Arabic, Thai, …): these ARE
+///   language evidence — just not zh/en/ja — so the post belongs to none of
+///   the filterable languages and must NOT leak into every filter the way the
+///   old "null matches everything" rule did (the "不知道什么语言的帖子混进
+///   中文流" bug).
+/// - **no letters at all** (empty, `✄--- 2:25 ---✄`, numbers-only, emoji,
+///   pure links — the URL itself is not evidence): nothing to attribute a
+///   language to — handled separately by the feed (pure-link posts stay
+///   visible, the rest are dropped).
+/// Scan is capped like [detectLanguage] so adversarial content can't drag it
+/// out.
+bool hasAnyLetter(String text) {
+  if (text.isEmpty) return false;
+  final sb = StringBuffer();
+  var i = 0;
+  var urlsSkipped = 0;
+  final n = text.length;
+  while (i < n && sb.length < _kScanCap && i < _kScanWalkLimit) {
+    if (_isUrlStart(text, i)) {
+      urlsSkipped++;
+      if (urlsSkipped > _kMaxSkippedUrls) break;
+      i = _skipUrl(text, i);
+      continue;
+    }
+    sb.writeCharCode(text.codeUnitAt(i));
+    i++;
+  }
+  return _anyLetterRegex.hasMatch(sb.toString());
+}
+
+/// True when [text] contains an `http://` / `https://` URL anywhere. The feed
+/// language filter uses it to keep pure-link posts (no letters at all) visible
+/// under every language option (v1.0.2) while dropping other undetectable
+/// posts — a bare-link post has no language to attribute, and hiding it would
+/// silently eat e.g. a Chinese user's link-only share.
+bool containsUrl(String text) {
+  if (text.isEmpty) return false;
+  final window =
+      text.length > _kScanWalkLimit
+          ? text.substring(0, _kScanWalkLimit)
+          : text;
+  return _urlRegexForSearch.hasMatch(window);
 }

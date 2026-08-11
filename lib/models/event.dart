@@ -16,11 +16,11 @@ import 'package:flutter/foundation.dart';
 
 import '../utils/language.dart';
 
-/// Note: NOT `@immutable` despite being logically immutable — [language]
-/// memoizes its detection result in a private field (safe: the inputs never
-/// change, so the cached value never goes stale). This turns the feed's
-/// language filter from "up to 4 regex scans per event per 200ms store
-/// flush" (UI-thread jank) into one detection per event instance.
+/// Note: NOT `@immutable` despite being logically immutable — [language] and
+/// [embeddedRepost] memoize their results in private fields (safe: the inputs
+/// never change, so the cached values never go stale). This turns the feed's
+/// language filter from "up to 4 regex scans + a JSON decode per event per
+/// 200ms store flush" (UI-thread jank) into one detection per event instance.
 class Event {
   Event({
     required this.id,
@@ -179,6 +179,36 @@ class Event {
       _languageComputed = true;
     }
     return _language;
+  }
+
+  /// For a kind-6/16 repost (NIP-18): the note embedded in its OWN content —
+  /// a compliant repost stringifies the reposted event as JSON, so no relay
+  /// fetch is needed to see what the user actually sees. Memoized for the same
+  /// reason [language] is: the feed language filter resolves every visible
+  /// repost on each 200ms store flush, and re-running `jsonDecode` +
+  /// `Event.fromJson` per flush janks scrolling. Returns null when this isn't
+  /// a repost, the content isn't embedded JSON, or the embedded event isn't
+  /// post-like (a repost should only embed a post).
+  Event? _embeddedRepost;
+  bool _embeddedRepostComputed = false;
+  Event? get embeddedRepost {
+    if (!_embeddedRepostComputed) {
+      _embeddedRepostComputed = true;
+      _embeddedRepost = null;
+      if (isRepost && content.isNotEmpty) {
+        try {
+          final obj = jsonDecode(content);
+          if (obj is Map<String, dynamic>) {
+            final e = Event.fromJson(obj);
+            if (e.isPostLike) _embeddedRepost = e;
+          }
+        } catch (_) {
+          // Not embedded JSON (e.g. an empty-content repost that only e-tags
+          // its target) — leave null.
+        }
+      }
+    }
+    return _embeddedRepost;
   }
 
   /// The event id this kind-1 note directly replies to (NIP-10), or null if it

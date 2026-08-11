@@ -19,6 +19,7 @@ import '../models/event.dart';
 import '../models/metadata.dart';
 import '../models/mute_set.dart';
 import '../utils/nip19.dart';
+import '../utils/language.dart';
 import '../nostr/actions.dart';
 import '../nostr/event_store.dart';
 import '../nostr/identity.dart';
@@ -2354,14 +2355,50 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
       LanguageFilter.ja => 'ja',
       LanguageFilter.all => '',
     };
+    // Reposts (kind-6/16) are judged by the note the user ACTUALLY SEES —
+    // the reposted note — not the repost wrapper, whose own content is empty
+    // (or the stringified-JSON of the target). Pre-fix, an empty wrapper
+    // read as "no language" and leaked into EVERY filter, so English
+    // reposts flooded the 中文 feed ("转发贴混进中文过滤" bug).
+    //
+    // Resolution is synchronous and memo-friendly: the embedded NIP-18 JSON
+    // ([Event.embeddedRepost], cached per event) covers compliant reposts;
+    // a store lookup covers empty-content reposts whose target already
+    // reached the store; otherwise the wrapper itself decides.
+    Map<String, Event>? byId;
+    Map<String, Event> storeIndex() =>
+        byId ??= <String, Event>{for (final ev in all) ev.id: ev};
+    Event languageSource(Event e) {
+      if (!e.isRepost) return e;
+      final embedded = e.embeddedRepost;
+      if (embedded != null) return embedded;
+      final target = e.repostedEventId;
+      if (target != null) {
+        final inner = storeIndex()[target];
+        if (inner != null) return inner;
+      }
+      return e;
+    }
+
     // [Event.language] is memoized per event instance — the store dedupes by
-    // id and reuses instances across rebuilds, so each event's content is
-    // scanned once, not on every 200ms store flush. A `null` language (pure
-    // link / numbers / emoji / other-script post) matches EVERY filter: a
-    // post with no detectable language is shown, not silently dropped.
+    // id and reuses instances across rebuilds, so each post's content is
+    // scanned once, not on every 200ms store flush. A `null` language means
+    // no letters were gathered; the feed then splits those posts instead of
+    // the old "null matches EVERY filter" rule, which leaked empty posts,
+    // `✄--- 2:25 ---✄` symbol posts and Cyrillic/Arabic/… posts into the
+    // 中文 feed ("不含中文的帖子混进来" bug):
+    // - letters of a foreign script present → belongs to none of zh/en/ja →
+    //   dropped from every specific filter;
+    // - no letters at all but a URL present → pure-link post, nothing to
+    //   attribute a language to → kept visible (v1.0.2 decision);
+    // - no letters, no URL (empty / symbols / numbers / emoji) → dropped.
     events = events.where((e) {
-      final l = e.language;
-      return l == null || l == want;
+      final src = languageSource(e);
+      final l = src.language;
+      if (l != null) return l == want;
+      final c = src.content;
+      if (hasAnyLetter(c)) return false; // foreign script, not the target
+      return containsUrl(c); // pure-link posts stay; other junk goes
     });
   }
   if (tag != null) {
@@ -2562,17 +2599,10 @@ final quotedEventProvider = FutureProvider.family<Event?, String>((
 /// so a compliant repost carries the full embedded note — no relay fetch
 /// needed. Returns null when [repost] isn't a repost, has no embedded JSON,
 /// or the embedded event isn't post-like (a repost should only embed a post).
-Event? parseEmbeddedRepost(Event repost) {
-  if (!repost.isRepost || repost.content.isEmpty) return null;
-  try {
-    final obj = jsonDecode(repost.content);
-    if (obj is Map<String, dynamic>) {
-      final e = Event.fromJson(obj);
-      return e.isPostLike ? e : null;
-    }
-  } catch (_) {}
-  return null;
-}
+/// Delegates to the memoized [Event.embeddedRepost] so the feed language
+/// filter (which resolves every visible repost on each 200ms flush) doesn't
+/// re-run `jsonDecode` + `Event.fromJson` repeatedly.
+Event? parseEmbeddedRepost(Event repost) => repost.embeddedRepost;
 
 /// Relay hints (NIP-01 `e` tag t[2]) pointing at where to find [repostedId]
 /// on [repost]'s tags. Used to target a fetchFromUrls when the repost didn't

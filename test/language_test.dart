@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:costr/models/event.dart';
 import 'package:costr/utils/language.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -93,7 +95,8 @@ void main() {
         detectLanguage('Check this out https://example.com/xyz great stuff'),
         'en',
       );
-      // Pure links → no letters at all → null (shown under every filter).
+      // Pure links → no letters at all → null. The FEED then keeps pure-link
+      // posts visible (v1.0.2) — see feed_language_filter_test.
       expect(detectLanguage('https://example.com/x'), isNull);
     });
 
@@ -105,8 +108,9 @@ void main() {
       ).join(' ');
       expect(detectLanguage('中文内容 $manyUrls'), 'zh');
       // A wall of >10 links with NO text before them: the scan stops at the
-      // 11th link, nothing was gathered → null (shown under every filter),
-      // and any text AFTER the 11th link is deliberately ignored.
+      // 11th link, nothing was gathered → null, and any text AFTER the 11th
+      // link is deliberately ignored. (Feed treats such pure-link posts as
+      // visible under every filter.)
       expect(detectLanguage(manyUrls), isNull);
       expect(detectLanguage('$manyUrls 这是中文'), isNull);
       // Interleaved text + links (≤10 links) still reaches the text → zh.
@@ -126,6 +130,29 @@ void main() {
       // CJK PUNCTUATION alone is not language evidence (used to match the
       // old Han range and leak punctuation-only posts into the zh filter).
       expect(detectLanguage('。、《》【'), isNull);
+    });
+  });
+
+  group('hasAnyLetter / containsUrl (null-resolution helpers)', () {
+    test('hasAnyLetter: any script counts, non-letters do not', () {
+      expect(hasAnyLetter('hello'), isTrue);
+      expect(hasAnyLetter('今天'), isTrue);
+      expect(hasAnyLetter('привет'), isTrue); // Cyrillic
+      expect(hasAnyLetter('مرحبا'), isTrue); // Arabic
+      expect(hasAnyLetter('สวัสดี'), isTrue); // Thai
+      expect(hasAnyLetter('12345'), isFalse);
+      expect(hasAnyLetter('✄------------ 2:25 ------------✄'), isFalse);
+      expect(hasAnyLetter('🎉🎉'), isFalse);
+      expect(hasAnyLetter('。、《》【'), isFalse);
+      expect(hasAnyLetter('https://example.com/123'), isFalse);
+      expect(hasAnyLetter(''), isFalse);
+    });
+
+    test('containsUrl', () {
+      expect(containsUrl('https://example.com'), isTrue);
+      expect(containsUrl('see http://x.y/z ok'), isTrue);
+      expect(containsUrl('no link here'), isFalse);
+      expect(containsUrl(''), isFalse);
     });
   });
 
@@ -154,6 +181,85 @@ void main() {
       // Read again — must come from the memo, same value.
       expect(e.language, first);
       expect(e.language, 'ja');
+    });
+  });
+
+  group('Event.embeddedRepost (memoized NIP-18 parse)', () {
+    Event repost(String content) => Event(
+      id: 'rp',
+      pubkey: 'pk',
+      createdAt: 0,
+      kind: 6,
+      tags: const [
+        ['e', 'target'],
+      ],
+      content: content,
+      sig: '',
+    );
+
+    test('parses an embedded kind-1 note from the repost content', () {
+      final inner = jsonEncode({
+        'id': 'in1',
+        'pubkey': 'pk2',
+        'created_at': 1,
+        'kind': 1,
+        'tags': const [],
+        'content': '内嵌的帖子',
+        'sig': 's',
+      });
+      final rp = repost(inner);
+      expect(rp.embeddedRepost, isNotNull);
+      expect(rp.embeddedRepost!.content, '内嵌的帖子');
+      expect(rp.embeddedRepost!.id, 'in1');
+    });
+
+    test('returns null for an empty-content (e-tag-only) repost', () {
+      expect(repost('').embeddedRepost, isNull);
+    });
+
+    test('returns null when content is not embedded JSON', () {
+      expect(repost('just some text, not JSON').embeddedRepost, isNull);
+    });
+
+    test('returns null when the embedded event is not post-like', () {
+      final notPost = jsonEncode({
+        'id': 'm1',
+        'pubkey': 'pk2',
+        'created_at': 1,
+        'kind': 0, // metadata, not a post
+        'tags': const [],
+        'content': '{}',
+        'sig': 's',
+      });
+      expect(repost(notPost).embeddedRepost, isNull);
+    });
+
+    test('a non-repost never has an embedded repost', () {
+      final note = Event(
+        id: 'n',
+        pubkey: 'pk',
+        createdAt: 0,
+        kind: 1,
+        tags: const [],
+        content: '{"id":"x"}',
+        sig: '',
+      );
+      expect(note.embeddedRepost, isNull);
+    });
+
+    test('repeated reads are stable (cached after first)', () {
+      final inner = jsonEncode({
+        'id': 'in2',
+        'pubkey': 'pk2',
+        'created_at': 1,
+        'kind': 1,
+        'tags': const [],
+        'content': 'hi',
+        'sig': 's',
+      });
+      final rp = repost(inner);
+      final first = rp.embeddedRepost;
+      expect(identical(rp.embeddedRepost, first), isTrue);
     });
   });
 }

@@ -1,10 +1,18 @@
-// Regression: language-filtered global feed. A post whose language can't be
-// detected (pure link / numbers / emoji) must show under EVERY language
-// option — not be silently dropped — while a detected language still filters
-// correctly (Chinese post hidden from the English filter and vice versa).
+// Regression: language-filtered global feed.
 //
-// Motivated by the fix that makes URL-only posts classify as null (links are
-// not language evidence); they must remain visible in 中文/英文/日文 filters.
+// Two bugs fixed together:
+// 1. "null matches EVERY filter" used to leak posts with no detectable
+//    language into 中文/英文/日文 — empty posts, `✄--- 2:25 ---✄` symbol
+//    posts, emoji posts, and Cyrillic/Arabic/… foreign-script posts. Now a
+//    specific filter shows only posts detected as that language; among the
+//    undetectable (null) posts, ONLY pure-link posts stay visible (v1.0.2),
+//    while foreign-script / empty / symbol / number / emoji posts are dropped.
+// 2. Reposts (kind-6) used to be classified by the wrapper's own content
+//    (empty or the target's JSON) instead of the reposted note the user sees,
+//    so English reposts flooded the 中文 filter. Now a repost is judged by its
+//    reposted note (embedded NIP-18 JSON first, then a store lookup).
+
+import 'dart:convert';
 
 import 'package:costr/app/providers.dart';
 import 'package:costr/models/event.dart';
@@ -57,11 +65,75 @@ Event _post(String id, int createdAt, String content) => Event(
   sig: 's' * 128,
 );
 
+/// Stringified-JSON of an embedded note (NIP-18 repost content).
+String _embeddedJson(String innerId, String innerContent) => jsonEncode({
+  'id': innerId,
+  'pubkey': 'b' * 64,
+  'created_at': 100,
+  'kind': 1,
+  'tags': const [],
+  'content': innerContent,
+  'sig': 's' * 128,
+});
+
+/// A kind-6 repost; [content] is either embedded JSON or '' (e-tag-only).
+Event _repost(String id, int createdAt, String content, String targetId) =>
+    Event(
+      id: id,
+      pubkey: 'c' * 64,
+      createdAt: createdAt,
+      kind: 6,
+      tags: [
+        ['e', targetId],
+      ],
+      content: content,
+      sig: 's' * 128,
+    );
+
 void main() {
+  // Plain notes.
   final zhPost = _post('zh01', 300, '今天天气真好');
-  final enPost = _post('en01', 200, 'Hello world');
-  final pureUrl = _post('url01', 100, 'https://example.com/download');
-  final emojiOnly = _post('emo01', 50, '🎉🎉🎉');
+  final enPost = _post('en01', 290, 'Hello world');
+  final pureUrl = _post('url01', 280, 'https://example.com/download');
+  final emojiOnly = _post('emo01', 270, '🎉🎉🎉');
+  final emptyPost = _post('empty01', 260, '');
+  final symbolPost = _post('sym01', 250, '✄------------ 2:25 ------------✄');
+  final cyrillicPost = _post('cyr01', 240, 'привет мир');
+
+  // Reposts: embedded-JSON targets need not be in the store; e-tag-only
+  // targets (tgtEn/tgtZh) ARE in the store so the store-lookup path resolves.
+  final targetEn = _post('tgtEn', 230, 'This is the English original');
+  final targetZh = _post('tgtZh', 220, '这是中文原帖');
+  final repostEmbEn = _repost(
+    'rpEmbEn',
+    210,
+    _embeddedJson('inEn', 'Embedded English note'),
+    'inEn',
+  );
+  final repostEmbZh = _repost(
+    'rpEmbZh',
+    200,
+    _embeddedJson('inZh', '内嵌中文帖'),
+    'inZh',
+  );
+  final repostEmptyEn = _repost('rpEmptyEn', 190, '', 'tgtEn');
+  final repostEmptyZh = _repost('rpEmptyZh', 180, '', 'tgtZh');
+
+  final all = [
+    zhPost,
+    enPost,
+    pureUrl,
+    emojiOnly,
+    emptyPost,
+    symbolPost,
+    cyrillicPost,
+    targetEn,
+    targetZh,
+    repostEmbEn,
+    repostEmbZh,
+    repostEmptyEn,
+    repostEmptyZh,
+  ];
 
   ProviderContainer buildContainer(LanguageFilter f) {
     final container = ProviderContainer(
@@ -70,9 +142,7 @@ void main() {
         languageFilterProvider.overrideWith(() => _LangFilter(f)),
         tagFilterProvider.overrideWith(() => _NoTagFilter()),
         identityProvider.overrideWith(() => _Id()),
-        eventStoreProvider.overrideWith(
-          () => _FixedStore([zhPost, enPost, pureUrl, emojiOnly]),
-        ),
+        eventStoreProvider.overrideWith(() => _FixedStore(all)),
         myMuteSetProvider.overrideWith((ref) => const MuteSet()),
         feedSubscriptionProvider.overrideWith((ref) {}),
         followingOutboxProvider.overrideWith((ref) {}),
@@ -87,33 +157,51 @@ void main() {
 
   test('all → everything visible', () {
     final c = buildContainer(LanguageFilter.all);
-    expect(ids(c), containsAll(['zh01', 'en01', 'url01', 'emo01']));
+    expect(ids(c), containsAll(all.map((e) => e.id)));
   });
 
-  test('zh → Chinese + undetectable (pure-url/emoji); English hidden', () {
-    final c = buildContainer(LanguageFilter.zh);
-    final got = ids(c);
+  test('zh → only Chinese + pure-link; junk and foreign hidden', () {
+    final got = ids(buildContainer(LanguageFilter.zh));
+    // Detected Chinese (incl. reposts whose reposted note is Chinese).
     expect(got, contains('zh01'));
-    expect(got, contains('url01')); // pure link → shown under every filter
-    expect(got, contains('emo01')); // emoji-only → undetectable → shown
+    expect(got, contains('tgtZh'));
+    expect(got, contains('rpEmbZh'));
+    expect(got, contains('rpEmptyZh'));
+    // Pure-link stays visible under every filter (v1.0.2).
+    expect(got, contains('url01'));
+    // English (notes AND reposts whose reposted note is English) hidden.
     expect(got, isNot(contains('en01')));
+    expect(got, isNot(contains('tgtEn')));
+    expect(got, isNot(contains('rpEmbEn')));
+    expect(got, isNot(contains('rpEmptyEn')));
+    // Undetectable junk hidden: empty / symbol / emoji / foreign-script.
+    expect(got, isNot(contains('empty01')));
+    expect(got, isNot(contains('sym01')));
+    expect(got, isNot(contains('emo01')));
+    expect(got, isNot(contains('cyr01')));
   });
 
-  test('en → English + undetectable; Chinese hidden', () {
-    final c = buildContainer(LanguageFilter.en);
-    final got = ids(c);
+  test('en → only English + pure-link; Chinese/foreign/junk hidden', () {
+    final got = ids(buildContainer(LanguageFilter.en));
     expect(got, contains('en01'));
+    expect(got, contains('tgtEn'));
+    expect(got, contains('rpEmbEn'));
+    expect(got, contains('rpEmptyEn'));
     expect(got, contains('url01'));
-    expect(got, contains('emo01'));
     expect(got, isNot(contains('zh01')));
+    expect(got, isNot(contains('tgtZh')));
+    expect(got, isNot(contains('rpEmbZh')));
+    expect(got, isNot(contains('rpEmptyZh')));
+    expect(got, isNot(contains('cyr01')));
+    expect(got, isNot(contains('emo01')));
   });
 
-  test('ja → undetectable only (no Japanese posts present)', () {
-    final c = buildContainer(LanguageFilter.ja);
-    final got = ids(c);
+  test('ja → only pure-link (no Japanese posts present)', () {
+    final got = ids(buildContainer(LanguageFilter.ja));
     expect(got, contains('url01'));
-    expect(got, contains('emo01'));
     expect(got, isNot(contains('zh01')));
     expect(got, isNot(contains('en01')));
+    expect(got, isNot(contains('cyr01')));
+    expect(got, isNot(contains('emo01')));
   });
 }
