@@ -1058,6 +1058,21 @@ class EventStoreNotifier extends Notifier<List<Event>> {
           _persist(e);
           _scheduleFlush();
         }
+        // Eviction-PROOF copy of interactions (kind 6/16 reposts, kind 7
+        // reactions): the capped store evicts kind-7 FIRST, so a like
+        // delivered by a long-lived sub (the notifications #e REQ, the
+        // following feed) dies ~25ms after arrival on a saturated feed —
+        // the notification center showed it, but the post's detail page /
+        // chevron found nothing ("通知里有点赞提醒，点进去看不到"). Ingest
+        // every arriving interaction into the cache too, regardless of
+        // which subscription carried it. The merged stream never contains
+        // the routed global firehose, so the cache's "never the firehose"
+        // invariant holds; its LRU caps (200 targets × 500) bound memory.
+        if (e.kind == 6 || e.kind == 7 || e.kind == Event.kindGenericRepost) {
+          if (!_disposed) {
+            ref.read(interactionCacheProvider.notifier).ingest([e]);
+          }
+        }
       } else if (_isReplaceableKind(e.kind)) {
         // Replaceable kinds (kind 3 / 10002 / 30000 / 10003 / 30315 / 10063 …)
         // — small, PK-deduped, ALWAYS persisted per CACHE_DESIGN §4 (no
@@ -2446,17 +2461,15 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   // carrying muted hashtags, posts whose content contains a muted word, and
   // individually muted events. Owner's private (NIP-44) mutes are decrypted
   // in [muteListProvider]. Applies in both global + following modes.
+  //
+  // Repost wrappers ARE dropped when the REPOSTER is muted; a repost of a
+  // muted author's note is NOT dropped here — the card stays on the timeline
+  // but its embed renders only a 「该账号已被屏蔽」hint until the user taps it
+  // open (see _RepostedEmbed), matching how reply-context previews of muted
+  // posts behave ("被屏蔽的账号在时间线上不可见" requirement).
   final mute = ref.watch(myMuteSetProvider);
   if (!mute.isEmpty) {
-    events = events.where((e) {
-      if (mute.isMutedPubkey(e.pubkey)) return false;
-      if (mute.isMutedEvent(e.id)) return false;
-      if (e.isTextNote) {
-        if (mute.contentHasMutedWord(e.content)) return false;
-        if (mute.hasMutedHashtag(e.hashtags)) return false;
-      }
-      return true;
-    });
+    events = events.where((e) => !mute.hidesEvent(e));
   }
   return events.toList();
 });
@@ -3777,9 +3790,11 @@ final interactionRevisionProvider = Provider<int>((ref) {
 /// exposed int is the cache's revision counter, the reactive handle:
 /// [InteractionIndexNotifier] watches it and re-reads
 /// [InteractionCacheNotifier.cache] (same bump-pattern as
-/// [kind30000VersionProvider]). Fed from exactly two places:
-/// [interactorsProvider] (thread-open #e fetch) and the user's own
-/// publishes (post_actions.dart) — never the firehose.
+/// [kind30000VersionProvider]). Fed from three places: the merged relay
+/// stream (every interaction delivered by ANY unrouted sub — following feed,
+/// notifications #e REQ, targeted fetches — ingested by the EventStore stream
+/// listener), [interactorsProvider] (thread-open #e fetch), and the user's own
+/// publishes (post_actions.dart) — never the routed global firehose.
 class InteractionCacheNotifier extends Notifier<int> {
   InteractionCache _cache = InteractionCache();
   InteractionCache get cache => _cache;
@@ -4270,57 +4285,107 @@ final reactionsProvider =
       return stats?.reactions ?? const {};
     });
 
-/// Raw kind-7 reactions + kind-6/16 reposts referencing [eventId],
-/// newest-first — the "who liked / reposted this" list (tallies alone only
-/// show counts; users want the actual people + their reaction/quote).
-/// In-memory snapshot first (instant, covers what the feed already saw),
-/// then a one-shot pool REQ {kinds:[6,16,7], "#e":[id]} resolving on the
-/// first relay EOSE (or 8s) like [repliesProvider] — a slow relay must not
-/// stall the list.
-///
-/// autoDispose + watched by BOTH the thread page and [InteractionsPage]:
-/// the thread page opens → this runs the fetch. The fetched events ALSO go
-/// into the eviction-proof [interactionCacheProvider] (the capped store
-/// evicts kind-7 FIRST — on a saturated firehose a fetched reaction lives
-/// ~25ms there, which dead-locked the like tally / chips / chevron
-/// invisible: "看不到帖子的点赞列表" + the v1.0.6 follow-up "点赞不显示、
-/// 点了几次都没用" reports). The seed reads the cache too, so revisiting a
-/// thread shows its previously-fetched interactions instantly, before the
-/// fresh REQ answers. Disposing when the pages close re-queries on every
-/// later visit (a session-cached non-autoDispose instance would serve a
-/// stale first-fetch forever).
-final interactorsProvider = FutureProvider.autoDispose
-    .family<List<Event>, String>((ref, eventId) async {
-      bool matches(Event e) {
-        if (e.kind != 7 && !e.isRepost) return false;
-        for (final t in e.tags) {
-          if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) return true;
-        }
-        return false;
-      }
+/// True if [e] is a kind-7 reaction or kind-6/16 repost that references
+/// [eventId] via an `e` tag — i.e. an interaction ON that post. Shared by
+/// [interactorsProvider] (fetch + seed) and [interactorEventsProvider]
+/// (the live list).
+@visibleForTesting
+bool isInteractorOf(Event e, String eventId) {
+  if (e.kind != 7 && !e.isRepost) return false;
+  for (final t in e.tags) {
+    if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) return true;
+  }
+  return false;
+}
 
+/// Live "who liked / reposted [eventId]" event list: the capped store (what
+/// the feed saw) merged with the eviction-proof interaction cache (thread-open
+/// fetches, live relay deliveries, own publishes), newest-first. Rebuilds on
+/// EITHER source's revision bump, so late relay answers and likes arriving
+/// while the page is open keep growing the list after the initial fetch
+/// resolves — the page must never be stuck on its first (possibly empty)
+/// snapshot.
+final interactorEventsProvider =
+    Provider.family<List<Event>, String>((ref, eventId) {
+      ref.watch(interactionRevisionProvider);
+      ref.watch(interactionCacheProvider);
       final merged = <String, Event>{
         for (final e in ref.read(eventStoreProvider))
-          if (matches(e)) e.id: e,
-        // Cache tier: what earlier fetches/publishes recorded for this post
-        // (the store may have evicted its copies already).
+          if (isInteractorOf(e, eventId)) e.id: e,
         for (final e
             in ref.read(interactionCacheProvider.notifier).cache.events)
-          if (matches(e)) e.id: e,
+          if (isInteractorOf(e, eventId)) e.id: e,
+      };
+      return merged.values.toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    });
+
+/// Fetches [eventId]'s kind-7 reactions + kind-6/16 reposts with a pool REQ
+/// {kinds:[6,16,7], "#e":[id]} and seeds them into the eviction-proof
+/// [interactionCacheProvider] (the capped store evicts kind-7 FIRST — on a
+/// saturated firehose a fetched reaction lives ~25ms there, which dead-locked
+/// the like tally / chips / chevron invisible: "看不到帖子的点赞列表" + the
+/// v1.0.6 follow-up "点赞不显示、点了几次都没用" reports).
+///
+/// autoDispose + watched by BOTH the thread page and [InteractionsPage]:
+/// the thread page opens → this runs the fetch. The seed reads store + cache,
+/// so revisiting a thread shows its previously-fetched interactions
+/// instantly, before the fresh REQ answers. Disposing when the pages close
+/// re-queries on every later visit (a session-cached non-autoDispose instance
+/// would serve a stale first-fetch forever).
+///
+/// Resolution + lifetime rules (the "通知里有点赞提醒，点进去看不到" fix):
+/// the old code resolved on the FIRST relay's EOSE and then closed the sub on
+/// ALL relays. A relay WITHOUT the like answers empty-EOSE fastest — the
+/// fetch got cancelled before the relay that HAS the like could respond,
+/// resolved empty, ingested nothing, and the chevron stayed hidden (why some
+/// likes showed and some didn't: pure relay-response lottery). Now:
+///  * every matching event is ingested into the cache THE MOMENT it arrives
+///    (incrementally, not just at resolution), so tallies/chips/chevron
+///    populate live regardless of when the future settles;
+///  * the future resolves on the first EOSE only when something was already
+///    collected, else it waits until every relay connected at request time
+///    has EOSE'd (a genuinely empty answer set) or the 8s deadline;
+///  * the REQ stays open (closeOnEose: false) until BOTH pages dispose it,
+///    so late relay answers AND live new likes keep flowing into the cache
+///    the whole time the post is on screen.
+final interactorsProvider = FutureProvider.autoDispose
+    .family<List<Event>, String>((ref, eventId) async {
+      final merged = <String, Event>{
+        for (final e in ref.read(interactorEventsProvider(eventId)))
+          e.id: e,
       };
       final pool = ref.watch(relayPoolProvider);
-      final completer = Completer<void>();
+      final cacheNotifier = ref.read(interactionCacheProvider.notifier);
       final sub = pool.rawEvents.listen((e) {
-        if (matches(e)) merged[e.id] = e;
+        if (!isInteractorOf(e, eventId)) return;
+        merged[e.id] = e;
+        // Incremental ingest: survives early disposal AND populates the
+        // tallies live (the merged stream ALSO feeds the cache via the store
+        // listener, but a like delivered under THIS sub must not depend on
+        // that path being alive).
+        cacheNotifier.ingest([e]);
       });
       final subId = nextSubId('interactors');
+      final connectedAtRequest = pool.states
+          .where((s) => s.status == RelayStatus.connected)
+          .length;
+      var eoseCount = 0;
+      final completer = Completer<void>();
       final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-        if (!completer.isCompleted) completer.complete();
+        eoseCount++;
+        // No first-EOSE stampede: an empty first EOSE means nothing more than
+        // "this relay was fast/empty" — keep waiting for the rest (bounded
+        // by the timeout below).
+        if (!completer.isCompleted &&
+            (merged.isNotEmpty || eoseCount >= connectedAtRequest)) {
+          completer.complete();
+        }
       });
       pool.request(subId, <String, dynamic>{
         'kinds': [Event.kindRepost, Event.kindGenericRepost, 7],
         '#e': [eventId],
-      }, closeOnEose: true);
+      });
       ref.onDispose(() {
         sub.cancel();
         eoseSub.cancel();
@@ -4332,16 +4397,14 @@ final interactorsProvider = FutureProvider.autoDispose
           onTimeout: () {},
         );
       } finally {
-        await sub.cancel();
+        // NOTE: the REQ + rawEvents listener intentionally stay open until
+        // dispose (see class doc) — only the resolution plumbing is torn
+        // down here.
         await eoseSub.cancel();
-        pool.closeSubscription(subId);
       }
       final list = merged.values.toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      // Persist the result in the eviction-proof cache so the store-derived
-      // tallies / chips / chevron keep showing it (the store's own copies
-      // die to kind-7-first eviction within milliseconds on a busy feed).
-      ref.read(interactionCacheProvider.notifier).ingest(list);
+      cacheNotifier.ingest(list);
       return list;
     });
 

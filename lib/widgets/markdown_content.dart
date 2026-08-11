@@ -854,6 +854,7 @@ class _EventEmbed extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final mute = ref.watch(myMuteSetProvider);
     final async = ref.watch(quotedEventProvider(_key));
     final ev = async.value;
     if (ev == null) {
@@ -883,6 +884,32 @@ class _EventEmbed extends ConsumerWidget {
       );
     }
     final meta = ref.watch(metadataProvider(ev.pubkey)).value;
+    // Muted quoted note: name + content stay hidden; only the hint shows
+    // until the user explicitly taps the card open (same rule as the
+    // reply-context preview in EventCard).
+    if (mute.hidesEvent(ev)) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => pushPostDetail(context, ev.id),
+        child: Container(
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: CostrColors.of(context).bg2,
+            border: Border(
+              left: BorderSide(color: theme.colorScheme.outline, width: 3),
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            mute.hintFor(ev),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: CostrColors.of(context).text3,
+            ),
+          ),
+        ),
+      );
+    }
     // Non-post events (reactions, contact lists, …) referenced via nevent must
     // NOT be rendered as a quote post card. Show a compact inline label
     // instead (Amethyst pattern). Only post-like kinds (1/6/16/30023) get the

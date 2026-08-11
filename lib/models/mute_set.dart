@@ -7,6 +7,8 @@
 /// See https://github.com/nostr-protocol/nips/blob/master/51.md
 library;
 
+import 'event.dart';
+
 /// An immutable muted-set. Empty sets are cheap to share.
 class MuteSet {
   const MuteSet({
@@ -56,6 +58,29 @@ class MuteSet {
   }
 
   bool isMutedEvent(String id) => eventIds.contains(id);
+
+  /// True when [e] must be hidden entirely: muted author, individually muted
+  /// event, or — for text notes — a muted word/hashtag in the content. The
+  /// single predicate every rendering surface applies (feed filter, reply
+  /// context, quote/repost embeds, thread replies, search) so a muted post
+  /// cannot leak back in through a secondary surface ("屏蔽了他，关注的人一
+  /// 回复/转发就又能看到他的帖子" bug).
+  bool hidesEvent(Event e) {
+    if (isMutedPubkey(e.pubkey)) return true;
+    if (isMutedEvent(e.id)) return true;
+    if (e.isTextNote) {
+      if (contentHasMutedWord(e.content)) return true;
+      if (hasMutedHashtag(e.hashtags)) return true;
+    }
+    return false;
+  }
+
+  /// User-facing hint for a hidden event — names the reason without leaking
+  /// any content: a blocked author vs. some other mute rule (word/hashtag/
+  /// the event itself). Shown wherever a muted post would surface; the
+  /// content itself only appears if the user explicitly opens it.
+  String hintFor(Event e) =>
+      isMutedPubkey(e.pubkey) ? '该账号已被屏蔽' : '已屏蔽的内容';
 }
 
 /// An entry to add/remove from the mute list — a Nostr tag pair.

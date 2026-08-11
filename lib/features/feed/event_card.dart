@@ -351,8 +351,27 @@ class _RepostedEmbed extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final mute = ref.watch(myMuteSetProvider);
     final async = ref.watch(repostedEventProvider(repost.id));
     final ev = async.value;
+    // Muted note → hint only (「该账号已被屏蔽」); name + content stay
+    // hidden until the user explicitly taps the hint open. The feed keeps
+    // the repost card (the reposter isn't muted), the embed does not leak.
+    if (ev != null && mute.hidesEvent(ev)) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => pushPostDetail(context, ev.id),
+          child: Text(
+            mute.hintFor(ev),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: CostrColors.of(context).text3,
+            ),
+          ),
+        ),
+      );
+    }
     if (ev == null) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
@@ -415,6 +434,7 @@ class _ReplyContext extends ConsumerWidget {
     // Resolve the parent event (instant when cached/in-store, bounded relay
     // fetch otherwise). Watched so the box fills in the moment it lands.
     final parentEvent = ref.watch(eventByIdProvider(parent)).value;
+    final mute = ref.watch(myMuteSetProvider);
 
     // Parent author for the header line: prefer the resolved event, fall back
     // to an O(1) live-store lookup so "回复 @name" renders before the async
@@ -422,6 +442,48 @@ class _ReplyContext extends ConsumerWidget {
     // a full linear scan of the store on EVERY card build).
     String? parentPubkey = parentEvent?.pubkey;
     parentPubkey ??= ref.read(eventStoreProvider.notifier).byId(parent)?.pubkey;
+
+    // Muted parent → name + content stay hidden; only a hint is shown until
+    // the user explicitly taps through ("屏蔽了他，关注的人一回复就又能看到
+    // 他的帖子" bug — this box used to render the blocked author's post
+    // under a followed user's reply). Full predicate once the event
+    // resolved; the pubkey alone already proves authorship before that.
+    final parentMuted = parentEvent != null
+        ? mute.hidesEvent(parentEvent)
+        : (parentPubkey != null && mute.isMutedPubkey(parentPubkey));
+    if (parentMuted) {
+      final hint = parentEvent != null
+          ? mute.hintFor(parentEvent)
+          : '该账号已被屏蔽';
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: InkWell(
+          onTap: () => pushPostDetail(context, parent),
+          child: Row(
+            children: [
+              Icon(
+                Icons.visibility_off_outlined,
+                size: 14,
+                color: CostrColors.of(context).text3,
+              ),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  hint,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: CostrColors.of(context).text3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (parentPubkey == null) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),

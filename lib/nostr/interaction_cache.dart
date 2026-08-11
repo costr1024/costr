@@ -7,14 +7,19 @@
 /// pagination and evicts kind-7 FIRST (highest-volume, cheapest to lose).
 /// Once the global firehose saturates the cap, EVERY incoming event evicts
 /// the oldest held kind-7, so a reaction lives ~one event-arrival (~25ms on
-/// a busy firehose): reactions fetched on thread-open and the local echo of
-/// the user's OWN just-published reaction both disappear before the UI can
-/// show them ("点赞不显示、点了几次都没用" — the user taps repeatedly
+/// a busy firehose): reactions fetched on thread-open, reactions/reposts
+/// delivered by ANY unrouted subscription (following feed, the notifications
+/// #e REQ — ingested by the EventStore merged-stream listener), and the local
+/// echo of the user's OWN just-published reaction all disappear before the UI
+/// can show them ("点赞不显示、点了几次都没用" — the user taps repeatedly
 /// because the heart never fills, stacking duplicate reactions on the
-/// relays). This cache never ingests the firehose, only targeted fetches
-/// (interactorsProvider) and the user's own publishes, so it cannot be
-/// crowded out; the tradeoff is deliberate — feed-card tallies stay a
-/// lower bound until a thread is opened (documented PostCounts semantics).
+/// relays; "通知里有点赞提醒，点进帖子却看不到" — the notification center's
+/// long-lived sub saw the like, but nothing kept it for the detail page).
+/// This cache never ingests the ROUTED global firehose — only what the
+/// following/notification/lookup traffic and the user's own publishes carry —
+/// so it cannot be crowded out; the tradeoff is deliberate — feed-card
+/// tallies stay a lower bound until a thread is opened (documented
+/// PostCounts semantics).
 library;
 
 import 'dart:collection';

@@ -91,6 +91,9 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Mute set applies to the whole thread: muted ancestors/replies stay
+    // invisible (see below); the focused post itself is explicit navigation.
+    final mute = ref.watch(myMuteSetProvider);
     // Fetch this post's reactions/reposts while the thread is open. The
     // like tally / reaction chips / 「谁点赞/转发了」chevron all derive from
     // the capped in-memory store, which evicts kind-7 first — on a live
@@ -132,8 +135,15 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
             }
             // chain is root-first ending in focused; null while still loading.
             final chain = chainAv.value ?? const <Event>[];
+            // Muted authors vanish from the chain too (屏蔽 applies to the
+            // thread, not just the feed). The focused post itself stays —
+            // the user navigated to it explicitly. Dropped ancestors simply
+            // leave a gap; replies below re-thread on their own.
             final ancestors = chain.length > 1
-                ? chain.sublist(0, chain.length - 1)
+                ? chain
+                      .sublist(0, chain.length - 1)
+                      .where((e) => !mute.hidesEvent(e))
+                      .toList()
                 : <Event>[];
             final displayFocused = chain.isNotEmpty ? chain.last : focused;
             final theme = Theme.of(context);
@@ -251,6 +261,9 @@ class _RepliesSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(repliesProvider(eventId));
+    // Mute set is read at the top (not inside the data closure) so the watch
+    // is registered on every build.
+    final mute = ref.watch(myMuteSetProvider);
     return async.when(
       loading: () => const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
@@ -258,7 +271,13 @@ class _RepliesSection extends ConsumerWidget {
       ),
       error: (Object e, _) => Text('回复加载失败：$e'),
       data: (List<Event> replies) {
-        if (replies.isEmpty) {
+        // Replies from muted authors are dropped BEFORE threading — their
+        // children get reparented to the root by [threadReplies], so a
+        // blocked author can't hide a conversation branch, only themself.
+        final shown = mute.isEmpty
+            ? replies
+            : replies.where((e) => !mute.hidesEvent(e)).toList();
+        if (shown.isEmpty) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
             child: Center(child: Text('暂无回复')),
@@ -267,7 +286,7 @@ class _RepliesSection extends ConsumerWidget {
         // Flatten into a timeline-ordered + hierarchical tree (each reply
         // followed by its own sub-thread) and indent per depth so the reply
         // structure is visible instead of a flat createdAt-desc jumble.
-        final threaded = threadReplies(replies, eventId);
+        final threaded = threadReplies(shown, eventId);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[

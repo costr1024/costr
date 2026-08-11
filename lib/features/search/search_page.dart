@@ -255,6 +255,7 @@ class _PostsSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(searchPostsProvider(query));
+    final mute = ref.watch(myMuteSetProvider);
     return async.when(
       loading: () => const SliverToBoxAdapter(
         child: Padding(
@@ -269,7 +270,12 @@ class _PostsSection extends ConsumerWidget {
         ),
       ),
       error: (Object e, _) => SliverToBoxAdapter(child: Text('帖子搜索失败：$e')),
-      data: (List<Event> posts) {
+      data: (List<Event> allPosts) {
+        // Blocked accounts stay invisible in search results too; the header
+        // count reflects what is actually shown.
+        final posts = mute.isEmpty
+            ? allPosts
+            : allPosts.where((e) => !mute.hidesEvent(e)).toList();
         if (posts.isEmpty) {
           return const SliverToBoxAdapter(
             child: Padding(padding: EdgeInsets.all(16), child: Text('无帖子结果')),

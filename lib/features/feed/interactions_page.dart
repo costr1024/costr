@@ -23,26 +23,30 @@ class InteractionsPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Watched to TRIGGER the #e REQ (and surface fetch errors); the rows
+    // themselves come from [interactorEventsProvider] — the live store+cache
+    // merge — so late relay answers and likes arriving while the page is open
+    // grow the list instead of being stuck on the first (possibly empty)
+    // fetch snapshot ("通知里有点赞、点进来却没有" — the old first-EOSE-resolved
+    // future often settled empty before the relay holding the like answered).
     final async = ref.watch(interactorsProvider(id));
+    final events = ref.watch(interactorEventsProvider(id));
     return ImmersiveScaffold(
       topBar: AppBar(title: const Text('点赞与转发')),
-      body: async.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (Object e, _) => Center(child: Text('加载失败：$e')),
-        data: (List<Event> events) {
-          if (events.isEmpty) {
-            return const Center(child: Text('还没有点赞或转发'));
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: events.length,
-            separatorBuilder: (_, _) =>
-                const Divider(height: 1, indent: 52, endIndent: 12),
-            itemBuilder: (BuildContext _, int i) =>
-                _InteractorRow(event: events[i]),
-          );
-        },
-      ),
+      body: events.isNotEmpty
+          ? ListView.separated(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: events.length,
+              separatorBuilder: (_, _) =>
+                  const Divider(height: 1, indent: 52, endIndent: 12),
+              itemBuilder: (BuildContext _, int i) =>
+                  _InteractorRow(event: events[i]),
+            )
+          : async.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (Object e, _) => Center(child: Text('加载失败：$e')),
+              data: (_) => const Center(child: Text('还没有点赞或转发')),
+            ),
     );
   }
 }

@@ -4,6 +4,7 @@
 import 'package:costr/app/providers.dart';
 import 'package:costr/features/search/search_page.dart';
 import 'package:costr/models/event.dart';
+import 'package:costr/models/mute_set.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +19,9 @@ void main() {
     return ProviderScope(
       overrides: [
         immersiveBrowseProvider.overrideWith(() => _ImmersiveOff()),
+        // Search results are mute-filtered; override so the page doesn't pull
+        // the real identity/secure-storage chain (leaves a pending timer).
+        myMuteSetProvider.overrideWith((ref) => const MuteSet()),
         searchUsersProvider.overrideWith((ref, q) async* {
           yield const <UserResult>[];
         }),

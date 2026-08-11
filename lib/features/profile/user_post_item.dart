@@ -58,6 +58,7 @@ class _QuotedParent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(eventByIdProvider(parentId));
+    final mute = ref.watch(myMuteSetProvider);
     final theme = Theme.of(context);
     return async.when(
       loading: () => Padding(
@@ -71,6 +72,22 @@ class _QuotedParent extends ConsumerWidget {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Text('回复的帖子未在中继上', style: theme.textTheme.labelSmall),
+          );
+        }
+        // Muted parent: name + content stay hidden; only the hint shows
+        // until the user explicitly taps it open.
+        if (mute.hidesEvent(parent)) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: GestureDetector(
+              onTap: () => pushPostDetail(context, parentId),
+              child: Text(
+                mute.hintFor(parent),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
           );
         }
         return GestureDetector(
