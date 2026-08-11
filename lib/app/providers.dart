@@ -4000,54 +4000,63 @@ final reactionsProvider =
 /// then a one-shot pool REQ {kinds:[6,16,7], "#e":[id]} resolving on the
 /// first relay EOSE (or 8s) like [repliesProvider] — a slow relay must not
 /// stall the list.
-final interactorsProvider = FutureProvider.family<List<Event>, String>((
-  ref,
-  eventId,
-) async {
-  bool matches(Event e) {
-    if (e.kind != 7 && !e.isRepost) return false;
-    for (final t in e.tags) {
-      if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) return true;
-    }
-    return false;
-  }
+///
+/// autoDispose + watched by BOTH the thread page and [InteractionsPage]:
+/// the thread's like count / chevron / reaction chips derive from the capped
+/// in-memory store, which evicts kind-7 FIRST — on a busy firehose reactions
+/// to an hour-old post are long gone (or never arrived), so gating the
+/// 「点赞与转发」entry on store content alone dead-locked it invisible
+/// ("看不到帖子的点赞列表" regression report). Opening the thread runs this
+/// fetch; the REQ's answers also flow through the pool's merged stream into
+/// the store, so the tallies + chevron light up deterministically. Disposing
+/// when the pages close re-queries on every later visit (a session-cached
+/// non-autoDispose instance would serve a stale first-fetch forever).
+final interactorsProvider = FutureProvider.autoDispose
+    .family<List<Event>, String>((ref, eventId) async {
+      bool matches(Event e) {
+        if (e.kind != 7 && !e.isRepost) return false;
+        for (final t in e.tags) {
+          if (t.length >= 2 && t[0] == 'e' && t[1] == eventId) return true;
+        }
+        return false;
+      }
 
-  final merged = <String, Event>{
-    for (final e in ref.read(eventStoreProvider))
-      if (matches(e)) e.id: e,
-  };
-  final pool = ref.watch(relayPoolProvider);
-  final completer = Completer<void>();
-  final sub = pool.rawEvents.listen((e) {
-    if (matches(e)) merged[e.id] = e;
-  });
-  final subId = nextSubId('interactors');
-  final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
-    if (!completer.isCompleted) completer.complete();
-  });
-  pool.request(subId, <String, dynamic>{
-    'kinds': [Event.kindRepost, Event.kindGenericRepost, 7],
-    '#e': [eventId],
-  }, closeOnEose: true);
-  ref.onDispose(() {
-    sub.cancel();
-    eoseSub.cancel();
-    pool.closeSubscription(subId);
-  });
-  try {
-    await completer.future.timeout(
-      const Duration(seconds: 8),
-      onTimeout: () {},
-    );
-  } finally {
-    await sub.cancel();
-    await eoseSub.cancel();
-    pool.closeSubscription(subId);
-  }
-  final list = merged.values.toList()
-    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-  return list;
-});
+      final merged = <String, Event>{
+        for (final e in ref.read(eventStoreProvider))
+          if (matches(e)) e.id: e,
+      };
+      final pool = ref.watch(relayPoolProvider);
+      final completer = Completer<void>();
+      final sub = pool.rawEvents.listen((e) {
+        if (matches(e)) merged[e.id] = e;
+      });
+      final subId = nextSubId('interactors');
+      final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+        if (!completer.isCompleted) completer.complete();
+      });
+      pool.request(subId, <String, dynamic>{
+        'kinds': [Event.kindRepost, Event.kindGenericRepost, 7],
+        '#e': [eventId],
+      }, closeOnEose: true);
+      ref.onDispose(() {
+        sub.cancel();
+        eoseSub.cancel();
+        pool.closeSubscription(subId);
+      });
+      try {
+        await completer.future.timeout(
+          const Duration(seconds: 8),
+          onTimeout: () {},
+        );
+      } finally {
+        await sub.cancel();
+        await eoseSub.cancel();
+        pool.closeSubscription(subId);
+      }
+      final list = merged.values.toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
 
 /// The current user's own kind-7 reaction to [eventId], if present in the
 /// in-memory store (their just-published reaction is echoed locally by

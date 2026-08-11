@@ -105,6 +105,7 @@ void main() {
           repliesProvider.overrideWith((ref, id) async* {
             yield const <Event>[];
           }),
+          interactorsProvider.overrideWith((ref, id) async => const <Event>[]),
         ],
         child: const MaterialApp(
           home: PostDetailPage(id: 'the_reply'),

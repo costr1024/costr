@@ -91,6 +91,16 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Fetch this post's reactions/reposts while the thread is open. The
+    // like tally / reaction chips / 「谁点赞/转发了」chevron all derive from
+    // the capped in-memory store, which evicts kind-7 first — on a live
+    // firehose reactions to anything but the newest posts are usually gone
+    // (or never arrived), leaving the entry dead-locked invisible. Watching
+    // [interactorsProvider] issues the one-shot #e REQ here (same as
+    // [_RepliesSection] does for replies); its answers also flow through the
+    // pool's merged stream into the store, so the counts + chevron populate
+    // deterministically instead of by firehose luck.
+    ref.watch(interactorsProvider(widget.id));
     // Show the focused post as soon as it resolves (usually instant — it's
     // cached when opened from the feed/notifications). Ancestors load in the
     // background via threadAncestorsProvider and are prepended above when
