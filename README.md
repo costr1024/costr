@@ -10,9 +10,9 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **1.0.7** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.0.7/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.0.8** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.0.8/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 当前为正式版（v1.0.7）。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为正式版（v1.0.8）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
 >
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / **v1.0.7 正式版**）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / **v1.0.8 正式版**）。
 
 ---
 
@@ -339,7 +339,7 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 屏蔽列表、媒体代理、服务器节点自定义 + 去中心化推荐、本地 SQLite 缓存秒开。覆盖安装即可从
 任一 0.x-beta 升级，登录 / 关注 / 屏蔽 / 收藏 / 本地缓存全部保留。
 
-**v1.0.7 之后的修复（待发版）**：
+**v1.0.8 相对 v1.0.7 的修复**：
 **屏蔽不再「漏」：被屏蔽账号在时间线/搜索/线程彻底不可见**——此前屏蔽只挡掉被屏蔽账号自己
 发的顶层帖子；他回复别人时，关注流里那条回复的「回复上下文」仍会展示被屏蔽者的原帖，转帖/
 引用嵌入同样照常渲染（用户实测：已屏蔽的人仍通过别人的回帖反复出现）。现统一走
