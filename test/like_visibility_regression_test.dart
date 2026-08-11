@@ -60,6 +60,20 @@ Event _like() => Event(
   sig: 's' * 128,
 );
 
+/// A kind-1 REPLY to the post (e-tag with a reply marker), from a third user.
+Event _reply() => Event(
+  id: 'c' * 64,
+  pubkey: 'd' * 64,
+  createdAt: 1700000200,
+  kind: 1,
+  tags: [
+    ['e', _postId, '', 'reply'],
+    ['p', 'a' * 64],
+  ],
+  content: '说得对',
+  sig: 's' * 128,
+);
+
 /// Scripted relay. [hasLike] relays answer the interactions #e REQ with the
 /// reaction (optionally after [likeDelay]); the others answer empty-EOSE.
 ///
@@ -339,6 +353,46 @@ void main() {
       final stats = container.read(interactionIndexProvider)[_postId];
       expect(stats, isNotNull);
       expect(stats!.reactions['👍']?.count, 1);
+    },
+  );
+
+  test(
+    'REPLY COUNT: a live-delivered reply reaches the cache and the feed reply '
+    'count without opening the thread',
+    () async {
+      final relay = _FakeRelay('wss://a');
+      final pool = RelayPool([relay]);
+      await pool.connect();
+      addTearDown(pool.dispose);
+
+      final container = ProviderContainer(
+        overrides: [
+          relayPoolProvider.overrideWith((ref) => pool),
+          localCacheProvider.overrideWith((ref) async => _StubCache()),
+          identityProvider.overrideWith(() => _NullId()),
+        ],
+      );
+      addTearDown(container.dispose);
+      // Build the store notifier so its merged-stream listener is wired.
+      container.read(eventStoreProvider);
+      await container.read(eventStoreProvider.notifier).hydrated;
+
+      // A reply arrives the way the following feed / a long-lived sub delivers
+      // it (unrouted) — no thread open involved.
+      relay.push(_reply());
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      // Pre-fix a reply landed ONLY in the capped store (kind-1 evicts last,
+      // but still evicts on a long-lived busy feed) — the eviction-proof cache
+      // never saw it, so the feed reply COUNT could drop to 0. Post-fix the
+      // merged-stream listener ingests the reply into the cache too.
+      final held = container.read(interactionCacheProvider.notifier).cache;
+      expect(held.events.map((e) => e.id), contains(_reply().id));
+
+      // …and the index's feed reply count reflects it (the post shows ≥1 reply).
+      final stats = container.read(interactionIndexProvider)[_postId];
+      expect(stats, isNotNull);
+      expect(stats!.replies, 1);
     },
   );
 }

@@ -1,20 +1,23 @@
-/// In-memory cache of interaction events (kind-6/16 reposts, kind-7
-/// reactions) keyed by their `e`-tag target post — the eviction-PROOF half
-/// of the interaction display source (the capped [EventStore] is the other
-/// half; InteractionIndexNotifier merges both).
+/// In-memory cache of interaction events — kind-6/16 reposts, kind-7
+/// reactions, AND kind-1 replies — keyed by their `e`-tag target post; the
+/// eviction-PROOF half of the interaction display source (the capped
+/// [EventStore] is the other half; InteractionIndexNotifier merges both).
 ///
 /// Why this exists separately from EventStore: the store is sized for feed
-/// pagination and evicts kind-7 FIRST (highest-volume, cheapest to lose).
-/// Once the global firehose saturates the cap, EVERY incoming event evicts
-/// the oldest held kind-7, so a reaction lives ~one event-arrival (~25ms on
-/// a busy firehose): reactions fetched on thread-open, reactions/reposts
-/// delivered by ANY unrouted subscription (following feed, the notifications
-/// #e REQ — ingested by the EventStore merged-stream listener), and the local
-/// echo of the user's OWN just-published reaction all disappear before the UI
-/// can show them ("点赞不显示、点了几次都没用" — the user taps repeatedly
-/// because the heart never fills, stacking duplicate reactions on the
-/// relays; "通知里有点赞提醒，点进帖子却看不到" — the notification center's
-/// long-lived sub saw the like, but nothing kept it for the detail page).
+/// pagination and evicts kind-7 FIRST (highest-volume, cheapest to lose), then
+/// kind-0, kind-6, and finally kind-1. Once the feed saturates the cap, EVERY
+/// incoming event evicts the oldest held kind-7, so a reaction lives ~one
+/// event-arrival (~25ms on a busy feed): reactions fetched on thread-open,
+/// reactions/reposts delivered by ANY unrouted subscription (following feed,
+/// the notifications #e REQ — ingested by the EventStore merged-stream
+/// listener), and the local echo of the user's OWN just-published reaction all
+/// disappear before the UI can show them ("点赞不显示、点了几次都没用" — the
+/// user taps repeatedly because the heart never fills, stacking duplicate
+/// reactions on the relays; "通知里有点赞提醒，点进帖子却看不到" — the
+/// notification center's long-lived sub saw the like, but nothing kept it for
+/// the detail page). Replies evict LAST but still go on a long-lived busy
+/// feed, which dropped the feed reply COUNT ("信息流回复计数") — so kind-1
+/// replies are cached here too, keyed by the post they answer.
 /// This cache never ingests the ROUTED global firehose — only what the
 /// following/notification/lookup traffic and the user's own publishes carry —
 /// so it cannot be crowded out; the tradeoff is deliberate — feed-card
@@ -57,14 +60,18 @@ class InteractionCache {
     }
   }
 
-  /// Ingest interaction events (kind 6/16 reposts, kind 7 reactions), keyed
-  /// by each `e`-tag target. Anything else (posts, metadata…) is ignored —
-  /// this cache holds ONLY the interaction kinds the index tallies. Returns
-  /// true when at least one new event was added.
+  /// Ingest interaction events — kind-1 REPLIES (keyed by their e-tag target;
+  /// a top-level note with no e tags is skipped), kind-6/16 reposts and kind-7
+  /// reactions. Anything else (metadata…) is ignored: this cache holds only
+  /// the kinds the interaction index tallies. Returns true when at least one
+  /// new event was added.
   bool ingest(Iterable<Event> events) {
     var changed = false;
     for (final e in events) {
-      if (e.kind != 6 && e.kind != 7 && e.kind != Event.kindGenericRepost) {
+      if (e.kind != 1 &&
+          e.kind != 6 &&
+          e.kind != 7 &&
+          e.kind != Event.kindGenericRepost) {
         continue;
       }
       for (final t in e.tags) {

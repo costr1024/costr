@@ -1,7 +1,7 @@
 // Unit tests for InteractionCache — the eviction-proof tier that keeps
-// fetched reactions/reposts + the user's own publishes displayable after
-// the capped EventStore evicts its kind-7 copies on a saturated firehose
-// ("点赞不显示、点了几次都没用" regression).
+// fetched reactions/reposts, the user's own publishes, AND live-delivered
+// kind-1 replies displayable after the capped EventStore evicts them on a
+// saturated feed ("点赞不显示、点了几次都没用" + "信息流回复计数" regressions).
 
 import 'package:costr/models/event.dart';
 import 'package:costr/nostr/interaction_cache.dart';
@@ -40,7 +40,22 @@ void main() {
 
   test('non-interaction kinds and self-references are ignored', () {
     final c = InteractionCache();
-    expect(c.ingest([_ev('k1', kind: 1, target: target)]), isFalse);
+    // kind-0 metadata: still rejected (not a tallied interaction/reply).
+    expect(c.ingest([_ev('k0', kind: 0, target: target)]), isFalse);
+    // kind-1 REPLY (has an e-tag target): now HELD — it backs the eviction-
+    // proof feed reply COUNT ("信息流回复计数" fix).
+    expect(c.ingest([_ev('k1', kind: 1, target: target)]), isTrue);
+    // kind-1 top-level post (no e tags): nothing to key onto → ignored.
+    final topLevel = Event(
+      id: 'tl'.padRight(64, '0'),
+      pubkey: 'b'.padRight(64, '0'),
+      createdAt: 1700000000,
+      kind: 1,
+      tags: const [],
+      content: 'top-level',
+      sig: 's' * 128,
+    );
+    expect(c.ingest([topLevel]), isFalse);
     // kind-7 whose e-tag points at itself: rejected (store parity).
     final selfId = 'x' * 64;
     final selfRef = Event(
@@ -55,7 +70,9 @@ void main() {
       sig: 's' * 128,
     );
     expect(c.ingest([selfRef]), isFalse);
-    expect(c.targetCount, 0);
+    // Only the kind-1 reply landed → one target, one held event.
+    expect(c.targetCount, 1);
+    expect(c.events.length, 1);
   });
 
   test('duplicate ids are deduped (relay answers overlap)', () {

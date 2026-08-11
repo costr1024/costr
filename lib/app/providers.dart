@@ -1059,16 +1059,23 @@ class EventStoreNotifier extends Notifier<List<Event>> {
           _scheduleFlush();
         }
         // Eviction-PROOF copy of interactions (kind 6/16 reposts, kind 7
-        // reactions): the capped store evicts kind-7 FIRST, so a like
-        // delivered by a long-lived sub (the notifications #e REQ, the
-        // following feed) dies ~25ms after arrival on a saturated feed —
-        // the notification center showed it, but the post's detail page /
-        // chevron found nothing ("通知里有点赞提醒，点进去看不到"). Ingest
-        // every arriving interaction into the cache too, regardless of
-        // which subscription carried it. The merged stream never contains
-        // the routed global firehose, so the cache's "never the firehose"
-        // invariant holds; its LRU caps (200 targets × 500) bound memory.
-        if (e.kind == 6 || e.kind == 7 || e.kind == Event.kindGenericRepost) {
+        // reactions) AND replies (kind 1): the capped store evicts kind-7
+        // FIRST (then 0, 6, and finally 1), so a like delivered by a
+        // long-lived sub (the notifications #e REQ, the following feed) dies
+        // ~25ms after arrival on a saturated feed — the notification center
+        // showed it, but the post's detail page / chevron found nothing
+        // ("通知里有点赞提醒，点进去看不到"). Replies evict last but still go
+        // on a long-lived busy feed, which dropped the feed reply COUNT
+        // ("信息流回复计数"). Ingest every arriving interaction/reply into the
+        // cache too, regardless of which subscription carried it. The merged
+        // stream never contains the routed global firehose, so the cache's
+        // "never the firehose" invariant holds; its LRU caps (200 targets ×
+        // 500) bound memory. Top-level kind-1 posts (no e tags) are skipped
+        // inside ingest — only replies key onto a target.
+        if (e.kind == 1 ||
+            e.kind == 6 ||
+            e.kind == 7 ||
+            e.kind == Event.kindGenericRepost) {
           if (!_disposed) {
             ref.read(interactionCacheProvider.notifier).ingest([e]);
           }
@@ -4078,10 +4085,13 @@ class InteractionIndexNotifier
       return targets.isNotEmpty;
     }
 
-    for (final e in store) {
-      if (e.kind != 1 && e.kind != 6 && e.kind != 7) continue;
-      if (!fillTargets(e)) continue;
-      seenIds.add(e.id);
+    // Shared per-event aggregation over the filled [targets]: a kind-1 counts
+    // a reply on each target; kind-6/7/16 delegate to [tallyInteraction]. Used
+    // IDENTICALLY by the store / cache / window tiers so a reply, repost or
+    // reaction is tallied the same way whichever tier holds it. (The cache
+    // tier gained kind-1 reply tallying to keep the feed reply COUNT
+    // eviction-proof — "信息流回复计数" fix.)
+    void tallyEvent(Event e) {
       if (e.kind == 1) {
         for (final t in targets) {
           // Skip the post itself (a kind-1 with a self-referential e tag,
@@ -4094,14 +4104,23 @@ class InteractionIndexNotifier
       }
     }
 
-    // Cache tier: interactions that survived store eviction (or never
-    // entered the store — own publishes on a quiet feed do, but evicted
-    // fetch results don't). Same aggregation, minus events already counted.
+    for (final e in store) {
+      if (e.kind != 1 && e.kind != 6 && e.kind != 7) continue;
+      if (!fillTargets(e)) continue;
+      seenIds.add(e.id);
+      tallyEvent(e);
+    }
+
+    // Cache tier: interactions + replies that survived store eviction (or never
+    // entered the store — own publishes on a quiet feed do, but evicted fetch
+    // results don't). Same aggregation, minus events already counted. kind-1
+    // replies are tallied here too so the feed reply count survives saturation
+    // (kind-1 evicts LAST but still evicts on a long-lived, busy feed).
     for (final e in interactionCache.events) {
       if (seenIds.contains(e.id)) continue;
       seenIds.add(e.id);
       if (!fillTargets(e)) continue;
-      tallyInteraction(e);
+      tallyEvent(e);
     }
 
     // Global-window tier: live firehose interactions on 全球-tab posts. The
@@ -4112,14 +4131,7 @@ class InteractionIndexNotifier
       if (seenIds.contains(e.id)) continue;
       seenIds.add(e.id);
       if (!fillTargets(e)) continue;
-      if (e.kind == 1) {
-        for (final t in targets) {
-          if (t == e.id) continue;
-          replies[t] = (replies[t] ?? 0) + 1;
-        }
-      } else {
-        tallyInteraction(e);
-      }
+      tallyEvent(e);
     }
 
     final next = <String, PostInteractionStats>{};

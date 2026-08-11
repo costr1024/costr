@@ -101,6 +101,41 @@ void main() {
     expect(stats.reposts + total, greaterThan(0));
   });
 
+  test(
+    'cache-only reply is tallied as a REPLY when the store holds none',
+    () async {
+      // The reply survived only in the eviction-proof cache (the capped store
+      // evicted its kind-1 copy on a long-lived busy feed). The feed reply
+      // COUNT must still show it — and as a reply, not a repost ("信息流回复
+      // 计数" fix: before it the cache tier ran kind-1 through
+      // tallyInteraction, which mis-counted a reply as a repost).
+      final container = await makeContainer(store: [_post()]);
+      addTearDown(container.dispose);
+
+      final statsBefore = container.read(interactionIndexProvider)[_postId];
+      expect(statsBefore?.replies ?? 0, 0);
+
+      container.read(interactionCacheProvider.notifier).ingest([
+        Event(
+          id: 'reply1'.padRight(64, '0'),
+          pubkey: 'c'.padRight(64, '0'),
+          createdAt: 1700000200,
+          kind: 1,
+          tags: [
+            ['e', _postId, '', 'reply'],
+            ['p', _author],
+          ],
+          content: '说得对',
+          sig: 's' * 128,
+        ),
+      ]);
+
+      final stats = container.read(interactionIndexProvider)[_postId]!;
+      expect(stats.replies, 1);
+      expect(stats.reposts, 0);
+    },
+  );
+
   test('own published reaction fills the heart + tallies', () async {
     final container = await makeContainer(store: [_post()]);
     addTearDown(container.dispose);
