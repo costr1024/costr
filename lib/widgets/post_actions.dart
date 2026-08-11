@@ -145,6 +145,11 @@ class PostActions extends ConsumerWidget {
       identity,
     ).repost(event, relay: relayHintFor(ref, event.pubkey) ?? '');
     final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
+    if (ok.ok) {
+      // Same eviction-proof reflection as reactions: the repost count on the
+      // card must not depend on the store's short-lived kind-6 echo.
+      ref.read(interactionCacheProvider.notifier).ingest([signed]);
+    }
     if (context.mounted) {
       _snack(context, ok.ok ? '已转发' : '转发失败：${ok.reason}');
     }
@@ -249,6 +254,13 @@ class PostActions extends ConsumerWidget {
       relay: relayHintFor(ref, event.pubkey) ?? '',
     );
     final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
+    if (ok.ok) {
+      // Eviction-proof local reflection of the just-published reaction. The
+      // pool's publish echo reaches the capped store too, but on a saturated
+      // firehose the store evicts kind-7 within ~25ms — the heart would
+      // never fill and the user taps again ("点赞不显示、点了几次都没用").
+      ref.read(interactionCacheProvider.notifier).ingest([signed]);
+    }
     if (context.mounted) {
       final glyph = isCustom ? ':${picked.emoji}:' : picked.emoji;
       _snack(context, ok.ok ? '已发送 $glyph' : '反应失败：${ok.reason}');
@@ -266,8 +278,11 @@ class PostActions extends ConsumerWidget {
     if (identity == null) return;
     final signed = NostrActions(identity).deleteEvent(myReaction);
     await ref.read(relayPoolProvider).publishAndWait(signed);
-    // Remove locally so the icon un-fills + the tally drops immediately.
+    // Remove locally so the icon un-fills + the tally drops immediately —
+    // from BOTH tiers (the cache may be the only copy left once the store
+    // evicted its echo).
     await ref.read(eventStoreProvider.notifier).removeEvent(myReaction.id);
+    ref.read(interactionCacheProvider.notifier).removeEvent(myReaction.id);
     if (context.mounted) {
       _snack(context, '已取消反应');
     }

@@ -23,6 +23,7 @@ import '../utils/language.dart';
 import '../nostr/actions.dart';
 import '../nostr/event_store.dart';
 import '../nostr/identity.dart';
+import '../nostr/interaction_cache.dart';
 import '../nostr/outbox_router.dart';
 import '../nostr/relay_client.dart';
 import '../nostr/relay_pool.dart';
@@ -1301,6 +1302,14 @@ class EventStoreNotifier extends Notifier<List<Event>> {
         final existing = _store.byId(id);
         if (existing != null && existing.pubkey == del.pubkey) {
           await removeEvent(id);
+        }
+        // The interaction cache may still hold what the store already evicted
+        // (kind-7 evicts first on a saturated firehose) — drop it there too,
+        // with the same authorship gate checked against the cached copy.
+        if (!_disposed) {
+          ref
+              .read(interactionCacheProvider.notifier)
+              .removeEvent(id, where: (e) => e.pubkey == del.pubkey);
         }
       }
     }
@@ -3728,6 +3737,59 @@ final interactionRevisionProvider = Provider<int>((ref) {
   return ref.read(eventStoreProvider.notifier).interactionRevision;
 });
 
+/// Eviction-proof interaction cache — see [InteractionCache] for why the
+/// capped store alone cannot hold reactions on a saturated firehose. The
+/// exposed int is the cache's revision counter, the reactive handle:
+/// [InteractionIndexNotifier] watches it and re-reads
+/// [InteractionCacheNotifier.cache] (same bump-pattern as
+/// [kind30000VersionProvider]). Fed from exactly two places:
+/// [interactorsProvider] (thread-open #e fetch) and the user's own
+/// publishes (post_actions.dart) — never the firehose.
+class InteractionCacheNotifier extends Notifier<int> {
+  InteractionCache _cache = InteractionCache();
+  InteractionCache get cache => _cache;
+
+  /// Account the cache was (re)built for — same leak guard as
+  /// EventStoreNotifier: on account switch / login / logout the previous
+  /// account's residue (own reactions, viewed threads) is dropped.
+  String? _builtForAccount;
+
+  @override
+  int build() {
+    final accountKey = ref.watch(
+      identityProvider.select((v) => v.value?.pubkeyHex),
+    );
+    if (_builtForAccount != accountKey) {
+      _builtForAccount = accountKey;
+      // Fresh instance — mutating the old one mid-build would notify nothing;
+      // replacing it and returning its revision does.
+      _cache = InteractionCache();
+    }
+    return _cache.revision;
+  }
+
+  /// Ingest fetched/published interaction events; notifies on real change.
+  void ingest(Iterable<Event> events) {
+    if (_cache.ingest(events)) state = _cache.revision;
+  }
+
+  /// Drop one interaction event (reaction cancel / NIP-09 deletion). [where]
+  /// gates on the held copy (remote deletions must match the author).
+  void removeEvent(String eventId, {bool Function(Event)? where}) {
+    if (_cache.removeEvent(eventId, where: where)) state = _cache.revision;
+  }
+
+  void clear() {
+    _cache.clear();
+    state = _cache.revision;
+  }
+}
+
+final interactionCacheProvider =
+    NotifierProvider<InteractionCacheNotifier, int>(
+      InteractionCacheNotifier.new,
+    );
+
 /// Per-target interaction stats over the held store: reply/repost counts,
 /// reaction tallies and the user's own reaction, keyed by the referenced
 /// e-tag target id.
@@ -3770,9 +3832,15 @@ class InteractionIndexNotifier
 
   @override
   Map<String, PostInteractionStats> build() {
-    // Rebuild only when the interaction-relevant store content changes.
+    // Rebuild only when the interaction-relevant store content changes…
     ref.watch(interactionRevisionProvider);
+    // …or when the eviction-proof interaction cache changes (thread-open
+    // fetches, the user's own publishes). The merge below is what keeps
+    // tallies visible on a saturated firehose, where the store evicts its
+    // kind-7 copies ~25ms after arrival.
+    ref.watch(interactionCacheProvider);
     final store = ref.read(eventStoreProvider); // read: no extra subscription
+    final interactionCache = ref.read(interactionCacheProvider.notifier).cache;
     final me = ref.watch(identityProvider).value?.pubkeyHex;
 
     final replies = <String, int>{};
@@ -3780,28 +3848,14 @@ class InteractionIndexNotifier
     final reactions = <String, Map<String, ({int count, String? emojiUrl})>>{};
     final myReactions = <String, Event>{};
     final targets = <String>{}; // per-event distinct e-tag targets (buffer)
+    // kind-6/7 ids already tallied from the store — the cache merge skips
+    // them so an event held in BOTH tiers counts exactly once.
+    final seenInStore = <String>{};
 
-    for (final e in store) {
-      if (e.kind != 1 && e.kind != 6 && e.kind != 7) continue;
-      targets.clear();
-      for (final t in e.tags) {
-        if (t.length >= 2 && t[0] == 'e' && t[1] is String) {
-          targets.add(t[1] as String);
-        }
-      }
-      if (targets.isEmpty) continue;
-      if (e.kind == 1 || e.kind == 6) {
-        for (final t in targets) {
-          // Skip the post itself (a kind-1 with a self-referential e tag,
-          // rare) — same guard the old per-provider scan had.
-          if (t == e.id) continue;
-          if (e.kind == 1) {
-            replies[t] = (replies[t] ?? 0) + 1;
-          } else {
-            reposts[t] = (reposts[t] ?? 0) + 1;
-          }
-        }
-      } else {
+    // Shared aggregation for one kind-6/7/16 event over [targets] (filled
+    // by the caller before invoking).
+    void tallyInteraction(Event e) {
+      if (e.kind == 7) {
         // kind-7 reaction. NIP-25: empty content OR literal "+" = default
         // like → normalized to 👍 (the old reactionsProvider did the same).
         final raw = e.content;
@@ -3823,11 +3877,61 @@ class InteractionIndexNotifier
             count: (prevTally?.count ?? 0) + 1,
             emojiUrl: prevTally?.emojiUrl ?? emojiUrl,
           );
-          // Store order is newest-first: the first hit per target is the
-          // user's newest own reaction (old myReactionProvider semantics).
-          if (isMine && !myReactions.containsKey(t)) myReactions[t] = e;
+          // Newest own reaction wins, across BOTH tiers (the old store-scan
+          // relied on newest-first store order; the cache merge needs the
+          // explicit comparison).
+          if (isMine) {
+            final prevMine = myReactions[t];
+            if (prevMine == null || e.createdAt > prevMine.createdAt) {
+              myReactions[t] = e;
+            }
+          }
+        }
+      } else {
+        // kind-6 repost (kind-16 generic repost only reaches here from the
+        // cache tier — the store doesn't hold kind-16). The self-reference
+        // guard matches the old store scan (cache ingestion applies it too,
+        // so it's a no-op for cache-tier events).
+        for (final t in targets) {
+          if (t == e.id) continue;
+          reposts[t] = (reposts[t] ?? 0) + 1;
         }
       }
+    }
+
+    bool fillTargets(Event e) {
+      targets.clear();
+      for (final t in e.tags) {
+        if (t.length >= 2 && t[0] == 'e' && t[1] is String) {
+          targets.add(t[1] as String);
+        }
+      }
+      return targets.isNotEmpty;
+    }
+
+    for (final e in store) {
+      if (e.kind != 1 && e.kind != 6 && e.kind != 7) continue;
+      if (!fillTargets(e)) continue;
+      if (e.kind == 1) {
+        for (final t in targets) {
+          // Skip the post itself (a kind-1 with a self-referential e tag,
+          // rare) — same guard the old per-provider scan had.
+          if (t == e.id) continue;
+          replies[t] = (replies[t] ?? 0) + 1;
+        }
+      } else {
+        seenInStore.add(e.id);
+        tallyInteraction(e);
+      }
+    }
+
+    // Cache tier: interactions that survived store eviction (or never
+    // entered the store — own publishes on a quiet feed do, but evicted
+    // fetch results don't). Same aggregation, minus events already counted.
+    for (final e in interactionCache.events) {
+      if (seenInStore.contains(e.id)) continue;
+      if (!fillTargets(e)) continue;
+      tallyInteraction(e);
     }
 
     final next = <String, PostInteractionStats>{};
@@ -4002,15 +4106,16 @@ final reactionsProvider =
 /// stall the list.
 ///
 /// autoDispose + watched by BOTH the thread page and [InteractionsPage]:
-/// the thread's like count / chevron / reaction chips derive from the capped
-/// in-memory store, which evicts kind-7 FIRST — on a busy firehose reactions
-/// to an hour-old post are long gone (or never arrived), so gating the
-/// 「点赞与转发」entry on store content alone dead-locked it invisible
-/// ("看不到帖子的点赞列表" regression report). Opening the thread runs this
-/// fetch; the REQ's answers also flow through the pool's merged stream into
-/// the store, so the tallies + chevron light up deterministically. Disposing
-/// when the pages close re-queries on every later visit (a session-cached
-/// non-autoDispose instance would serve a stale first-fetch forever).
+/// the thread page opens → this runs the fetch. The fetched events ALSO go
+/// into the eviction-proof [interactionCacheProvider] (the capped store
+/// evicts kind-7 FIRST — on a saturated firehose a fetched reaction lives
+/// ~25ms there, which dead-locked the like tally / chips / chevron
+/// invisible: "看不到帖子的点赞列表" + the v1.0.6 follow-up "点赞不显示、
+/// 点了几次都没用" reports). The seed reads the cache too, so revisiting a
+/// thread shows its previously-fetched interactions instantly, before the
+/// fresh REQ answers. Disposing when the pages close re-queries on every
+/// later visit (a session-cached non-autoDispose instance would serve a
+/// stale first-fetch forever).
 final interactorsProvider = FutureProvider.autoDispose
     .family<List<Event>, String>((ref, eventId) async {
       bool matches(Event e) {
@@ -4023,6 +4128,11 @@ final interactorsProvider = FutureProvider.autoDispose
 
       final merged = <String, Event>{
         for (final e in ref.read(eventStoreProvider))
+          if (matches(e)) e.id: e,
+        // Cache tier: what earlier fetches/publishes recorded for this post
+        // (the store may have evicted its copies already).
+        for (final e
+            in ref.read(interactionCacheProvider.notifier).cache.events)
           if (matches(e)) e.id: e,
       };
       final pool = ref.watch(relayPoolProvider);
@@ -4055,16 +4165,24 @@ final interactorsProvider = FutureProvider.autoDispose
       }
       final list = merged.values.toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      // Persist the result in the eviction-proof cache so the store-derived
+      // tallies / chips / chevron keep showing it (the store's own copies
+      // die to kind-7-first eviction within milliseconds on a busy feed).
+      ref.read(interactionCacheProvider.notifier).ingest(list);
       return list;
     });
 
-/// The current user's own kind-7 reaction to [eventId], if present in the
-/// in-memory store (their just-published reaction is echoed locally by
-/// [RelayPool.publish] and stored). Used to highlight the reaction icon + let
-/// a second tap cancel (NIP-09 kind-5 delete of the reaction event).
-/// O(1) lookup into [interactionIndexProvider] (was: full-store scan per card
-/// per flush). When logged out the index never records a myReaction, so this
-/// correctly stays null.
+/// The current user's own kind-7 reaction to [eventId], if known. Sources:
+/// the eviction-proof interaction cache (the just-published reaction is
+/// ingested there by post_actions right after the relay accepts it — the
+/// store's publish echo alone survives only ~25ms on a saturated firehose,
+/// which left the heart un-filled: "点赞不显示、点了几次都没用") plus
+/// whatever the store currently holds (hydration / quiet-feed echoes).
+/// Used to highlight the reaction icon + let a second tap cancel (NIP-09
+/// kind-5 delete of the reaction event). O(1) lookup into
+/// [interactionIndexProvider] (was: full-store scan per card per flush).
+/// When logged out the index never records a myReaction, so this correctly
+/// stays null.
 final myReactionProvider = Provider.family<Event?, String>((ref, eventId) {
   final stats = ref.watch(interactionIndexProvider)[eventId];
   return stats?.myReaction;
