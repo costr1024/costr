@@ -10,9 +10,9 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **1.0.8** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.0.8/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.0.9** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.0.9/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 当前为正式版（v1.0.8）。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为正式版（v1.0.9）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
 >
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / **v1.0.8 正式版**）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / **v1.0.9 正式版**）。
 
 ---
 
@@ -343,6 +343,17 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 通知中心、多账号、关注分组（NIP-51 kind-30000，Amethyst 兼容）、收藏（NIP-51 + NIP-44 私密）、
 屏蔽列表、媒体代理、服务器节点自定义 + 去中心化推荐、本地 SQLite 缓存秒开。覆盖安装即可从
 任一 0.x-beta 升级，登录 / 关注 / 屏蔽 / 收藏 / 本地缓存全部保留。
+
+**v1.0.9 相对 v1.0.8 的修复**：
+**relay 同 id 剥离变体致表情图闪回 `:xxx:` 根治**——实测 top.testrelay.top 会对同一 event id
+下发被剥掉 NIP-30 `emoji` tag 的变体（event id 本应承诺 tags，该变体按 NIP-01 属无效事件，
+但 relay 照发，且恰为 reaction 自己声明的 relay）。完整副本与剥离副本分落 store/缓存两层：
+互动索引旧用「store 优先 + seenIds 短路」，剥离副本落进 store 的瞬间，reaction bar 就从表情图
+闪回裸 `:shortcode:`；而「点赞与转发」页是「缓存覆盖 store」，仍显示图——同一事件两处界面
+显示不一致（用户所见「表情图一闪而过变成了 shortcode」）。现三层（store/缓存/全球窗口）合并
+**同 id 冲突取 tag 更全的副本**，合并后按 id 去重单次计数（计数不重复）；「点赞与转发」列表用
+同一优先规则，两个出口永不打架。回归测试：剥离副本在 store + 完整副本在缓存、及反序，两种
+层级顺序均取完整副本。
 
 **v1.0.8 相对 v1.0.7 的修复**：
 **屏蔽不再「漏」：被屏蔽账号在时间线/搜索/线程彻底不可见**——此前屏蔽只挡掉被屏蔽账号自己
