@@ -168,6 +168,11 @@ lib/
   聚合会出现同一用户多条「关注你」），点关注通知跳转该 follower 主页；**repost**（kind-6）
   解析 NIP-18 内嵌 JSON 取**被转帖子的正文**做预览；**reaction**（kind-7）解析 NIP-30
   `:shortcode:` + `emoji` tag 渲染自定义表情图片，不再裸露 `:xxx:` 文本。
+  **同 id 剥离变体防御**：有 relay（实测 top.testrelay.top）会对同一 event id 下发**被剥掉
+  emoji tag 的变体**（id 本应承诺 tags，该变体按 NIP-01 属无效事件）；互动索引与「点赞与
+  转发」列表在三层（store/缓存/全球窗口）合并时同 id 冲突**取 tag 更全的副本**——旧的
+  store 优先短路会让 chip 在剥离副本落库瞬间从表情图闪回 `:xxx:`，而列表页因缓存覆盖
+  store 仍显示图，两处不一致。
   **点通知跳对帖**：`notificationReferencedId` 按 NIP-10 marker 优先级（reply＞无 marker＞root）
   在「我的帖」里取被互动的帖——回复/点赞同时带 root+reply 两个 e-tag 且都是我的帖时，旧的首个
   命中扫描会取到 root（tag 里排前面），导致点通知跳到 root 主贴；现取 reply marker 的帖。跳转目标

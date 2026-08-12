@@ -4023,10 +4023,22 @@ class InteractionIndexNotifier
     final reactions = <String, Map<String, ({int count, String? emojiUrl})>>{};
     final myReactions = <String, Event>{};
     final targets = <String>{}; // per-event distinct e-tag targets (buffer)
-    // Event ids already tallied from an EARLIER tier — the store scan fills
-    // it, the cache + window merges skip held duplicates so an event present
-    // in several tiers counts exactly once.
-    final seenIds = <String>{};
+    // One id-deduped view over all three tiers, tallied exactly once. A
+    // misbehaving relay can serve a tag-STRIPPED variant under an existing
+    // event id (observed in the wild: top.testrelay.top strips the NIP-30
+    // `["emoji", …]` tag off kind-7 — the id commits to the tags, so that
+    // variant is technically invalid, but it still arrives). On an id
+    // collision keep the FULLER copy (more tags) regardless of tier order:
+    // the old store-first/seenIds-shortcut order made the chip flip from the
+    // emoji image to the raw `:shortcode:` the moment a stripped copy landed
+    // in the store ("表情图一闪而过变回 shortcode"), while
+    // [interactorEventsProvider] (cache-overrides-store) kept showing the
+    // image — two surfaces disagreeing on the same event.
+    final merged = <String, Event>{};
+    void mergeEvent(Event e) {
+      final prev = merged[e.id];
+      if (prev == null || e.tags.length > prev.tags.length) merged[e.id] = e;
+    }
 
     // Shared aggregation for one kind-6/7/16 event over [targets] (filled
     // by the caller before invoking).
@@ -4106,30 +4118,26 @@ class InteractionIndexNotifier
 
     for (final e in store) {
       if (e.kind != 1 && e.kind != 6 && e.kind != 7) continue;
-      if (!fillTargets(e)) continue;
-      seenIds.add(e.id);
-      tallyEvent(e);
+      mergeEvent(e);
     }
 
-    // Cache tier: interactions + replies that survived store eviction (or never
-    // entered the store — own publishes on a quiet feed do, but evicted fetch
-    // results don't). Same aggregation, minus events already counted. kind-1
-    // replies are tallied here too so the feed reply count survives saturation
-    // (kind-1 evicts LAST but still evicts on a long-lived, busy feed).
+    // Cache tier: interactions + replies that survived store eviction (or
+    // never entered the store — own publishes on a quiet feed do, but evicted
+    // fetch results don't). kind-1 replies are merged here too so the feed
+    // reply count survives saturation (kind-1 evicts LAST but still evicts on
+    // a long-lived, busy feed).
     for (final e in interactionCache.events) {
-      if (seenIds.contains(e.id)) continue;
-      seenIds.add(e.id);
-      if (!fillTargets(e)) continue;
-      tallyEvent(e);
+      mergeEvent(e);
     }
 
     // Global-window tier: live firehose interactions on 全球-tab posts. The
-    // window also holds kind-1 posts (potential replies) — aggregate exactly
-    // like the store loop. Empty unless the global tab is/was open this
-    // session (the window is cleared on leaving it).
+    // window also holds kind-1 posts (potential replies). Empty unless the
+    // global tab is/was open this session (the window is cleared on leaving).
     for (final e in globalWindow.events) {
-      if (seenIds.contains(e.id)) continue;
-      seenIds.add(e.id);
+      mergeEvent(e);
+    }
+
+    for (final e in merged.values) {
       if (!fillTargets(e)) continue;
       tallyEvent(e);
     }
@@ -4317,17 +4325,28 @@ bool isInteractorOf(Event e, String eventId) {
 /// while the page is open keep growing the list after the initial fetch
 /// resolves — the page must never be stuck on its first (possibly empty)
 /// snapshot.
+///
+/// Same-id collisions (a relay serving a tag-stripped variant of an event,
+/// see [InteractionIndexNotifier]) keep the fuller copy — the SAME rule the
+/// index uses, so the chip row and this list never disagree on a glyph.
 final interactorEventsProvider =
     Provider.family<List<Event>, String>((ref, eventId) {
       ref.watch(interactionRevisionProvider);
       ref.watch(interactionCacheProvider);
-      final merged = <String, Event>{
-        for (final e in ref.read(eventStoreProvider))
-          if (isInteractorOf(e, eventId)) e.id: e,
-        for (final e
-            in ref.read(interactionCacheProvider.notifier).cache.events)
-          if (isInteractorOf(e, eventId)) e.id: e,
-      };
+      final merged = <String, Event>{};
+      void merge(Event e) {
+        if (!isInteractorOf(e, eventId)) return;
+        final prev = merged[e.id];
+        if (prev == null || e.tags.length > prev.tags.length) merged[e.id] = e;
+      }
+
+      for (final e in ref.read(eventStoreProvider)) {
+        merge(e);
+      }
+      for (final e
+          in ref.read(interactionCacheProvider.notifier).cache.events) {
+        merge(e);
+      }
       return merged.values.toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     });
