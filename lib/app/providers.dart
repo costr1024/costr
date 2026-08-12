@@ -4024,20 +4024,21 @@ class InteractionIndexNotifier
     final myReactions = <String, Event>{};
     final targets = <String>{}; // per-event distinct e-tag targets (buffer)
     // One id-deduped view over all three tiers, tallied exactly once. A
-    // misbehaving relay can serve a tag-STRIPPED variant under an existing
-    // event id (observed in the wild: top.testrelay.top strips the NIP-30
-    // `["emoji", …]` tag off kind-7 — the id commits to the tags, so that
-    // variant is technically invalid, but it still arrives). On an id
-    // collision keep the FULLER copy (more tags) regardless of tier order:
-    // the old store-first/seenIds-shortcut order made the chip flip from the
-    // emoji image to the raw `:shortcode:` the moment a stripped copy landed
-    // in the store ("表情图一闪而过变回 shortcode"), while
-    // [interactorEventsProvider] (cache-overrides-store) kept showing the
-    // image — two surfaces disagreeing on the same event.
+    // misbehaving relay can serve a MUTATED variant under an existing event
+    // id (observed in the wild: top.testrelay.top truncates tag NAMES —
+    // `["emoji", …]`→`["e", …]`, `["client", …]`→`["c", …]` — same id, SAME
+    // tag count, so a length tie-break is not enough; the id commits to the
+    // tags, so the variant is technically invalid, but it still arrives).
+    // On an id collision keep the copy that can actually RENDER
+    // ([_betterVariant]): the old store-first/seenIds-shortcut order made the
+    // chip flip from the emoji image to the raw `:shortcode:` the moment a
+    // mutated copy landed in the store ("表情图一闪而过变回 shortcode"), and
+    // v1.0.9's tags.length rule still let the mutated copy win on ties —
+    // both surfaces then showed raw text.
     final merged = <String, Event>{};
     void mergeEvent(Event e) {
       final prev = merged[e.id];
-      if (prev == null || e.tags.length > prev.tags.length) merged[e.id] = e;
+      if (prev == null || _betterVariant(e, prev)) merged[e.id] = e;
     }
 
     // Shared aggregation for one kind-6/7/16 event over [targets] (filled
@@ -4318,6 +4319,35 @@ bool isInteractorOf(Event e, String eventId) {
   return false;
 }
 
+/// How well a same-id variant can render its reaction glyph: 2 = carries the
+/// well-formed NIP-30 `["emoji", shortcode, url]` tag matching the content's
+/// `:shortcode:`; 0 = content is a shortcode but no renderable tag (mutated
+/// variants, e.g. top.testrelay.top's `["e", code, url]` truncation); 1 =
+/// content isn't a shortcode (unicode/like) so variants are indistinguishable
+/// on this axis.
+int _emojiFidelity(Event e) {
+  final m = RegExp(r'^:([a-zA-Z0-9_+-]+):$').firstMatch(e.content);
+  final code = m?.group(1);
+  if (code == null) return 1;
+  for (final t in e.tags) {
+    if (t.length >= 3 && t[0] == 'emoji' && t[1] == code && t[2] is String) {
+      return 2;
+    }
+  }
+  return 0;
+}
+
+/// Same-id collision preference (misbehaving relays serve mutated copies
+/// under an existing id): the renderable copy beats the mutated one; within
+/// equal fidelity the fuller copy wins. NEVER tags.length alone — the
+/// observed truncation keeps the tag COUNT identical.
+bool _betterVariant(Event candidate, Event held) {
+  final cf = _emojiFidelity(candidate);
+  final hf = _emojiFidelity(held);
+  if (cf != hf) return cf > hf;
+  return candidate.tags.length > held.tags.length;
+}
+
 /// Live "who liked / reposted [eventId]" event list: the capped store (what
 /// the feed saw) merged with the eviction-proof interaction cache (thread-open
 /// fetches, live relay deliveries, own publishes), newest-first. Rebuilds on
@@ -4326,8 +4356,8 @@ bool isInteractorOf(Event e, String eventId) {
 /// resolves — the page must never be stuck on its first (possibly empty)
 /// snapshot.
 ///
-/// Same-id collisions (a relay serving a tag-stripped variant of an event,
-/// see [InteractionIndexNotifier]) keep the fuller copy — the SAME rule the
+/// Same-id collisions (a relay serving a mutated variant of an event,
+/// see [InteractionIndexNotifier]) use [_betterVariant] — the SAME rule the
 /// index uses, so the chip row and this list never disagree on a glyph.
 final interactorEventsProvider =
     Provider.family<List<Event>, String>((ref, eventId) {
@@ -4337,7 +4367,7 @@ final interactorEventsProvider =
       void merge(Event e) {
         if (!isInteractorOf(e, eventId)) return;
         final prev = merged[e.id];
-        if (prev == null || e.tags.length > prev.tags.length) merged[e.id] = e;
+        if (prev == null || _betterVariant(e, prev)) merged[e.id] = e;
       }
 
       for (final e in ref.read(eventStoreProvider)) {
