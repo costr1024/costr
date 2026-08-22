@@ -31,6 +31,7 @@ import '../nostr/relay_pool.dart';
 import '../services/account_registry.dart';
 import '../services/local_cache.dart' as cache;
 import '../services/blossom_upload.dart';
+import '../services/link_preview.dart';
 import '../services/secure_storage_service.dart';
 import '../services/server_discovery.dart';
 import 'server_list_rules.dart';
@@ -4359,27 +4360,28 @@ bool _betterVariant(Event candidate, Event held) {
 /// Same-id collisions (a relay serving a mutated variant of an event,
 /// see [InteractionIndexNotifier]) use [_betterVariant] — the SAME rule the
 /// index uses, so the chip row and this list never disagree on a glyph.
-final interactorEventsProvider =
-    Provider.family<List<Event>, String>((ref, eventId) {
-      ref.watch(interactionRevisionProvider);
-      ref.watch(interactionCacheProvider);
-      final merged = <String, Event>{};
-      void merge(Event e) {
-        if (!isInteractorOf(e, eventId)) return;
-        final prev = merged[e.id];
-        if (prev == null || _betterVariant(e, prev)) merged[e.id] = e;
-      }
+final interactorEventsProvider = Provider.family<List<Event>, String>((
+  ref,
+  eventId,
+) {
+  ref.watch(interactionRevisionProvider);
+  ref.watch(interactionCacheProvider);
+  final merged = <String, Event>{};
+  void merge(Event e) {
+    if (!isInteractorOf(e, eventId)) return;
+    final prev = merged[e.id];
+    if (prev == null || _betterVariant(e, prev)) merged[e.id] = e;
+  }
 
-      for (final e in ref.read(eventStoreProvider)) {
-        merge(e);
-      }
-      for (final e
-          in ref.read(interactionCacheProvider.notifier).cache.events) {
-        merge(e);
-      }
-      return merged.values.toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    });
+  for (final e in ref.read(eventStoreProvider)) {
+    merge(e);
+  }
+  for (final e in ref.read(interactionCacheProvider.notifier).cache.events) {
+    merge(e);
+  }
+  return merged.values.toList()
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+});
 
 /// Fetches [eventId]'s kind-7 reactions + kind-6/16 reposts with a pool REQ
 /// {kinds:[6,16,7], "#e":[id]} and seeds them into the eviction-proof
@@ -4413,8 +4415,7 @@ final interactorEventsProvider =
 final interactorsProvider = FutureProvider.autoDispose
     .family<List<Event>, String>((ref, eventId) async {
       final merged = <String, Event>{
-        for (final e in ref.read(interactorEventsProvider(eventId)))
-          e.id: e,
+        for (final e in ref.read(interactorEventsProvider(eventId))) e.id: e,
       };
       final pool = ref.watch(relayPoolProvider);
       final cacheNotifier = ref.read(interactionCacheProvider.notifier);
@@ -5835,6 +5836,21 @@ final nip05VerifiedProvider = FutureProvider.family<Nip05Status, String>((
     return jsonDecode(res.body);
   });
 });
+
+/// Classification + Open Graph preview for bare http(s) URLs in note content
+/// (lib/services/link_preview.dart): extension-less images (小红书-style
+/// `?imageView2/…/format/jpg` links), signed video links, and webpages with
+/// og: tags. The URL stays a plain clickable link until the probe settles;
+/// image/video results are injected into the content tokenizer as
+/// tag-declared media, webpage results become preview cards.
+///
+/// Cached per URL for the session — negative results ([UrlNone]) included:
+/// they are tiny, and caching them keeps a dead host from being re-probed on
+/// every rebuild. In-flight dedup is automatic for the family. No SQLite
+/// tier — same trade-off as [nip05VerifiedProvider].
+final linkPreviewProvider = FutureProvider.family<UrlInspection, String>(
+  (ref, url) => inspectUrl(url),
+);
 
 /// ChangeNotifier bridge so GoRouter re-evaluates redirects on login/logout.
 class GoRouterRefreshNotifier extends ChangeNotifier {

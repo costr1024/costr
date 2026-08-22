@@ -460,7 +460,13 @@ class MediaAttachment {
   }
 
   bool _hasExt(Set<String> exts) {
-    final lower = url.toLowerCase().split('?').first;
+    var lower = url.toLowerCase();
+    // Strip query AND fragment — signed CDN links carry `?sign=…`, media
+    // fragments use `#t=…`; the extension sits before either.
+    final q = lower.indexOf('?');
+    if (q >= 0) lower = lower.substring(0, q);
+    final h = lower.indexOf('#');
+    if (h >= 0) lower = lower.substring(0, h);
     return exts.any(lower.endsWith);
   }
 

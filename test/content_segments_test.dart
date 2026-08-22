@@ -189,4 +189,57 @@ void main() {
       expect(segs.whereType<ImageGroupSeg>(), isEmpty);
     });
   });
+
+  group('media URLs with query/fragment (signed CDN links)', () {
+    // Regression: the bare-media regexes used to require the URL to END at
+    // the extension, so `…/xxx_309.mp4?sign=…&t=…` matched only up to
+    // `.mp4` — the player got a dead truncated URL and the text strip left
+    // an orphan `?sign=…` behind.
+    test('bare video URL keeps its full ?query (real xhscdn shape)', () {
+      const url =
+          'https://sns-video-v3.xhscdn.com/stream/1/110/309/'
+          '01ea169b8f13cfd2010370019e68505ad5_309.mp4'
+          '?sign=abe6972bb781f1988a30ed2662d111f1&t=6a8a6e3a';
+      final segs = tokenizeContent('看视频 $url 完了');
+      expect(segs.length, 3);
+      expect(segs[0], isA<TextSeg>());
+      expect(segs[1], isA<SingleVideoSeg>());
+      expect((segs[1] as SingleVideoSeg).url, url); // FULL url incl. query
+      expect((segs[0] as TextSeg).text, isNot(contains('sign=')));
+      expect((segs[2] as TextSeg).text, isNot(contains('t=')));
+    });
+
+    test('bare image URL keeps its ?query', () {
+      const url = 'https://x/a.jpg?x-oss-process=resize,w_100';
+      final segs = tokenizeContent(url);
+      expect(segs.single, isA<ImageGroupSeg>());
+      expect((segs.single as ImageGroupSeg).urls, [url]);
+    });
+
+    test('fragment also stays with the URL', () {
+      const url = 'https://x/v.mp4#t=10';
+      final segs = tokenizeContent(url);
+      expect((segs.single as SingleVideoSeg).url, url);
+    });
+
+    test('contiguous query-suffixed images still group together', () {
+      final segs = tokenizeContent('https://x/a.jpg?v=1 https://x/b.png?v=2');
+      expect(segs.single, isA<ImageGroupSeg>());
+      expect((segs.single as ImageGroupSeg).urls.length, 2);
+    });
+
+    test('markdown link to a query media URL stays a text link', () {
+      // The (?<!\]\() lookbehind still wins over the query suffix.
+      final segs = tokenizeContent('[p](https://x/a.jpg?v=1)');
+      expect(segs.single, isA<TextSeg>());
+    });
+
+    test('stripBareMediaUrls removes the query too (no orphan ?sign=)', () {
+      const text = 'a https://x/v.mp4?s=1&t=2 b https://x/f.pdf?dl=1';
+      final stripped = stripBareMediaUrls(text);
+      expect(stripped, isNot(contains('s=1')));
+      expect(stripped, isNot(contains('dl=1')));
+      expect(stripped.replaceAll(RegExp(r'\s+'), ' ').trim(), 'a b');
+    });
+  });
 }

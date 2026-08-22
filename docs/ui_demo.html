@@ -73,6 +73,16 @@
   .post .who .dot{color:var(--tx3)}
   .post .txt{font-size:15px;line-height:1.42;margin-top:2px;white-space:pre-wrap;word-break:break-word}
   .post .media{margin-top:8px;border-radius:14px;overflow:hidden;border:1px solid var(--bd);height:180px;background:linear-gradient(135deg,#dbe2e6,#c5cdd3)}
+  /* 链接预览卡：正文裸网页链接的 Open Graph 卡（DESIGN §15）——
+     16px 圆角 + 1px 边框；头图 16:9；标题 15/600 两行、描述 13 tx2 两行、域名 13 tx3。
+     反爬墙页（微博）降级为纯域名卡：无头图无标题。 */
+  .post .link-card{margin-top:8px;border:1px solid var(--bd);border-radius:16px;overflow:hidden}
+  .post .link-card:active{background:var(--bg2)}
+  .post .link-card .lc-img{height:150px;background:linear-gradient(135deg,#dbe2e6,#c5cdd3)}
+  .post .link-card .lc-body{padding:10px 12px}
+  .post .link-card .lc-title{font-size:15px;font-weight:600;color:var(--tx);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .post .link-card .lc-desc{font-size:13px;color:var(--tx2);margin-top:3px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .post .link-card .lc-domain{font-size:13px;color:var(--tx3);margin-top:3px}
   .actions{display:flex;justify-content:space-between;margin-top:8px;color:var(--tx3);max-width:340px}
   .actions .a{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
   .actions .a svg{width:18px;height:18px}
@@ -894,6 +904,8 @@ const POSTS=[
   {i:2,u:2,text:'试了下 Costr 的发帖，居然秒出现在另一个客户端上，有点爽。',img:true,t:'1小时前',rc:12,rp:3,sh:1,reactions:{'❤️':5,'😂':4,':costr:':2}},
   {i:3,u:3,text:'年轻人第一个去中心化社交工具，门槛低、长得像 X，这就够了。别一上来就讲 NIP 讲中继，把人吓跑。',t:'3小时前',rc:42,rp:9,sh:24,reactions:{'❤️':88,'👍':20,'🎉':12,':nostr:':3}},
   {i:4,u:4,text:'省电的关键：App 在后台别傻盯着连接，回前台再补拉增量。',t:'5小时前',rc:3,rp:0,sh:5,reactions:{'❤️':12,'👍':6}},
+  {i:9,u:3,text:'必应每日一图，普通蓝灰蝶。搜索也有答案 https://cn.bing.com/search?q=普通蓝灰蝶',link:{img:true,title:'普通蓝灰蝶 - 必应',desc:'通过必应的智能搜索，可以更轻松地快速查找所需内容并获得奖励。',domain:'cn.bing.com'},t:'2小时前',rc:5,rp:1,sh:2,reactions:{'❤️':9,'🔥':2}},
+  {i:12,u:2,text:'有当女朋友的潜质哦~ https://m.weibo.cn/detail/5334299719240859',link:{domain:'m.weibo.cn'},t:'4小时前',rc:3,rp:0,sh:1,reactions:{'😂':6,'👍':2}},
   {i:8,u:0,text:'Costr 通知中心做好了：聚合 + 后台不订阅 + 回前台补拉。年轻、省电、不打扰。#costr #通知',t:'昨天',rc:9,rp:2,sh:3,reactions:{'❤️':14,'🔥':3,':costr:':2}},
 ];
 const REPLIES=[
@@ -954,6 +966,18 @@ const NOTIFS=[
 ];
 
 /* ---------- 渲染帖子卡 ---------- */
+/* 链接预览卡（DESIGN §15）：完整卡 = 头图 + 标题 + 描述 + 域名；
+   反爬墙页（如微博访客墙）降级为纯域名卡。点击整卡打开外部浏览器。 */
+function linkCardHTML(l){
+  return `<div class="link-card" onclick="event.stopPropagation()">
+    ${l.img?'<div class="lc-img"></div>':''}
+    <div class="lc-body">
+      ${l.title?`<div class="lc-title">${l.title}</div>`:''}
+      ${l.desc?`<div class="lc-desc">${l.desc}</div>`:''}
+      <div class="lc-domain">${l.domain}</div>
+    </div>
+  </div>`;
+}
 function postCard(p,extra=''){
   const [n,h]=NAMES[p.u];
   return `<div class="post" onclick="openDetail(${p.i})">
@@ -962,6 +986,7 @@ function postCard(p,extra=''){
       <div class="who"><b>${n}</b> <span class="h">@${h}</span><span class="dot">·</span><span class="t">${p.t}</span>${p.img?'<span class="proxy-chip" title="用 proxy.bostr.online 加载本帖被墙的图片视频" onclick="event.stopPropagation();this.classList.toggle(\'on\')">代理媒体</span>':''}<span class="more-btn" onclick="event.stopPropagation();openPostMenu(this,${p.i})">⋮</span></div>
       <div class="txt">${p.text}</div>
       ${p.img?'<div class="media"></div>':''}
+      ${p.link?linkCardHTML(p.link):''}
       <div id="act-${p.i}">${actionsHTML(p)}</div>
     </div>
   </div>`;
@@ -1258,6 +1283,7 @@ function openDetail(i){
         <div class="who"><b>${n}</b> <span class="h">@${h}</span><span class="dot">·</span><span class="t">${p.t}</span></div>
         <div class="txt">${p.text}</div>
         ${p.img?'<div class="media"></div>':''}
+        ${p.link?linkCardHTML(p.link):''}
         <div style="color:var(--tx3);font-size:13px;margin-top:10px">${p.t} · 23:45</div>
         <div style="display:flex;gap:16px;border-top:1px solid var(--bd);border-bottom:1px solid var(--bd);padding:8px 0;margin-top:8px;color:var(--tx2);font-size:13px"><span><b style="color:var(--tx)">${p.rc}</b> 回复</span><span><b style="color:var(--tx)">${reactionsTotal(p)}</b> 喜欢</span><span><b style="color:var(--tx)">${p.rp}</b> 转发</span></div>
         <div id="act-${p.i}">${actionsHTML(p)}</div>

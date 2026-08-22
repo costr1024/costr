@@ -22,6 +22,7 @@ import '../app/theme.dart';
 import '../models/event.dart';
 import '../utils/nav.dart';
 import '../utils/nip19.dart';
+import '../services/link_preview.dart';
 import '../services/media_download.dart';
 import 'avatar.dart';
 import 'display_name.dart';
@@ -84,19 +85,28 @@ String preserveBlankLines(String s) {
 /// text segments so they don't show as plain text; rendered via imeta extra
 /// or, for image/video, by [tokenizeContent] below. Negative lookbehind on
 /// `](` keeps it from matching the URL inside a markdown link/image
-/// `](url)`, so `[text](x.jpg)` links aren't broken.
+/// `](url)`, so `[text](x.jpg)` links aren't broken. The trailing
+/// `[?#]…` group keeps query/fragment WITH the URL — signed CDN links like
+/// `…/x.mp4?sign=…&t=…` must strip whole; without it the match ended at
+/// `.mp4` and left an orphan `?sign=…` behind.
 final RegExp _bareMediaUrl = RegExp(
-  r'(?<!\]\()https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|pdf|zip|txt|md|mp3|wav|ogg)',
+  r'(?<!\]\()https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|pdf|zip|txt|md|mp3|wav|ogg)(?:[?#][^\s)]*)?',
 );
 
+/// Strip bare media/file URLs from [text]. Public wrapper so the strip
+/// regex is unit-testable ([_bareMediaUrl] is private).
+String stripBareMediaUrls(String text) => text.replaceAll(_bareMediaUrl, '');
+
 /// Combined media token: a markdown image `![alt](url)` OR a bare image/video
-/// URL. Group 1+2 = markdown image alt + url; group 3 = bare url. The bare
+/// URL. Group 1+2 = markdown image alt + url; group 3 = bare url (including
+/// any `?query`/`#fragment` — signed CDN links like `…/x.mp4?sign=…&t=…`
+/// must stay whole or the player gets a dead truncated URL). The bare
 /// alternative's negative lookbehind `(?<!\]\()` prevents it from matching the
 /// URL inside `![](url)` or `[text](url)`, so only genuinely bare media URLs
 /// are extracted as images.
 const _mdImagePattern = r'!\[([^\]]*)\]\(([^)\s]+)\)';
 const _bareMediaPattern =
-    r'(?<!\]\()(https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv))';
+    r'(?<!\]\()(https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv)(?:[?#][^\s)]*)?)';
 final RegExp _mediaTokenRegex = RegExp(
   '$_mdImagePattern|$_bareMediaPattern',
   caseSensitive: false,
@@ -272,11 +282,43 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
         ? linkified
         : _replaceOutsideUrls(linkified, _eventEntityRegex, (Match m) => '');
 
+    // 1c. Probe candidates: bare http(s) URLs that are NOT already handled —
+    // not media/file-extension URLs (tokenized/stripped above), not markdown
+    // link targets, not tag-declared attachments. Each resolves async via
+    // [linkPreviewProvider] (session-cached, capped at 4 per note):
+    // - image/video (e.g. 小红书 `?imageView2/…/format/jpg` links whose
+    //   format lives only in the query) → injected into [tokenizeContent] as
+    //   tag-declared media, so it renders in place exactly like the 抖音
+    //   extensionless-video mechanism;
+    // - webpage → an Open Graph preview card appended below;
+    // - loading/none → the URL stays plain clickable text (today's look).
+    final previewTagged = <MediaAttachment>[];
+    final previewCards = <(String, LinkPreview)>[];
+    for (final cand in extractPreviewCandidates(
+      stripped,
+      exclude: {for (final m in event.mediaAttachments) m.url},
+    )) {
+      switch (ref.watch(linkPreviewProvider(cand)).value) {
+        case UrlImage(:final url):
+          previewTagged.add(MediaAttachment(url: url, mimeType: 'image/jpeg'));
+        case UrlVideo(:final url):
+          previewTagged.add(MediaAttachment(url: url, mimeType: 'video/mp4'));
+        case UrlWebpage(:final preview):
+          previewCards.add((cand, preview));
+        case UrlNone() || null:
+          break;
+      }
+    }
+
     // 2. Tokenize into segments: text / image-group (contiguous) / single video.
     // Tag-declared media (imeta / ["video",url,mime]) is passed along so bare
     // URLs without a media file extension (抖音 share links) still render as
-    // players instead of plain links.
-    final segments = tokenizeContent(stripped, tagged: event.mediaAttachments);
+    // players instead of plain links — same mechanism carries probe-resolved
+    // media (previewTagged).
+    final segments = tokenizeContent(
+      stripped,
+      tagged: [...event.mediaAttachments, ...previewTagged],
+    );
 
     final children = <Widget>[];
 
@@ -331,7 +373,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       if (seg is TextSeg) {
         // Strip bare media URLs from text (they're rendered via imeta extra).
         final cleaned = replaceEmoji(
-          preserveBlankLines(seg.text.replaceAll(_bareMediaUrl, '')),
+          preserveBlankLines(stripBareMediaUrls(seg.text)),
         ).trim();
         if (cleaned.isEmpty) continue;
         children.add(
@@ -405,6 +447,19 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
             for (final f in extraFiles)
               _FileChip(url: f.url, name: _fileName(f.url)),
           ],
+        ),
+      );
+    }
+
+    // 3b. Open Graph preview cards for bare web URLs that resolved as
+    // webpages (the URL text itself stays clickable above; the card is an
+    // affordance with title/image, X-style).
+    for (final (url, preview) in previewCards) {
+      children.add(
+        _LinkPreviewCard(
+          url: url,
+          preview: preview,
+          proxyMedia: widget.proxyMedia,
         ),
       );
     }
@@ -1013,6 +1068,132 @@ class _NonPostRefLabel extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Open Graph preview card for a bare web URL in the note (X-style): optional
+/// og:image on top, then title / description / domain. Whole card taps out to
+/// the browser, same as the URL text itself. Degrades: dead og:image hides
+/// the image area entirely; anti-bot walls (title+description dropped by the
+/// parser) render a domain-only card. DESIGN §15: radius 16, 1px border.
+class _LinkPreviewCard extends StatelessWidget {
+  const _LinkPreviewCard({
+    required this.url,
+    required this.preview,
+    required this.proxyMedia,
+  });
+
+  final String url;
+  final LinkPreview preview;
+  final bool proxyMedia;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = CostrColors.of(context);
+    final title = preview.title;
+    final description = preview.description;
+    final imageUrl = preview.imageUrl;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () =>
+          launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+      child: Container(
+        margin: const EdgeInsets.only(top: 8),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: colors.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (imageUrl != null)
+              _PreviewImage(url: imageUrl, forceProxy: proxyMedia),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (title != null)
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: colors.text,
+                        height: 1.3,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  if (description != null) ...[
+                    if (title != null) const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colors.text2,
+                        height: 1.3,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  SizedBox(height: (title ?? description) != null ? 4 : 0),
+                  Text(
+                    preview.domain,
+                    style: TextStyle(fontSize: 13, color: colors.text3),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// og:image area of a preview card: 16:9, cover; on load failure collapses
+/// to nothing (a dead og:image must degrade to the text-only card, never a
+/// broken-image box — 不因图崩).
+class _PreviewImage extends StatefulWidget {
+  const _PreviewImage({required this.url, required this.forceProxy});
+
+  final String url;
+  final bool forceProxy;
+
+  @override
+  State<_PreviewImage> createState() => _PreviewImageState();
+}
+
+class _PreviewImageState extends State<_PreviewImage> {
+  bool _failed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed) return const SizedBox.shrink();
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      child: CostrNetworkImage(
+        url: widget.url,
+        forceProxy: widget.forceProxy,
+        fit: BoxFit.cover,
+        memCacheHeight: 600,
+        placeholder: (BuildContext c) =>
+            Container(color: Theme.of(c).colorScheme.surfaceContainerHighest),
+        errorWidget: (BuildContext _) {
+          // Flip AFTER the frame — errorWidget builds during the parent's
+          // build, where setState is illegal.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && !_failed) setState(() => _failed = true);
+          });
+          return const SizedBox.shrink();
+        },
       ),
     );
   }

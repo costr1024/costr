@@ -8,6 +8,7 @@ import 'package:costr/app/theme.dart';
 import 'package:costr/models/event.dart';
 import 'package:costr/nostr/identity.dart';
 import 'package:costr/nostr/relay_pool.dart';
+import 'package:costr/services/link_preview.dart';
 import 'package:costr/widgets/markdown_content.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -55,6 +56,9 @@ void main() {
           metadataProvider.overrideWith((ref, pk) async* {
             yield null;
           }),
+          // The content carries a bare web URL — keep the link-preview probe
+          // off the network in tests.
+          linkPreviewProvider.overrideWith((ref, url) async => const UrlNone()),
         ],
         child: MaterialApp(
           theme: AppTheme.light(),

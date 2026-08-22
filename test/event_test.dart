@@ -222,6 +222,20 @@ void main() {
       expect(media[0].isVideo, isTrue);
     });
 
+    test('extension inference survives ?query and #fragment', () {
+      // Signed CDN links (`…mp4?sign=…`) and media fragments (`#t=10`) put
+      // more after the extension — the kind must still be inferred.
+      expect(
+        MediaAttachment(url: 'https://x/v.mp4?sign=abc&t=1').isVideo,
+        isTrue,
+      );
+      expect(MediaAttachment(url: 'https://x/v.mp4#t=10').isVideo, isTrue);
+      expect(
+        MediaAttachment(url: 'https://x/i.jpg?x-oss-process=w_100').isImage,
+        isTrue,
+      );
+    });
+
     test('mediaAttachments dedups same url across imeta and ["image",...]', () {
       final list = <dynamic>[
         'id',
