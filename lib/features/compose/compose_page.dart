@@ -121,6 +121,10 @@ class _ComposePageState extends ConsumerState<ComposePage>
 
   bool _nsfw = false;
 
+  /// Guard so the once-per-open SnackBar clear in [didChangeDependencies]
+  /// runs a single time (it also fires on later dependency changes).
+  bool _clearedStaleSnackBars = false;
+
   /// Auto-saved editor draft. Survives crash / back so the user doesn't lose
   /// an unsent post; cleared on successful send. Keyed per context — top-level
   /// posts share one slot; a reply is keyed by its parent id, a quote by the
@@ -203,6 +207,22 @@ class _ComposePageState extends ConsumerState<ComposePage>
     WidgetsBinding.instance.addObserver(this);
     _controller.addListener(_onDraftChanged);
     _loadDraft();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // A previous publish's 「已发布」 SnackBar outlives the popped compose
+    // route by its ~4s display window, and the rapid-repost flow (post →
+    // immediately open compose again) used to reopen compose WITH that stale
+    // SnackBar floating over the bottom media-upload buttons
+    // ("频发新帖时上传图片/视频按钮被遮挡"). Drop any lingering SnackBars the
+    // moment compose opens. Cannot run in initState (ScaffoldMessenger.of is
+    // an inherited-widget lookup, illegal before initState completes).
+    if (!_clearedStaleSnackBars) {
+      _clearedStaleSnackBars = true;
+      ScaffoldMessenger.of(context).clearSnackBars();
+    }
   }
 
   @override

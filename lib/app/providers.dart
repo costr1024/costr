@@ -266,6 +266,23 @@ Map<String, dynamic> buildFeedFilter(FeedMode mode, List<String> follows) {
   return filter;
 }
 
+/// Case variants of a hashtag for a `#t` relay REQ. Relays match `t`-tag
+/// values CASE-SENSITIVELY (NIP-12 only RECOMMENDS lowercase), and real posts
+/// tag inconsistently (`#Nostr` / `#nostr` / `#NOSTR`). Querying all variants
+/// (Amethyst `hashtagAlts` pattern) avoids silently missing posts. Deduped,
+/// order-stable: original, lowercase, UPPERCASE, Capitalized.
+List<String> hashtagAlts(String tag) {
+  final capitalized = tag.isEmpty
+      ? tag
+      : tag[0].toUpperCase() + tag.substring(1);
+  final out = <String>[];
+  final seen = <String>{};
+  for (final v in [tag, tag.toLowerCase(), tag.toUpperCase(), capitalized]) {
+    if (v.isNotEmpty && seen.add(v)) out.add(v);
+  }
+  return out;
+}
+
 /// A user's NIP-65 relay list (kind 10002): outbox (read) + inbox (write)
 /// relays. Parsed from the `["r", url, marker?]` tags. A tag with no marker
 /// means the relay is used for both read + write; `marker == "read"` →
@@ -1622,12 +1639,14 @@ final textScaleFactorProvider = Provider<double>(
 
 /// Filter applied to the 关注 feed (following mode only): `null` = 全部关注;
 /// `group:<name>` = only posts from authors in that NIP-51 kind-30000 custom
-/// group; `tag:<tag>` = only posts carrying that hashtag. Persisted to config
+/// group (client-side narrowing of the already-loaded following feed — no
+/// extra relay REQ, instant); `tag:<tag>` = the hashtag's OWN timeline:
+/// [followingTagFeedProvider] broadcasts a live `#t` REQ and the feed shows
+/// matching posts from ANY author (Amethyst pattern; relays without `#t`
+/// support simply return nothing). Persisted to config
 /// (`following_filter:<pubkey>`, PER-ACCOUNT — each account keeps its own
 /// selection) so a relaunch keeps the last selection (DESIGN §8
-/// follow-list feed switcher, Amethyst PeopleList). Client-side filtering on
-/// the already-loaded following feed — no extra relay REQ, instant, robust
-/// against relays that don't support `#t`.
+/// follow-list feed switcher, Amethyst PeopleList).
 final savedFollowingFilterProvider = FutureProvider<String?>((ref) async {
   final me = ref.watch(identityProvider.select((v) => v.value?.pubkeyHex));
   if (me == null) return null;
@@ -2245,7 +2264,15 @@ final followingOutboxProvider = Provider<void>((ref) {
   final mode = ref.watch(feedModeProvider);
   final identity = ref.watch(identityProvider).value;
   final follows = ref.watch(followingStateProvider).value ?? const <String>[];
-  if (identity == null || mode != FeedMode.following || follows.isEmpty) {
+  // Tag filter active → the feed source is the hashtag's `#t` REQ
+  // ([followingTagFeedProvider]), not the followees' posts: pause the outbox
+  // router + default-bucket sub while the tag feed is shown (user confirmed
+  // the source switch). Rebuilds restart them when the filter clears.
+  final ff = ref.watch(followingFilterProvider);
+  if (identity == null ||
+      mode != FeedMode.following ||
+      follows.isEmpty ||
+      (ff != null && ff.startsWith('tag:'))) {
     return;
   }
 
@@ -2326,14 +2353,64 @@ final followingOutboxProvider = Provider<void>((ref) {
   }();
 });
 
+/// Drives the **followed-hashtag** feed (关注 filter `tag:<tag>`). Unlike the
+/// group filter (client-side narrowing of the already-loaded following feed),
+/// a hashtag spans authors the user does NOT follow — so the tag feed issues a
+/// REAL live `#t` REQ broadcast to the main pool (Amethyst pattern), instead of
+/// filtering the capped following window (which only ever held a few days of
+/// posts, "切到关注的 tag 只能看到最近几天"). Events flow through the pool's
+/// merged stream into [EventStoreNotifier] automatically (no route), and
+/// [currentFeedEventsProvider] narrows to the hashtag client-side. Rebuilds —
+/// closing the sub — when the filter/mode/identity changes.
+final followingTagFeedProvider = Provider<void>((ref) {
+  final mode = ref.watch(feedModeProvider);
+  final identity = ref.watch(identityProvider).value;
+  final ff = ref.watch(followingFilterProvider);
+  if (identity == null || mode != FeedMode.following) return;
+  if (ff == null || !ff.startsWith('tag:')) return;
+  final tag = ff.substring(4).toLowerCase();
+  if (tag.isEmpty) return;
+
+  final pool = ref.watch(relayPoolProvider);
+
+  // `since` incremental refresh: only request events newer than the newest
+  // post carrying the tag we already hold. Cold start (none held) → omit
+  // `since`, so each relay serves its newest `limit` window of the tag (the
+  // backward depth the old client-side filter never fetched).
+  final held = ref.read(eventStoreProvider);
+  var newest = 0;
+  for (final e in held) {
+    if (e.hashtags.contains(tag) && e.createdAt > newest) {
+      newest = e.createdAt;
+    }
+  }
+
+  final subId = nextSubId('feed-tag');
+  ref.onDispose(() => pool.closeSubscription(subId));
+  final filter = <String, dynamic>{
+    '#t': hashtagAlts(tag),
+    // kinds [1,6]: the feed renders text notes + reposts (same backward-page
+    // choice as _loadMoreGlobal/_loadMoreFollowing — reactions would eat the
+    // `limit` without rendering).
+    'kinds': [1, 6],
+    'limit': 100,
+  };
+  if (newest > 0) filter['since'] = newest;
+  // Live sub (closeOnEose: false): after the initial window + EOSE, new
+  // matching posts stream in on the same REQ.
+  pool.request(subId, filter, closeOnEose: false);
+});
+
 // --- Current feed events (derived) -----------------------------------------
 
 final currentFeedEventsProvider = Provider<List<Event>>((ref) {
-  // Watching this keeps the feed subscription alive. In following mode the
-  // outbox provider drives the fetch; in global mode the subscription provider
-  // does. Both are watched unconditionally (each is a no-op when inactive).
+  // Watching this keeps the feed subscriptions alive. In following mode the
+  // outbox provider (or the tag provider, when a hashtag filter is active)
+  // drives the fetch; in global mode the subscription provider does. All are
+  // watched unconditionally (each is a no-op when inactive).
   ref.watch(feedSubscriptionProvider);
   ref.watch(followingOutboxProvider);
+  ref.watch(followingTagFeedProvider);
   // GATE: rebuild only when the kind-1/6 feed content actually changes — the
   // revision provider re-emits on every store flush but only notifies when the
   // int changed. On 全球 (a live firehose) the store flushes every 200ms, but
@@ -2365,21 +2442,29 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   Iterable<Event> events = all.where((e) => e.isTextNote || e.isRepost);
 
   if (mode == FeedMode.following) {
-    final follows = ref.watch(followingStateProvider).value ?? const <String>[];
-    final set = follows.toSet();
-    final me = ref.watch(identityProvider).value?.pubkeyHex;
-    // The user's OWN posts always belong in their home feed. You don't follow
-    // yourself, so without `|| e.pubkey == me` a just-published note (already
-    // echoed into the store by publishAndWait) was silently dropped here —
-    // visible in the profile 帖子 tab but never in the feed, and pull-refresh
-    // couldn't bring it back either.
-    events = events.where((e) => set.contains(e.pubkey) || e.pubkey == me);
-
-    // Following-list filter (DESIGN §8): narrow to a custom group's authors
-    // or a hashtag. Client-side on the already-loaded following feed.
+    // Following-list filter (DESIGN §8). `group:` narrows the already-loaded
+    // following feed client-side. `tag:` SWITCHES THE SOURCE: posts carrying
+    // the hashtag arrive via [followingTagFeedProvider]'s live `#t` REQ and
+    // come from ANY author (a hashtag spans people the user doesn't follow),
+    // so the followee-author restriction below must NOT apply to them — the
+    // hashtag itself is the filter.
     final ff = ref.watch(followingFilterProvider);
-    if (ff != null) {
-      if (ff.startsWith('group:')) {
+    if (ff != null && ff.startsWith('tag:')) {
+      final t = ff.substring(4).toLowerCase();
+      events = events.where((e) => e.hashtags.contains(t));
+    } else {
+      final follows =
+          ref.watch(followingStateProvider).value ?? const <String>[];
+      final set = follows.toSet();
+      final me = ref.watch(identityProvider).value?.pubkeyHex;
+      // The user's OWN posts always belong in their home feed. You don't follow
+      // yourself, so without `|| e.pubkey == me` a just-published note (already
+      // echoed into the store by publishAndWait) was silently dropped here —
+      // visible in the profile 帖子 tab but never in the feed, and pull-refresh
+      // couldn't bring it back either.
+      events = events.where((e) => set.contains(e.pubkey) || e.pubkey == me);
+
+      if (ff != null && ff.startsWith('group:')) {
         final gname = ff.substring(6);
         final me = ref.watch(identityProvider).value?.pubkeyHex;
         if (me != null) {
@@ -2401,9 +2486,6 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
             events = const <Event>[];
           }
         }
-      } else if (ff.startsWith('tag:')) {
-        final t = ff.substring(4);
-        events = events.where((e) => e.hashtags.contains(t));
       }
     }
   }

@@ -146,6 +146,8 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final mode = ref.read(feedModeProvider);
     if (mode == FeedMode.following) {
       ref.invalidate(followingOutboxProvider);
+      // Tag filter active → re-issue the hashtag's `#t` REQ instead.
+      ref.invalidate(followingTagFeedProvider);
     } else {
       ref.invalidate(feedSubscriptionProvider);
     }
@@ -170,14 +172,26 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     if (events.isEmpty) return;
     final mode = ref.read(feedModeProvider);
     final follows = ref.read(followingStateProvider).value ?? const <String>[];
-    if (mode == FeedMode.following && follows.isEmpty) return;
+    // 关注 + hashtag filter active → the feed is the tag's `#t` timeline
+    // (any author), so pagination pages THAT backward — not the followees'
+    // outbox. follows may even be empty here; only guard it otherwise.
+    final ff = ref.read(followingFilterProvider);
+    final activeTag =
+        (mode == FeedMode.following && ff != null && ff.startsWith('tag:'))
+        ? ff.substring(4).toLowerCase()
+        : null;
+    if (mode == FeedMode.following && follows.isEmpty && activeTag == null) {
+      return;
+    }
     final oldest = events
         .map((e) => e.createdAt)
         .reduce((a, b) => a < b ? a : b);
     final until = oldest - 1;
     setState(() => _loadingMore = true);
     try {
-      if (mode == FeedMode.following) {
+      if (activeTag != null) {
+        await _loadMoreTag(activeTag, until);
+      } else if (mode == FeedMode.following) {
         await _loadMoreFollowing(follows, until);
       } else {
         await _loadMoreGlobal(until);
@@ -284,6 +298,34 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       await eoseSub.cancel();
       pool.closeSubscription(subId);
     }
+  }
+
+  /// Hashtag-feed load-more: backward `#t` page (until = oldest-1) broadcast
+  /// to the main pool — same shape as [_loadMoreGlobal]. UNROUTED, so the
+  /// page flows through the pool's merged stream into the EventStore (the tag
+  /// feed's source), unlike the global page which routes into the window.
+  /// Resolves on the first relay EOSE (5s cap) so a slow relay doesn't stall.
+  Future<void> _loadMoreTag(String tag, int until) async {
+    final pool = ref.read(relayPoolProvider);
+    final filter = <String, dynamic>{
+      '#t': hashtagAlts(tag),
+      'kinds': [1, 6],
+      'limit': 200,
+      'until': until,
+    };
+    final subId = nextSubId('more-tag');
+    final done = Completer<void>();
+    final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+      if (!done.isCompleted) done.complete();
+    });
+    pool.request(subId, filter, closeOnEose: true);
+    final t = Timer(const Duration(seconds: 5), () {
+      if (!done.isCompleted) done.complete();
+    });
+    await done.future;
+    t.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
   }
 
   @override

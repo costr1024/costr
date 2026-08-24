@@ -130,6 +130,12 @@ lib/
 - **关注 tab**：`followingOutboxProvider` → `OutboxRouter` 按 followee 的 kind-10002 outbox
   分组定向拉取（详见上面的 SVG）。事件经 `EventStoreNotifier.ingest` 入内存库，`currentFeedEventsProvider`
   既有 `follows.contains(pubkey)` 过滤复用，UI 零改动。
+- **关注下拉的 #tag 过滤（真查中继）**：选中关注的标签后 `followingTagFeedProvider` 向默认池
+  广播 live `#t` 订阅（Amethyst 模式：`#t` 值带 `hashtagAlts` 大小写变体——中继按大小写敏感
+  匹配 t 值；`kinds [1,6]`、`limit 100`，内存库已有带 tag 帖时带 `since` 增量），outbox 路由
+  同时暂停，信息流来源切换为该 tag 的时间线（帖子可来自**未关注**的作者，`#t` 之上的作者限制
+  解除）；翻页 `_loadMoreTag` 按 `until` 回翻更早的带 tag 帖。此前的纯客户端过滤只能看到已加载
+  关注流里最近几天的带 tag 帖；不支持 `#t` 的中继只是不应答，不影响其他中继返回结果。
 - **个人主页**：`userPostsProvider` → `fetchFromUrls` 临时连接对方 outbox read 中继
   （每次拉最新 `limit:100` 窗口、250ms 去抖流式 yield，经 `yield* ctrl.stream` 吐出），无清单回落广播。
 - **资料 / 头像拉取**：`metadataProvider` 三级查找——SQLite 缓存 → 默认池 + indexer 池
@@ -344,6 +350,20 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 通知中心、多账号、关注分组（NIP-51 kind-30000，Amethyst 兼容）、收藏（NIP-51 + NIP-44 私密）、
 屏蔽列表、媒体代理、服务器节点自定义 + 去中心化推荐、本地 SQLite 缓存秒开。覆盖安装即可从
 任一 0.x-beta 升级，登录 / 关注 / 屏蔽 / 收藏 / 本地缓存全部保留。
+
+**v1.1.1 相对 v1.1.0 的新功能与修复**：
+**关注页 #标签 过滤改为真查中继（此前只能看到最近几天）**——此前在关注下拉里选某个关注的
+#标签，是在「已加载的关注流」上做的纯客户端过滤：关注流本身只持有最近几天的帖子，带该标签的
+更早帖子从未被拉取，切过去自然只能看到最近几天。现在选中标签即向默认中继池广播一条 live
+`#t` 订阅（Amethyst 模式）：`#t` 值带 `hashtagAlts` 大小写变体（中继对 t 值大小写敏感，
+原文/小写/大写/首字母大写去重后下发）、`kinds [1,6]`、`limit 100`，内存库已有带 tag 的帖子时
+附带 `since` 增量；标签激活期间 outbox 路由暂停，信息流来源切换为该标签自己的时间线（帖子可
+来自**未关注**的作者）。上滑翻更早的帖子走 `_loadMoreTag` 的 `until` 回翻页。不支持 `#t` 的
+中继只是不应答，不影响其它中继返回结果。
+**频繁发帖时「已发布」提示不再遮挡上传按钮**——发帖成功弹出的「已发布」SnackBar 存活约 4 秒，
+比发帖页退场更久；连续快速发新帖时，重开发帖页会带着这条残留提示悬浮在新页面底部，恰好盖住
+最下方的上传图片/视频按钮。现在发帖页一打开即清除残留 SnackBar（放在 `didChangeDependencies`
+而非 `initState`——`ScaffoldMessenger.of` 是 inherited 查找，`initState` 阶段非法）。
 
 **v1.1.0 相对 v1.0.10 的新功能与修复**：
 **网页链接预览卡（Open Graph）**——此前帖子里的裸网页链接（如必应搜索、微博正文页）只是一行

@@ -195,7 +195,7 @@ Nostr 没有注册表——"账号"就是一对密钥。交互按此设计，不
 - **全局搜索**（搜索 tab）：顶栏输入 + **帖子/用户 两个 tab**（Amethyst 风格，不做下拉混合）。
   帖子用 NIP-50 `search` 过滤器（中继 `nostr.wine`），用户用 kind 0 metadata。
 - **语言过滤**（首页）：顶栏地球图标弹出菜单（全部 / 中文 / 英文 / 日文），过滤全球流和关注流的帖子语言。不在关注页/通知页/搜索页出现——只影响首页 feed。
-- **首页关注下拉**（关注 mode，仿 Amethyst PeopleList）：关注 mode 顶栏 filter 图标弹菜单——**全部关注（默认）/ 各自定义关注分组 / 各关注的 #tag**，过滤关注信息流。默认 = 全部关注（与语言过滤一样开箱即用）。选中项持久化到本地 config（`following_filter`）重启保持，不上传中继。客户端过滤已加载的关注流，不额外发 relay 请求、即时。分组来自 NIP-51 kind-30000（已有 `FollowGroup`/`userGroupedFollowsProvider`，缓存优先），#tag 来自 kind-30015 兴趣集。
+- **首页关注下拉**（关注 mode，仿 Amethyst PeopleList）：关注 mode 顶栏 filter 图标弹菜单——**全部关注（默认）/ 各自定义关注分组 / 各关注的 #tag**，过滤关注信息流。默认 = 全部关注（与语言过滤一样开箱即用）。选中项持久化到本地 config（`following_filter`）重启保持，不上传中继。分组来自 NIP-51 kind-30000（已有 `FollowGroup`/`userGroupedFollowsProvider`，缓存优先），#tag 来自 kind-30015 兴趣集。**分组**过滤是客户端过滤已加载的关注流（即时、不发请求）；**#tag** 过滤则切换信息流来源——向默认池广播真实 `#t` 订阅（Amethyst 模式：`#t` 值带大小写变体，`kinds [1,6]`，`limit 100`，有缓存时带 `since` 增量；翻页按 `until` 回翻），帖子可来自未关注的作者（旧客户端过滤只能看到已加载关注流里最近几天的带 tag 帖）。不支持 `#t` 的中继只是不返回结果，不影响其他中继。
 - **首页偏好持久化**：上次选的首页 tab（全球 / 关注）、语言过滤、关注下拉过滤重启后恢复——存本地 config 表（`feed_mode` / `language_filter` / `following_filter`），不上传中继。开箱默认即全球 + 全部语言 + 全部关注。
 - **用户主页内搜索**：主页 banner 下方按当前 tab 就地过滤——
   帖子/回帖 tab 出现搜索框，按正文子串过滤该用户的帖/回帖（客户端过滤，不发请求）。
