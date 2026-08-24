@@ -1042,6 +1042,12 @@ class EventStoreNotifier extends Notifier<List<Event>> {
   /// event-by-id lookup was still in flight (feed reply-context headers).
   Event? byId(String id) => store.byId(id);
 
+  /// Newest-known kind-0 per pubkey — the store's EVICTION-PROOF metadata
+  /// index (see [EventStore.metadataByPubkey]). Over-cap eviction drops a
+  /// kind-0 from the capped list but never from this index, so @-mention
+  /// candidates keep resolving names for the whole session.
+  Map<String, Event> get metadataByPubkey => store.metadataByPubkey;
+
   /// Resolves when the cold-start SQLite hydration has finished (or failed).
   /// Awaiters (notification classification) must not judge events before the
   /// own-post snapshot lands — judging against an empty store yields different
@@ -2362,6 +2368,13 @@ final followingOutboxProvider = Provider<void>((ref) {
 /// merged stream into [EventStoreNotifier] automatically (no route), and
 /// [currentFeedEventsProvider] narrows to the hashtag client-side. Rebuilds —
 /// closing the sub — when the filter/mode/identity changes.
+///
+/// NO `since`: tagged posts are SPARSE, so holding a few recent ones (e.g.
+/// followees' tagged posts already in the store) says nothing about older
+/// history — a `since` anchored at the newest held tagged post permanently
+/// cut off everything older (v1.1.1 bug: "还是只有最近几个帖子，刷新也没有").
+/// Each relay serves its newest [100]-post window of the tag; the open sub
+/// streams newer posts live, and `_loadMoreTag` pages backward via `until`.
 final followingTagFeedProvider = Provider<void>((ref) {
   final mode = ref.watch(feedModeProvider);
   final identity = ref.watch(identityProvider).value;
@@ -2373,18 +2386,6 @@ final followingTagFeedProvider = Provider<void>((ref) {
 
   final pool = ref.watch(relayPoolProvider);
 
-  // `since` incremental refresh: only request events newer than the newest
-  // post carrying the tag we already hold. Cold start (none held) → omit
-  // `since`, so each relay serves its newest `limit` window of the tag (the
-  // backward depth the old client-side filter never fetched).
-  final held = ref.read(eventStoreProvider);
-  var newest = 0;
-  for (final e in held) {
-    if (e.hashtags.contains(tag) && e.createdAt > newest) {
-      newest = e.createdAt;
-    }
-  }
-
   final subId = nextSubId('feed-tag');
   ref.onDispose(() => pool.closeSubscription(subId));
   final filter = <String, dynamic>{
@@ -2395,7 +2396,6 @@ final followingTagFeedProvider = Provider<void>((ref) {
     'kinds': [1, 6],
     'limit': 100,
   };
-  if (newest > 0) filter['since'] = newest;
   // Live sub (closeOnEose: false): after the initial window + EOSE, new
   // matching posts stream in on the same REQ.
   pool.request(subId, filter, closeOnEose: false);
@@ -3699,8 +3699,8 @@ final userGroupNamesProvider = StreamProvider.family<List<String>, String>((
 });
 
 /// A user known locally (pubkey + parsed kind-0 metadata) — a candidate for
-/// @-mention autocomplete in the composer. Sourced from the in-memory
-/// EventStore's kind-0 events + the user's follows + self, so it needs no
+/// @-mention autocomplete in the composer. Sourced from the store's
+/// eviction-proof metadata index + the user's follows + self, so it needs no
 /// relay round-trip and updates as metadata streams in.
 class KnownUser {
   const KnownUser(this.pubkey, this.meta);
@@ -3710,18 +3710,28 @@ class KnownUser {
 }
 
 /// All locally-known users for @-mention autocomplete. Derived from the
-/// EventStore (kind-0 metadata seen via the global feed) + the logged-in
-/// user's follows + self. No relay round-trip.
+/// store's EVICTION-PROOF metadata index (newest kind-0 of EVERY user seen
+/// this session — capped-list eviction no longer hides them mid-session,
+/// which used to empty the autocomplete until a restart re-hydrated all
+/// cached metadata: "偶尔 @ 不到人，重启才好") + the logged-in user's
+/// follows + self. No relay round-trip.
 final knownUsersProvider = Provider<List<KnownUser>>((ref) {
-  final store = ref.watch(eventStoreProvider);
+  // Watched (not read) so a store flush re-derives the list when new
+  // metadata arrives; the index itself is read off the notifier.
+  ref.watch(eventStoreProvider);
+  final metaIndex = ref.read(eventStoreProvider.notifier).metadataByPubkey;
   final map = <String, KnownUser>{};
   void add(String pk) {
     if (pk.isEmpty) return;
-    map.putIfAbsent(pk, () => KnownUser(pk, _metaFromStore(store, pk)));
+    map.putIfAbsent(pk, () => KnownUser(pk, _metaOf(metaIndex[pk])));
   }
 
-  for (final e in store) {
-    if (e.kind == 0) add(e.pubkey);
+  // Recently-active users first (the empty-query panel shows the first 8 —
+  // same newest-first order the old store scan produced).
+  final metas = metaIndex.values.toList()
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  for (final e in metas) {
+    add(e.pubkey);
   }
   for (final pk
       in ref.watch(followingStateProvider).value ?? const <String>[]) {
@@ -3732,17 +3742,16 @@ final knownUsersProvider = Provider<List<KnownUser>>((ref) {
   return map.values.toList();
 });
 
-Metadata? _metaFromStore(List<Event> store, String pubkey) {
-  for (final e in store) {
-    if (e.kind == 0 && e.pubkey == pubkey) {
-      try {
-        final j = jsonDecode(e.content);
-        if (j is Map<String, dynamic>) {
-          return Metadata.fromJson(j, tags: e.tags);
-        }
-      } catch (_) {}
+/// Parse a kind-0 event's `.content` JSON into [Metadata] (null on
+/// absent/malformed).
+Metadata? _metaOf(Event? e) {
+  if (e == null) return null;
+  try {
+    final j = jsonDecode(e.content);
+    if (j is Map<String, dynamic>) {
+      return Metadata.fromJson(j, tags: e.tags);
     }
-  }
+  } catch (_) {}
   return null;
 }
 

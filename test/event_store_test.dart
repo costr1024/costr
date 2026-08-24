@@ -259,4 +259,72 @@ void main() {
       );
     });
   });
+
+  group('eviction-proof metadata index (@-mention candidates)', () {
+    Event meta(String pubkey, int t, {String idSuffix = ''}) => Event(
+      id: 'k0-$pubkey$idSuffix',
+      pubkey: pubkey,
+      createdAt: t,
+      kind: 0,
+      tags: const [],
+      content: '{"name":"$pubkey"}',
+      sig: 's' * 128,
+    );
+
+    test('kind-0 evicted from the capped list survives in the index', () {
+      final s = EventStore(maxEvents: 2);
+      final pk = 'a' * 64;
+      s.add(meta(pk, 1));
+      // Two newer posts push the kind-0 out of the capped list (eviction
+      // priority 7 → 0 → 6 → 1; no reactions held → kind-0 goes first).
+      s.add(_e('p1', 2));
+      s.add(_e('p2', 3));
+      expect(s.byId('k0-$pk'), isNull, reason: 'evicted from the list');
+      final idx = s.metadataByPubkey;
+      expect(idx.keys, [pk]);
+      expect(idx[pk]!.content, '{"name":"$pk"}');
+    });
+
+    test('newest revision wins; stale redelivery cannot clobber it even '
+        'after eviction', () {
+      final s = EventStore(maxEvents: 2);
+      final pk = 'b' * 64;
+      s.add(meta(pk, 10, idSuffix: '-new'));
+      // Push it out of the list; the index keeps remembering it.
+      s.add(_e('p1', 11));
+      s.add(_e('p2', 12));
+      expect(s.metadataByPubkey[pk]!.id, 'k0-$pk-new');
+      // A STALE redelivery (relay serving an older revision) is rejected.
+      expect(s.add(meta(pk, 5, idSuffix: '-stale')), isFalse);
+      expect(s.metadataByPubkey[pk]!.id, 'k0-$pk-new');
+      // A NEWER revision replaces it.
+      s.add(meta(pk, 20, idSuffix: '-newer'));
+      expect(s.metadataByPubkey[pk]!.id, 'k0-$pk-newer');
+    });
+
+    test('explicit remove (NIP-09 deletion) drops the index entry', () {
+      final s = EventStore();
+      final pk = 'c' * 64;
+      s.add(meta(pk, 1));
+      expect(s.remove('k0-$pk'), isTrue);
+      expect(s.metadataByPubkey, isEmpty);
+    });
+
+    test('clear empties the index (account switch)', () {
+      final s = EventStore();
+      s.add(meta('d' * 64, 1));
+      s.clear();
+      expect(s.metadataByPubkey, isEmpty);
+    });
+
+    test('index view is read-only', () {
+      final s = EventStore();
+      final pk = 'e' * 64;
+      s.add(meta(pk, 1));
+      expect(
+        () => s.metadataByPubkey['x' * 64] = meta('x' * 64, 1),
+        throwsUnsupportedError,
+      );
+    });
+  });
 }

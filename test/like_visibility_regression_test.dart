@@ -294,6 +294,17 @@ void main() {
           ),
         );
         await tester.pump();
+        // Pre-create the interaction index + this post's reactions provider
+        // BEFORE the slow like lands. In the real app both are created on the
+        // first feed render — a clean window with nothing mid-flush. If they
+        // were first MOUNTED lazily by a build that coincides with the like's
+        // provider flush, the mount's ref.watch of the (dirty) cache provider
+        // would schedule a refresh mid-build (setState-during-build flake).
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(PostDetailPage)),
+        );
+        container.read(interactionIndexProvider);
+        container.read(reactionsProvider(_postId));
         // Post lookup resolves, the #e REQ goes out, fast relay empty-EOSEs.
         await Future<void>.delayed(const Duration(milliseconds: 200));
         await tester.pump();

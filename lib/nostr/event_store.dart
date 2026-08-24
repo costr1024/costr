@@ -4,6 +4,8 @@
 /// wrapper lives in `lib/app/providers.dart`.
 library;
 
+import 'dart:collection';
+
 import '../models/event.dart';
 
 class EventStore {
@@ -51,7 +53,23 @@ class EventStore {
   /// until the feed showed nothing ("过会儿全刷没"). This index lets [add]
   /// replace the held revision with a newer one (and drop older ones) so a
   /// single author contributes at most ONE kind-0 to the store.
+  ///
+  /// EVICTION-PROOF on purpose: over-cap eviction removes the kind-0 from the
+  /// capped [_sorted] list but NOT from this index (only an explicit [remove]
+  /// — a NIP-09 deletion — or [clear] drops an entry). This keeps the
+  /// newest-known metadata of EVERY user seen this session resolvable in
+  /// memory even after their kind-0 fell out of the capped list — the @
+  /// mention candidate source ([knownUsersProvider]) reads this index. The
+  /// old list-only lookup lost users mid-session whenever eviction ran
+  /// ("偶尔 @ 不到人，重启才好" — cold-start hydration re-loaded all cached
+  /// metadata, masking it until eviction fired again). Memory is bounded: one
+  /// entry per distinct pubkey (replaceable), not per event.
   final Map<String, Event> _metaByPubkey = {};
+
+  /// Newest-known kind-0 per pubkey — see [_metaByPubkey]. Survives over-cap
+  /// eviction; empty only for users whose metadata never reached the store.
+  /// Read-only view (mutate via [add]/[remove]/[clear] only).
+  Map<String, Event> get metadataByPubkey => UnmodifiableMapView(_metaByPubkey);
 
   void _bumpForAdd(int kind) {
     if (kind == 1 || kind == 6) _contentRevision++;
@@ -132,9 +150,9 @@ class EventStore {
   void _removeAt(int r) {
     final e = _sorted[r];
     _byId.remove(e.id);
-    if (e.kind == 0 && identical(_metaByPubkey[e.pubkey], e)) {
-      _metaByPubkey.remove(e.pubkey);
-    }
+    // NOTE: kind-0 stays in [_metaByPubkey] on eviction — the index is
+    // eviction-proof (see its doc). Only the explicit [remove] path (NIP-09
+    // deletion) and [clear] drop entries.
     _sorted.removeAt(r);
     for (final k in _oldestHint.keys.toList()) {
       final h = _oldestHint[k]!;
@@ -166,6 +184,10 @@ class EventStore {
   /// highest-volume kind on a following feed, and losing old ones only degrades
   /// counts on old posts. kind-1 posts evict last so backward pagination keeps
   /// headroom (see [maxEvents]).
+  ///
+  /// An evicted kind-0 ALSO survives in the eviction-proof [_metaByPubkey]
+  /// index, so @-mention candidates keep their names mid-session (the list
+  /// loss alone used to empty the autocomplete until a restart re-hydrated).
   int? _pickEvictionVictimIndex() {
     for (final kind in const [7, 0, 6, 1]) {
       final idx = _oldestIndexFor(kind);
@@ -205,12 +227,17 @@ class EventStore {
   Event? byId(String id) => _byId[id];
 
   /// Remove an event by id (e.g. after a NIP-09 kind-5 deletion). Returns true
-  /// if it was present.
+  /// if it was present. For kind-0 this ALSO drops the pubkey's entry from
+  /// the eviction-proof metadata index (a deleted profile is gone for good;
+  /// over-cap eviction, by contrast, keeps it — see [_metaByPubkey]).
   bool remove(String id) {
     final e = _byId[id];
     if (e == null) return false;
     final r = _sorted.indexOf(e);
     assert(r >= 0, 'byId/store index out of sync');
+    if (e.kind == 0 && identical(_metaByPubkey[e.pubkey], e)) {
+      _metaByPubkey.remove(e.pubkey);
+    }
     _removeAt(r);
     _bumpForRemove(e.kind);
     return true;

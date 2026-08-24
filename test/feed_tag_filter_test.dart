@@ -256,37 +256,46 @@ void main() {
       },
     );
 
-    test('warm start: since = newest held post carrying the tag', () async {
-      final store = [
-        _post(
-          '1',
-          'x' * 64,
-          100,
-          tags: const [
-            ['t', 'flutter'],
-          ],
-        ),
-        _post(
-          '2',
-          'y' * 64,
-          500,
-          tags: const [
-            ['t', 'flutter'],
-          ],
-        ),
-        // Newer post WITHOUT the tag must not advance the cursor.
-        _post('3', 'z' * 64, 900),
-      ];
-      container = buildContainer('tag:flutter', store, poolOverride: pool);
-      final sub = container.listen(followingTagFeedProvider, (_, _) {});
-      addTearDown(sub.close);
-      await pollUntil(() => relay.sent.any((f) => f[0] == 'REQ'));
+    test(
+      'held tagged posts do NOT set a since cursor (v1.1.1 regression)',
+      () async {
+        // Tagged posts are SPARSE: already holding a few recent ones (e.g.
+        // followees' tagged posts in the store) says nothing about older
+        // history. v1.1.1 anchored `since` at the newest held tagged post,
+        // which made relays serve only NEWER posts — permanently cutting off
+        // all history ("还是只有最近几个帖子，刷新也没有"). The REQ must
+        // carry NO `since` even when tagged posts are already held.
+        final store = [
+          _post(
+            '1',
+            'x' * 64,
+            100,
+            tags: const [
+              ['t', 'flutter'],
+            ],
+          ),
+          _post(
+            '2',
+            'y' * 64,
+            500,
+            tags: const [
+              ['t', 'flutter'],
+            ],
+          ),
+          _post('3', 'z' * 64, 900),
+        ];
+        container = buildContainer('tag:flutter', store, poolOverride: pool);
+        final sub = container.listen(followingTagFeedProvider, (_, _) {});
+        addTearDown(sub.close);
+        await pollUntil(() => relay.sent.any((f) => f[0] == 'REQ'));
 
-      final filter =
-          relay.sent.where((f) => f[0] == 'REQ').single[2]
-              as Map<String, dynamic>;
-      expect(filter['since'], 500);
-    });
+        final filter =
+            relay.sent.where((f) => f[0] == 'REQ').single[2]
+                as Map<String, dynamic>;
+        expect(filter.containsKey('since'), isFalse);
+        expect(filter['limit'], 100);
+      },
+    );
 
     test('teardown closes the subscription', () async {
       container = buildContainer('tag:flutter', const [], poolOverride: pool);
