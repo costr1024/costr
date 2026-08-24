@@ -83,12 +83,27 @@ Event _reply() => Event(
 /// closed ALL relays the instant the first (empty) EOSE arrived, silencing
 /// the relay that had the like.
 class _FakeRelay implements RelayConnection {
-  _FakeRelay(this.url, {this.hasLike = false, this.likeDelay = Duration.zero});
+  _FakeRelay(this.url, {this.hasLike = false, this.likeDelay});
 
   @override
   final String url;
   final bool hasLike;
-  final Duration likeDelay;
+
+  /// Delay before the [hasLike] relay answers the #e REQ. `null` = MANUAL
+  /// delivery: the response is held until [deliverPendingLike] is called, so
+  /// the test controls the exact moment the "slow" answer lands (a real
+  /// [Timer] fires late under full-suite CPU load — that timing race was the
+  /// GAP B flake).
+  final Duration? likeDelay;
+
+  /// subId of a held (manual-delivery) like response, awaiting
+  /// [deliverPendingLike].
+  String? _pendingLikeSubId;
+
+  /// True once the interactions #e REQ has arrived and the like is held
+  /// pending — lets the test wait for the REQ before delivering, so delivery
+  /// never races ahead of the request.
+  bool get hasPendingLike => _pendingLikeSubId != null;
 
   final StreamController<Event> _events = StreamController<Event>.broadcast();
   final StreamController<String> _eose = StreamController<String>.broadcast();
@@ -143,18 +158,37 @@ class _FakeRelay implements RelayConnection {
       if (!hasLike) {
         // Fast empty answer — the relay that wins the first-EOSE race.
         _eose.add(subId);
-      } else if (likeDelay == Duration.zero) {
-        _events.add(_like());
-        _eose.add(subId);
       } else {
-        Timer(likeDelay, () {
-          if (_closedSubs.contains(subId)) return; // CLOSEd by the client
+        final delay = likeDelay;
+        if (delay == null) {
+          // Manual delivery: hold the response until deliverPendingLike().
+          _pendingLikeSubId = subId;
+        } else if (delay == Duration.zero) {
           _events.add(_like());
           _eose.add(subId);
-        });
+        } else {
+          Timer(delay, () {
+            if (_closedSubs.contains(subId)) return; // CLOSEd by the client
+            _events.add(_like());
+            _eose.add(subId);
+          });
+        }
       }
       return;
     }
+    _eose.add(subId);
+  }
+
+  /// Manual-delivery mode: emit the held like response NOW (under its original
+  /// subId, like a real relay answering late). If the client CLOSEd the sub
+  /// first (the regression under test), nothing is delivered and the cache
+  /// stays empty — exactly what the assertions check.
+  void deliverPendingLike() {
+    final subId = _pendingLikeSubId;
+    if (subId == null) return;
+    _pendingLikeSubId = null;
+    if (_closedSubs.contains(subId)) return; // CLOSEd by the client
+    _events.add(_like());
     _eose.add(subId);
   }
 
@@ -243,15 +277,17 @@ void main() {
     '(no first-EOSE stampede)',
     (tester) async {
       // Relay A answers every interactions REQ with an immediate EMPTY EOSE;
-      // relay B has the like but answers 400ms later. Pre-fix the provider
-      // resolved on A's first EOSE and closed B's sub before it answered —
-      // the like never arrived and the chevron stayed hidden even though the
-      // notification center (long-lived sub) had shown it.
+      // Relay A answers every interactions REQ with an immediate EMPTY EOSE;
+      // relay B has the like but answers LATE (delivered explicitly by the
+      // test once the fast empty-EOSE has been processed). Pre-fix the
+      // provider resolved on A's first EOSE and closed B's sub before it
+      // answered — the like never arrived and the chevron stayed hidden even
+      // though the notification center (long-lived sub) had shown it.
       final fast = _FakeRelay('wss://fast');
       final slow = _FakeRelay(
         'wss://slow',
         hasLike: true,
-        likeDelay: const Duration(milliseconds: 400),
+        likeDelay: null, // MANUAL delivery — the test decides when it lands.
       );
       final pool = RelayPool([fast, slow]);
       await pool.connect();
@@ -308,9 +344,34 @@ void main() {
         // Post lookup resolves, the #e REQ goes out, fast relay empty-EOSEs.
         await Future<void>.delayed(const Duration(milliseconds: 200));
         await tester.pump();
-        // Pre-fix the sub was already closed on the slow relay by now.
-        // Post-fix the slow relay's late answer still lands.
-        await Future<void>.delayed(const Duration(milliseconds: 600));
+        // The slow relay holds its answer from the moment the #e REQ arrives.
+        // Pre-fix the sub was already CLOSEd on it by the fast empty-EOSE;
+        // post-fix the sub is still open, so delivering the answer must land
+        // the like. Wait for the REQ to actually be in flight (post lookup is
+        // async), then deliver explicitly — controlling the exact moment the
+        // "slow" answer lands removes the real-Timer race that made this test
+        // flaky under full-suite CPU load.
+        final reqWaited = Stopwatch()..start();
+        while (!slow.hasPendingLike) {
+          if (reqWaited.elapsed > const Duration(seconds: 5)) {
+            fail('the interactions #e REQ was never sent');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        slow.deliverPendingLike();
+        // Pump to propagate the delivered event through the pool's streams
+        // into the store + interaction cache, then past the store's 200ms
+        // debounce. (Polling with Future.delayed starves this propagation in
+        // the test zone — pumps are what drive it.)
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        // Flush the like's provider invalidations OUTSIDE the build phase:
+        // force the store's debounced flush FIRST, then rebuild the dirtied
+        // index via a plain read in a safe context. The following widget build
+        // then mounts family providers against CLEAN providers — no
+        // mid-build flush, no setState-during-build race.
+        container.read(eventStoreProvider.notifier).flushNow();
+        container.read(interactionIndexProvider);
         await tester.pump();
       });
 

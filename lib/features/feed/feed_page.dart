@@ -301,10 +301,18 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   }
 
   /// Hashtag-feed load-more: backward `#t` page (until = oldest-1) broadcast
-  /// to the main pool — same shape as [_loadMoreGlobal]. UNROUTED, so the
-  /// page flows through the pool's merged stream into the EventStore (the tag
-  /// feed's source), unlike the global page which routes into the window.
-  /// Resolves on the first relay EOSE (5s cap) so a slow relay doesn't stall.
+  /// to the main pool. UNROUTED, so the page flows through the pool's merged
+  /// stream into the EventStore (the tag feed's source), unlike the global
+  /// page which routes into the window.
+  ///
+  /// The UI unlocks on the FIRST relay EOSE (5s cap — a slow relay must not
+  /// stall the spinner), but the REQ itself stays open for stragglers until
+  /// ALL connected relays EOSE (the pool's closeOnEose semantic), hard-capped
+  /// 8s later — closing on the first EOSE cut the slow relays' page off, and
+  /// the NEXT page's `until` anchor (newest oldest-1) already sits below the
+  /// gap, so the missed posts would never be re-requested (a permanent hole
+  /// in the tag timeline). Stragglers keep streaming into the store after the
+  /// UI unlocked; the sorted store shows them at their right position.
   Future<void> _loadMoreTag(String tag, int until) async {
     final pool = ref.read(relayPoolProvider);
     final filter = <String, dynamic>{
@@ -325,7 +333,11 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     await done.future;
     t.cancel();
     await eoseSub.cancel();
-    pool.closeSubscription(subId);
+    // The REQ stays OPEN for stragglers after the UI unlocked: the pool's
+    // closeOnEose closes it once ALL connected relays EOSE. A hard cap
+    // guarantees cleanup if some relay never EOSEs (a double close after the
+    // pool already closed it is harmless).
+    Timer(const Duration(seconds: 8), () => pool.closeSubscription(subId));
   }
 
   @override
