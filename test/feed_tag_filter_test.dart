@@ -1,15 +1,18 @@
-// Tests for the followed-hashtag feed (关注 dropdown `tag:` filter).
+// Tests for the hashtag timeline feed — two triggers: the following dropdown
+// `tag:<tag>` filter and a TAPPED hashtag (tagFilterProvider, any mode: tap a
+// #hashtag on a post/profile → feed shows that tag's timeline).
 //
-// The tag filter switches the following feed's SOURCE: instead of narrowing
-// the already-loaded followee posts client-side (which only ever held a few
-// days of history), `followingTagFeedProvider` broadcasts a live `#t` REQ to
-// the relay pool and the feed shows matching posts from ANY author.
+// Both switch the feed's SOURCE: instead of narrowing the already-loaded feed
+// client-side (which only ever held a few days of history),
+// `tagTimelineFeedProvider` broadcasts a live `#t` REQ to the relay pool and
+// the feed shows matching posts from ANY author.
 //
 // Covers:
 // 1. `hashtagAlts` case-variant expansion (relays match `t` values
 //    case-sensitively — Amethyst pattern).
-// 2. `followingTagFeedProvider` issues the `#t` REQ (kinds [1,6], limit 100,
-//    `since` only when a tagged post is already held), closes it on teardown.
+// 2. `tagTimelineFeedProvider` issues the `#t` REQ (kinds [1,6], limit 100,
+//    NEVER a `since` — sparse tags), closes it on teardown; both triggers,
+//    both modes; tapped tag wins.
 // 3. `currentFeedEventsProvider` with a tag filter shows tagged posts from
 //    UNFOLLOWED authors and hides untagged followee posts.
 // 4. `followingOutboxProvider` pauses (never touches the relay pool) while a
@@ -41,6 +44,11 @@ class _FollowingMode extends FeedModeNotifier {
   FeedMode build() => FeedMode.following;
 }
 
+class _GlobalMode extends FeedModeNotifier {
+  @override
+  FeedMode build() => FeedMode.global;
+}
+
 class _NoLangFilter extends LanguageFilterNotifier {
   @override
   LanguageFilter build() => LanguageFilter.all;
@@ -49,6 +57,14 @@ class _NoLangFilter extends LanguageFilterNotifier {
 class _NoTagFilter extends TagFilterNotifier {
   @override
   String? build() => null;
+}
+
+class _FixedTagFilter extends TagFilterNotifier {
+  _FixedTagFilter(this.value);
+  final String value;
+
+  @override
+  String? build() => value;
 }
 
 class _FixedFollowingFilter extends FollowingFilterNotifier {
@@ -195,7 +211,7 @@ void main() {
     });
   });
 
-  group('followingTagFeedProvider', () {
+  group('tagTimelineFeedProvider', () {
     late _FakeRelay relay;
     late RelayPool pool;
     late ProviderContainer container;
@@ -204,12 +220,18 @@ void main() {
       String? filter,
       List<Event> store, {
       RelayPool? poolOverride,
+      FeedMode mode = FeedMode.following,
+      String? tappedTag,
     }) {
       return ProviderContainer(
         overrides: [
-          feedModeProvider.overrideWith(() => _FollowingMode()),
+          mode == FeedMode.following
+              ? feedModeProvider.overrideWith(() => _FollowingMode())
+              : feedModeProvider.overrideWith(() => _GlobalMode()),
           languageFilterProvider.overrideWith(() => _NoLangFilter()),
-          tagFilterProvider.overrideWith(() => _NoTagFilter()),
+          tappedTag == null
+              ? tagFilterProvider.overrideWith(() => _NoTagFilter())
+              : tagFilterProvider.overrideWith(() => _FixedTagFilter(tappedTag)),
           followingFilterProvider.overrideWith(
             () => _FixedFollowingFilter(filter),
           ),
@@ -242,7 +264,7 @@ void main() {
         container = buildContainer('tag:flutter', const [], poolOverride: pool);
         // Listen (not read): keeps the provider alive while its async dep
         // (identity) resolves and the rebuild issues the REQ.
-        final sub = container.listen(followingTagFeedProvider, (_, _) {});
+        final sub = container.listen(tagTimelineFeedProvider, (_, _) {});
         addTearDown(sub.close);
         await pollUntil(() => relay.sent.any((f) => f[0] == 'REQ'));
 
@@ -285,7 +307,7 @@ void main() {
           _post('3', 'z' * 64, 900),
         ];
         container = buildContainer('tag:flutter', store, poolOverride: pool);
-        final sub = container.listen(followingTagFeedProvider, (_, _) {});
+        final sub = container.listen(tagTimelineFeedProvider, (_, _) {});
         addTearDown(sub.close);
         await pollUntil(() => relay.sent.any((f) => f[0] == 'REQ'));
 
@@ -299,7 +321,7 @@ void main() {
 
     test('teardown closes the subscription', () async {
       container = buildContainer('tag:flutter', const [], poolOverride: pool);
-      final sub = container.listen(followingTagFeedProvider, (_, _) {});
+      final sub = container.listen(tagTimelineFeedProvider, (_, _) {});
       await pollUntil(() => relay.sent.any((f) => f[0] == 'REQ'));
       final reqFrame = relay.sent.firstWhere((f) => f[0] == 'REQ');
       final subId = reqFrame[1] as String;
@@ -312,13 +334,76 @@ void main() {
 
     test('non-tag filter issues no REQ', () async {
       container = buildContainer('group:friends', const [], poolOverride: pool);
-      final sub = container.listen(followingTagFeedProvider, (_, _) {});
+      final sub = container.listen(tagTimelineFeedProvider, (_, _) {});
       addTearDown(sub.close);
       // Give the provider a resolved identity + rebuild cycles; a tag REQ
       // would have fired by now.
       await container.read(identityProvider.future);
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(relay.sent.where((f) => f[0] == 'REQ'), isEmpty);
+    });
+
+    test(
+      'tapped tag (global mode) fires the #t REQ — "点帖子标签只有最近几天" '
+      'regression',
+      () async {
+        // Tapping a hashtag on a post card sets tagFilterProvider and jumps to
+        // the feed — previously that only client-filtered the loaded firehose
+        // window (a few days). The tapped tag must switch the source to a real
+        // `#t` REQ, in GLOBAL mode too.
+        container = buildContainer(
+          null,
+          const [],
+          poolOverride: pool,
+          mode: FeedMode.global,
+          tappedTag: 'v2ex',
+        );
+        final sub = container.listen(tagTimelineFeedProvider, (_, _) {});
+        addTearDown(sub.close);
+        await pollUntil(() => relay.sent.any((f) => f[0] == 'REQ'));
+
+        final filter =
+            relay.sent.where((f) => f[0] == 'REQ').single[2]
+                as Map<String, dynamic>;
+        expect(filter['#t'], ['v2ex', 'V2EX', 'V2ex']);
+        expect(filter['kinds'], [1, 6]);
+        expect(filter['limit'], 100);
+        expect(filter.containsKey('since'), isFalse);
+      },
+    );
+
+    test('tapped tag fires the #t REQ in following mode as well', () async {
+      container = buildContainer(
+        null,
+        const [],
+        poolOverride: pool,
+        tappedTag: 'nostr',
+      );
+      final sub = container.listen(tagTimelineFeedProvider, (_, _) {});
+      addTearDown(sub.close);
+      await pollUntil(() => relay.sent.any((f) => f[0] == 'REQ'));
+
+      final filter =
+          relay.sent.where((f) => f[0] == 'REQ').single[2]
+              as Map<String, dynamic>;
+      expect(filter['#t'], ['nostr', 'NOSTR', 'Nostr']);
+    });
+
+    test('tapped tag wins over the following dropdown tag', () async {
+      container = buildContainer(
+        'tag:foo',
+        const [],
+        poolOverride: pool,
+        tappedTag: 'bar',
+      );
+      final sub = container.listen(tagTimelineFeedProvider, (_, _) {});
+      addTearDown(sub.close);
+      await pollUntil(() => relay.sent.any((f) => f[0] == 'REQ'));
+
+      final filter =
+          relay.sent.where((f) => f[0] == 'REQ').single[2]
+              as Map<String, dynamic>;
+      expect(filter['#t'], ['bar', 'BAR', 'Bar']);
     });
   });
 
@@ -344,7 +429,7 @@ void main() {
           myMuteSetProvider.overrideWith((ref) => const MuteSet()),
           feedSubscriptionProvider.overrideWith((ref) {}),
           followingOutboxProvider.overrideWith((ref) {}),
-          followingTagFeedProvider.overrideWith((ref) {}),
+          tagTimelineFeedProvider.overrideWith((ref) {}),
         ],
       );
     }

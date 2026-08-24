@@ -146,11 +146,12 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final mode = ref.read(feedModeProvider);
     if (mode == FeedMode.following) {
       ref.invalidate(followingOutboxProvider);
-      // Tag filter active → re-issue the hashtag's `#t` REQ instead.
-      ref.invalidate(followingTagFeedProvider);
     } else {
       ref.invalidate(feedSubscriptionProvider);
     }
+    // Tag timeline (a tapped hashtag in any mode, or the following dropdown's
+    // `tag:`) → re-issue the hashtag's `#t` REQ.
+    ref.invalidate(tagTimelineFeedProvider);
     // Show the spinner briefly while relays respond.
     await Future<void>.delayed(const Duration(milliseconds: 1200));
   }
@@ -172,14 +173,21 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     if (events.isEmpty) return;
     final mode = ref.read(feedModeProvider);
     final follows = ref.read(followingStateProvider).value ?? const <String>[];
-    // 关注 + hashtag filter active → the feed is the tag's `#t` timeline
-    // (any author), so pagination pages THAT backward — not the followees'
-    // outbox. follows may even be empty here; only guard it otherwise.
+    // Hashtag filter active → the feed is the tag's `#t` timeline (any
+    // author), so pagination pages THAT backward — not the followees' outbox
+    // nor the plain firehose. Two triggers: a tapped hashtag (any mode) wins,
+    // else the following dropdown's `tag:`. follows may even be empty here;
+    // only guard the follows-empty case when no tag is active.
     final ff = ref.read(followingFilterProvider);
-    final activeTag =
-        (mode == FeedMode.following && ff != null && ff.startsWith('tag:'))
-        ? ff.substring(4).toLowerCase()
-        : null;
+    final tappedTag = ref.read(tagFilterProvider);
+    String? activeTag;
+    if (tappedTag != null && tappedTag.isNotEmpty) {
+      activeTag = tappedTag.toLowerCase();
+    } else if (mode == FeedMode.following &&
+        ff != null &&
+        ff.startsWith('tag:')) {
+      activeTag = ff.substring(4).toLowerCase();
+    }
     if (mode == FeedMode.following && follows.isEmpty && activeTag == null) {
       return;
     }
@@ -301,9 +309,11 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   }
 
   /// Hashtag-feed load-more: backward `#t` page (until = oldest-1) broadcast
-  /// to the main pool. UNROUTED, so the page flows through the pool's merged
-  /// stream into the EventStore (the tag feed's source), unlike the global
-  /// page which routes into the window.
+  /// to the main pool. The destination follows the mode's feed source: GLOBAL
+  /// → ROUTED into the ephemeral window (the global feed reads the window, and
+  /// routed pages keep the firehose's "never the capped store" invariant);
+  /// FOLLOWING → UNROUTED, so the page flows through the pool's merged stream
+  /// into the EventStore (the following tag feed's source).
   ///
   /// The UI unlocks on the FIRST relay EOSE (5s cap — a slow relay must not
   /// stall the spinner), but the REQ itself stays open for stragglers until
@@ -311,8 +321,8 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   /// 8s later — closing on the first EOSE cut the slow relays' page off, and
   /// the NEXT page's `until` anchor (newest oldest-1) already sits below the
   /// gap, so the missed posts would never be re-requested (a permanent hole
-  /// in the tag timeline). Stragglers keep streaming into the store after the
-  /// UI unlocked; the sorted store shows them at their right position.
+  /// in the tag timeline). Stragglers keep streaming in after the UI unlocked;
+  /// the sorted source shows them at their right position.
   Future<void> _loadMoreTag(String tag, int until) async {
     final pool = ref.read(relayPoolProvider);
     final filter = <String, dynamic>{
@@ -326,7 +336,12 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
       if (!done.isCompleted) done.complete();
     });
-    pool.request(subId, filter, closeOnEose: true);
+    if (ref.read(feedModeProvider) == FeedMode.global) {
+      final window = ref.read(globalFeedWindowProvider.notifier);
+      pool.request(subId, filter, closeOnEose: true, onEvent: window.ingest);
+    } else {
+      pool.request(subId, filter, closeOnEose: true);
+    }
     final t = Timer(const Duration(seconds: 5), () {
       if (!done.isCompleted) done.complete();
     });

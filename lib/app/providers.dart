@@ -1647,7 +1647,7 @@ final textScaleFactorProvider = Provider<double>(
 /// `group:<name>` = only posts from authors in that NIP-51 kind-30000 custom
 /// group (client-side narrowing of the already-loaded following feed — no
 /// extra relay REQ, instant); `tag:<tag>` = the hashtag's OWN timeline:
-/// [followingTagFeedProvider] broadcasts a live `#t` REQ and the feed shows
+/// [tagTimelineFeedProvider] broadcasts a live `#t` REQ and the feed shows
 /// matching posts from ANY author (Amethyst pattern; relays without `#t`
 /// support simply return nothing). Persisted to config
 /// (`following_filter:<pubkey>`, PER-ACCOUNT — each account keeps its own
@@ -2175,6 +2175,14 @@ final feedSubscriptionProvider = Provider<void>((ref) {
   // Following mode → outbox provider owns the feed; nothing to broadcast.
   if (mode == FeedMode.following) return;
 
+  // Tapped-tag filter active → the feed source is the tag's own `#t` REQ
+  // ([tagTimelineFeedProvider], routed into the window); pause the firehose —
+  // its ~40 events/s would crowd the ~1000-post window and evict the tag's
+  // backward pages before the user can scroll them. Rebuilds restart the
+  // firehose when the filter clears (onDispose below wipes the window, so it
+  // resumes clean).
+  if (ref.watch(tagFilterProvider) != null) return;
+
   final subId = nextSubId('feed');
   // Keep subscription open (no closeOnEose) so live reactions (kind-7) +
   // metadata (kind-0) continue arriving after the initial snapshot.
@@ -2271,14 +2279,17 @@ final followingOutboxProvider = Provider<void>((ref) {
   final identity = ref.watch(identityProvider).value;
   final follows = ref.watch(followingStateProvider).value ?? const <String>[];
   // Tag filter active → the feed source is the hashtag's `#t` REQ
-  // ([followingTagFeedProvider]), not the followees' posts: pause the outbox
+  // ([tagTimelineFeedProvider]), not the followees' posts: pause the outbox
   // router + default-bucket sub while the tag feed is shown (user confirmed
-  // the source switch). Rebuilds restart them when the filter clears.
+  // the source switch). Two triggers: the dropdown `tag:<tag>` and a tapped
+  // hashtag ([tagFilterProvider]). Rebuilds restart them when the filter
+  // clears.
   final ff = ref.watch(followingFilterProvider);
   if (identity == null ||
       mode != FeedMode.following ||
       follows.isEmpty ||
-      (ff != null && ff.startsWith('tag:'))) {
+      (ff != null && ff.startsWith('tag:')) ||
+      ref.watch(tagFilterProvider) != null) {
     return;
   }
 
@@ -2359,15 +2370,22 @@ final followingOutboxProvider = Provider<void>((ref) {
   }();
 });
 
-/// Drives the **followed-hashtag** feed (关注 filter `tag:<tag>`). Unlike the
-/// group filter (client-side narrowing of the already-loaded following feed),
-/// a hashtag spans authors the user does NOT follow — so the tag feed issues a
-/// REAL live `#t` REQ broadcast to the main pool (Amethyst pattern), instead of
-/// filtering the capped following window (which only ever held a few days of
-/// posts, "切到关注的 tag 只能看到最近几天"). Events flow through the pool's
-/// merged stream into [EventStoreNotifier] automatically (no route), and
-/// [currentFeedEventsProvider] narrows to the hashtag client-side. Rebuilds —
-/// closing the sub — when the filter/mode/identity changes.
+/// Drives the feed whenever a HASHTAG filter is active — two triggers:
+/// 1. TAPPED tag ([tagFilterProvider], any mode): tapping a #hashtag on a
+///    post card / profile jumps to the feed filtered by it.
+/// 2. Following dropdown `tag:<tag>` (following mode only).
+///
+/// Unlike the group filter (client-side narrowing of the already-loaded
+/// following feed), a hashtag spans authors the user does NOT follow — so the
+/// tag feed issues a REAL live `#t` REQ broadcast to the main pool (Amethyst
+/// pattern), instead of client-filtering whatever the feed happened to hold
+/// (a few days at most — "切到/点 tag 只能看到最近几天"). The destination
+/// follows the mode's feed source: GLOBAL → ROUTED into the ephemeral window
+/// (the firehose pauses, see [feedSubscriptionProvider]); FOLLOWING → unrouted
+/// into the [EventStoreNotifier] via the merged stream (the outbox pauses, see
+/// [followingOutboxProvider]). [currentFeedEventsProvider] narrows to the
+/// hashtag client-side. Rebuilds — closing the sub — when the
+/// filter/mode/identity changes.
 ///
 /// NO `since`: tagged posts are SPARSE, so holding a few recent ones (e.g.
 /// followees' tagged posts already in the store) says nothing about older
@@ -2375,13 +2393,23 @@ final followingOutboxProvider = Provider<void>((ref) {
 /// cut off everything older (v1.1.1 bug: "还是只有最近几个帖子，刷新也没有").
 /// Each relay serves its newest [100]-post window of the tag; the open sub
 /// streams newer posts live, and `_loadMoreTag` pages backward via `until`.
-final followingTagFeedProvider = Provider<void>((ref) {
+final tagTimelineFeedProvider = Provider<void>((ref) {
   final mode = ref.watch(feedModeProvider);
   final identity = ref.watch(identityProvider).value;
+  final tapped = ref.watch(tagFilterProvider);
   final ff = ref.watch(followingFilterProvider);
-  if (identity == null || mode != FeedMode.following) return;
-  if (ff == null || !ff.startsWith('tag:')) return;
-  final tag = ff.substring(4).toLowerCase();
+  if (identity == null) return;
+  // Tapped tag wins (most recent user intent) over the dropdown selection.
+  String? tag;
+  if (tapped != null && tapped.isNotEmpty) {
+    tag = tapped;
+  } else if (mode == FeedMode.following &&
+      ff != null &&
+      ff.startsWith('tag:')) {
+    tag = ff.substring(4);
+  }
+  if (tag == null) return;
+  tag = tag.toLowerCase();
   if (tag.isEmpty) return;
 
   final pool = ref.watch(relayPoolProvider);
@@ -2396,9 +2424,18 @@ final followingTagFeedProvider = Provider<void>((ref) {
     'kinds': [1, 6],
     'limit': 100,
   };
-  // Live sub (closeOnEose: false): after the initial window + EOSE, new
-  // matching posts stream in on the same REQ.
-  pool.request(subId, filter, closeOnEose: false);
+  if (mode == FeedMode.global) {
+    // Global feed reads the window — route the tag REQ into it (keeps the
+    // firehose's "never the capped store" invariant).
+    final window = ref.read(globalFeedWindowProvider.notifier);
+    pool.request(subId, filter, closeOnEose: false, onEvent: window.ingest);
+  } else {
+    // Following mode reads the store — unrouted, so the page flows through
+    // the pool's merged stream into the EventStore automatically.
+    // Live sub (closeOnEose: false): after the initial window + EOSE, new
+    // matching posts stream in on the same REQ.
+    pool.request(subId, filter, closeOnEose: false);
+  }
 });
 
 // --- Current feed events (derived) -----------------------------------------
@@ -2410,7 +2447,7 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
   // watched unconditionally (each is a no-op when inactive).
   ref.watch(feedSubscriptionProvider);
   ref.watch(followingOutboxProvider);
-  ref.watch(followingTagFeedProvider);
+  ref.watch(tagTimelineFeedProvider);
   // GATE: rebuild only when the kind-1/6 feed content actually changes — the
   // revision provider re-emits on every store flush but only notifies when the
   // int changed. On 全球 (a live firehose) the store flushes every 200ms, but
@@ -2443,16 +2480,19 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
 
   if (mode == FeedMode.following) {
     // Following-list filter (DESIGN §8). `group:` narrows the already-loaded
-    // following feed client-side. `tag:` SWITCHES THE SOURCE: posts carrying
-    // the hashtag arrive via [followingTagFeedProvider]'s live `#t` REQ and
-    // come from ANY author (a hashtag spans people the user doesn't follow),
-    // so the followee-author restriction below must NOT apply to them — the
-    // hashtag itself is the filter.
+    // following feed client-side. A hashtag — either the dropdown `tag:` or a
+    // TAPPED hashtag ([tagFilterProvider]) — SWITCHES THE SOURCE: posts arrive
+    // via [tagTimelineFeedProvider]'s live `#t` REQ and come from ANY author
+    // (a hashtag spans people the user doesn't follow), so the followee-author
+    // restriction below must NOT apply — the hashtag itself is the filter (for
+    // the tapped case the common tag narrowing further down does it).
     final ff = ref.watch(followingFilterProvider);
-    if (ff != null && ff.startsWith('tag:')) {
+    final tappedTag = ref.watch(tagFilterProvider);
+    final tagSourceActive = tappedTag != null && tappedTag.isNotEmpty;
+    if (!tagSourceActive && ff != null && ff.startsWith('tag:')) {
       final t = ff.substring(4).toLowerCase();
       events = events.where((e) => e.hashtags.contains(t));
-    } else {
+    } else if (!tagSourceActive) {
       final follows =
           ref.watch(followingStateProvider).value ?? const <String>[];
       final set = follows.toSet();
