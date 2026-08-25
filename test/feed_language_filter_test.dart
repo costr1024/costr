@@ -16,6 +16,7 @@
 import 'dart:convert';
 
 import 'package:costr/app/providers.dart';
+import 'package:costr/features/feed/feed_page.dart';
 import 'package:costr/models/event.dart';
 import 'package:costr/models/mute_set.dart';
 import 'package:costr/nostr/identity.dart';
@@ -213,5 +214,54 @@ void main() {
     expect(got, isNot(contains('en01')));
     expect(got, isNot(contains('cyr01')));
     expect(got, isNot(contains('emo01')));
+  });
+
+  // pageHasLanguage is the stop condition of the global feed's auto backward
+  // paging ("语言过滤开启，下刷没有更久的中文帖子就自动继续向前查询"). It must
+  // agree EXACTLY with what the feed renders above — same predicate — or the
+  // loop would stop on pages the filtered feed can't show (or dig forever on
+  // pages it can).
+  group('pageHasLanguage (auto backward-paging stop condition)', () {
+    test('a page with a matching note stops the paging', () {
+      expect(pageHasLanguage([zhPost], 'zh', const []), isTrue);
+      expect(pageHasLanguage([enPost], 'en', const []), isTrue);
+    });
+
+    test('a page without the language keeps paging', () {
+      expect(
+        pageHasLanguage(
+          [enPost, cyrillicPost, emojiOnly, emptyPost],
+          'zh',
+          const [],
+        ),
+        isFalse,
+      );
+      expect(pageHasLanguage([zhPost], 'en', const []), isFalse);
+      expect(pageHasLanguage(const [], 'zh', const []), isFalse);
+    });
+
+    test('e-tag-only repost resolves against the page itself', () {
+      // The Chinese target sits elsewhere in the SAME backward page.
+      expect(
+        pageHasLanguage([repostEmptyZh, targetZh], 'zh', const []),
+        isTrue,
+      );
+      // Without its target (and no embedded JSON) the wrapper is empty →
+      // junk → not a reason to stop.
+      expect(pageHasLanguage([repostEmptyZh], 'zh', const []), isFalse);
+    });
+
+    test('e-tag-only repost resolves against the held window posts', () {
+      expect(pageHasLanguage([repostEmptyZh], 'zh', [targetZh]), isTrue);
+    });
+
+    test('embedded-JSON repost needs no lookup', () {
+      expect(pageHasLanguage([repostEmbZh], 'zh', const []), isTrue);
+      expect(pageHasLanguage([repostEmbEn], 'zh', const []), isFalse);
+    });
+
+    test('pure-link page counts as matching (v1.0.2 parity with the feed)', () {
+      expect(pageHasLanguage([pureUrl], 'zh', const []), isTrue);
+    });
   });
 }

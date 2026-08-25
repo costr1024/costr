@@ -50,9 +50,51 @@ List<Event> frozenVisible(
   }).toList();
 }
 
+/// True when ANY post in a backward [page] belongs under the [want] language
+/// filter — the stop condition of the global feed's auto backward-paging
+/// ("keep digging until the filtered language shows up"). Repost language
+/// resolves against [held] (the window's current posts) PLUS the page
+/// itself, since a repost's target may sit elsewhere in the same page.
+/// Same [Event.matchesLanguage] predicate the feed renders with, so "the
+/// page extended the filtered feed" is decided exactly the way the feed
+/// does.
+@visibleForTesting
+bool pageHasLanguage(List<Event> page, String want, Iterable<Event> held) {
+  final byId = <String, Event>{
+    for (final e in held) e.id: e,
+    for (final e in page) e.id: e,
+  };
+  for (final e in page) {
+    if (e.matchesLanguage(want, (id) => byId[id])) return true;
+  }
+  return false;
+}
+
 class _FeedPageState extends ConsumerState<FeedPage> {
   bool _loadingMore = false;
   static const int _loadMoreThreshold = 300; // px from bottom
+
+  /// Language-filter auto backward-paging bounds (全球 + 语言过滤): matching
+  /// posts are a tiny fraction of the firehose, so one backward page almost
+  /// never contains any — the loop keeps paging until one does, bounded by
+  /// BOTH a page count and a wall clock so the spinner always stops (the
+  /// never-stopping black progress bar was the unbounded re-trigger loop,
+  /// which the cooldown below still guards against).
+  static const int _kLangBackfillMaxPages = 10;
+  static const Duration _kLangBackfillBudget = Duration(seconds: 20);
+
+  /// Global backward-paging depth cursor: pages with `created_at <` this
+  /// value were already fetched by a previous load-more. With a language
+  /// filter the VISIBLE oldest post moves back rarely (matching posts are
+  /// sparse), so restarting every gesture from `filteredOldest - 1` would
+  /// re-fetch the same giant non-matching band over and over; the cursor
+  /// continues from the deepest point reached instead. Validated against the
+  /// window's generation in [_loadMore]: ANY window wipe (refresh, mode
+  /// switch, account switch, tag filter on/off, follows change) bumps it,
+  /// and a cursor into wiped history would skip the band between the fresh
+  /// firehose and the old depth.
+  int? _globalDeepUntil;
+  int _cursorGeneration = 0;
 
   /// Last time a load-more finished WITHOUT extending the feed (relays
   /// returned nothing older / were unreachable). Load-more skips itself
@@ -61,6 +103,11 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   /// never-stopping black progress bar + perpetual tail spinner).
   DateTime? _emptyLoadMoreAt;
   static const Duration _kEmptyLoadMoreCooldown = Duration(seconds: 30);
+
+  /// The language filter active when the cooldown was set. Switching the
+  /// filter invalidates the cooldown: a depth that had no 中文 may still hold
+  /// 日文, so the new filter gets to dig immediately.
+  LanguageFilter? _cooldownLang;
 
   final ScrollController _controller = ScrollController();
 
@@ -140,7 +187,9 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   Future<void> _refresh() async {
     // Re-issue the feed fetch (closes the old sub/router, opens a new one).
     // Following mode → outbox router rebuilds with a `since`增量 cursor;
-    // global mode → default-relay broadcast re-issues.
+    // global mode → default-relay broadcast re-issues. The rebuild's dispose
+    // clears the global window (bumping its generation, which is what
+    // invalidates the paging depth cursor on its next use).
     _release();
     _emptyLoadMoreAt = null; // a refresh may revive dead relays
     final mode = ref.read(feedModeProvider);
@@ -163,12 +212,14 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     // tick at the bottom — each attempt opens ~30 transient relay
     // connections and takes up to ~20s, so the top progress bar + tail
     // spinner looked permanent ("黑色的进度条一直在动…永远不会停止").
-    // Back off for a while instead of hammering.
+    // Back off for a while instead of hammering. The cooldown is tied to the
+    // language filter it was earned under — switching the filter lifts it.
+    final lang = ref.read(languageFilterProvider);
     final now = DateTime.now();
     final cooldown = _emptyLoadMoreAt == null
         ? Duration.zero
         : now.difference(_emptyLoadMoreAt!);
-    if (cooldown < _kEmptyLoadMoreCooldown) return;
+    if (cooldown < _kEmptyLoadMoreCooldown && lang == _cooldownLang) return;
     final events = ref.read(currentFeedEventsProvider);
     if (events.isEmpty) return;
     final mode = ref.read(feedModeProvider);
@@ -194,7 +245,23 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     final oldest = events
         .map((e) => e.createdAt)
         .reduce((a, b) => a < b ? a : b);
-    final until = oldest - 1;
+    var until = oldest - 1;
+    // Global mode: the depth cursor skips bands a previous gesture already
+    // paged through (with a language filter the visible oldest barely moves
+    // while the actual fetch went much deeper for matching posts). Not used
+    // for a hashtag timeline — that pages the TAG's own history, and the
+    // cursor belongs to the firehose. Generation check drops a cursor whose
+    // window was wiped since it was set.
+    if (mode == FeedMode.global && activeTag == null) {
+      final windowNotifier = ref.read(globalFeedWindowProvider.notifier);
+      if (windowNotifier.generation != _cursorGeneration) {
+        _globalDeepUntil = null;
+        _cursorGeneration = windowNotifier.generation;
+      }
+      if (_globalDeepUntil != null && _globalDeepUntil! < until) {
+        until = _globalDeepUntil!;
+      }
+    }
     setState(() => _loadingMore = true);
     try {
       if (activeTag != null) {
@@ -215,35 +282,92 @@ class _FeedPageState extends ConsumerState<FeedPage> {
       final oldestAfter = after.isEmpty
           ? null
           : after.map((e) => e.createdAt).reduce((a, b) => a < b ? a : b);
-      _emptyLoadMoreAt = (oldestAfter == null || oldestAfter >= oldest)
-          ? DateTime.now()
-          : null;
+      if (oldestAfter == null || oldestAfter >= oldest) {
+        _emptyLoadMoreAt = DateTime.now();
+        _cooldownLang = lang;
+      } else {
+        _emptyLoadMoreAt = null;
+      }
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
   }
 
-  /// Global load-more: backward page (until = oldest-1) broadcast to the main
-  /// pool. Resolves on the first relay EOSE so a slow relay doesn't stall the
-  /// snapshot (the pool's closeOnEose waits ALL; we resolve locally first).
-  /// Kinds [1,6] only: backward pages exist to deepen the POST timeline;
-  /// kind-7 reactions vastly outnumber posts and would eat the `limit`,
-  /// stalling the `until` cursor.
+  /// Global load-more: backward page broadcast to the main pool. With NO
+  /// language filter this is a single page (`until` from the visible oldest
+  /// post), exactly as before. With a language filter it AUTO-PAGES: one
+  /// backward page is almost entirely non-matching posts (the filtered
+  /// language is a tiny fraction of the firehose), so while a page brings no
+  /// matching post the paging keeps going DEEPER — previously it stopped at
+  /// the first non-extending page, the empty-page cooldown kicked in, and the
+  /// filtered feed sat at "十几条" forever ("下刷一直返回空不更新"). Bounded by
+  /// [_kLangBackfillMaxPages] + [_kLangBackfillBudget] per gesture; the depth
+  /// cursor lets the next gesture continue where this one stopped, and the
+  /// window's language-aware retention keeps the dug-up matching posts from
+  /// being churned back out by the live firehose.
   Future<void> _loadMoreGlobal(int until) async {
+    final want = languageFilterCode(ref.read(languageFilterProvider));
+    var cursor = until;
+    var pages = 0;
+    final deadline = DateTime.now().add(_kLangBackfillBudget);
+    while (true) {
+      final page = await _fetchGlobalPage(cursor);
+      pages++;
+      if (!mounted) break; // user left the page mid-loop — stop paging
+      if (page.isEmpty) break; // relays returned nothing older — dead end
+      var pageOldest = page.first.createdAt;
+      for (final e in page) {
+        if (e.createdAt < pageOldest) pageOldest = e.createdAt;
+      }
+      // The cursor advances on EVERY page (matching or not): it marks the
+      // band already fetched, so the next gesture skips straight past it.
+      _globalDeepUntil = pageOldest - 1;
+      if (want == null) break; // unfiltered: one page, historic behavior
+      if (pageHasLanguage(
+        page,
+        want,
+        ref.read(globalFeedWindowProvider.notifier).window.posts,
+      )) {
+        break; // feed extended with matching posts
+      }
+      if (pages >= _kLangBackfillMaxPages ||
+          !deadline.isAfter(DateTime.now())) {
+        break; // bounded: the next gesture digs further from the cursor
+      }
+      cursor = pageOldest - 1;
+    }
+  }
+
+  /// One global backward page (`until` cursor, kinds 1/6 only — backward
+  /// pages exist to deepen the POST timeline; kind-7 reactions vastly
+  /// outnumber posts and would eat the `limit`, stalling the cursor).
+  /// Resolves on the first relay EOSE so a slow relay doesn't stall the
+  /// snapshot (the pool's closeOnEose waits ALL; we resolve locally first).
+  /// Routed into the ephemeral window, same as the live firehose sub.
+  /// Returns the events the relays delivered (may contain cross-relay
+  /// duplicates — harmless for the cursor/match decisions).
+  Future<List<Event>> _fetchGlobalPage(int until) async {
     final pool = ref.read(relayPoolProvider);
     final follows = ref.read(followingStateProvider).value ?? const <String>[];
     final filter = buildFeedFilter(FeedMode.global, follows);
     filter['kinds'] = [1, 6];
     filter['until'] = until;
-    // ROUTED into the ephemeral window (same as the live sub): the backward
-    // page never touches the capped store.
     final window = ref.read(globalFeedWindowProvider.notifier);
+    final got = <Event>[];
     final subId = nextSubId('more');
     final done = Completer<void>();
     final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
       if (!done.isCompleted) done.complete();
     });
-    pool.request(subId, filter, closeOnEose: true, onEvent: window.ingest);
+    pool.request(
+      subId,
+      filter,
+      closeOnEose: true,
+      onEvent: (e) {
+        got.add(e);
+        window.ingest(e);
+      },
+    );
     final t = Timer(const Duration(seconds: 5), () {
       if (!done.isCompleted) done.complete();
     });
@@ -251,6 +375,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     t.cancel();
     await eoseSub.cancel();
     pool.closeSubscription(subId);
+    return got;
   }
 
   /// Following load-more: backward page via NIP-65 outbox routing. Builds the

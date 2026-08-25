@@ -19,7 +19,6 @@ import '../models/event.dart';
 import '../models/metadata.dart';
 import '../models/mute_set.dart';
 import '../utils/nip19.dart';
-import '../utils/language.dart';
 import '../nostr/actions.dart';
 import '../nostr/event_store.dart';
 import '../nostr/global_feed_window.dart';
@@ -1692,6 +1691,18 @@ final followingFilterProvider =
 
 enum LanguageFilter { all, zh, en, ja }
 
+/// The language code ('zh'/'en'/'ja') a [LanguageFilter] selects, or null for
+/// [LanguageFilter.all]. The ONE mapping used wherever the filter choice is
+/// compared against [Event.matchesLanguage] — the feed filter, the global
+/// window's language-aware retention, and load-more's backward pre-paging —
+/// so all three always agree about which posts a filter owns.
+String? languageFilterCode(LanguageFilter f) => switch (f) {
+  LanguageFilter.zh => 'zh',
+  LanguageFilter.en => 'en',
+  LanguageFilter.ja => 'ja',
+  LanguageFilter.all => null,
+};
+
 /// Last-used language filter, persisted in the config table (key
 /// `language_filter:<pubkey>`, PER-ACCOUNT). Restored into
 /// [LanguageFilterNotifier] on startup.
@@ -2530,58 +2541,25 @@ final currentFeedEventsProvider = Provider<List<Event>>((ref) {
     }
   }
 
-  if (lang != LanguageFilter.all) {
-    final want = switch (lang) {
-      LanguageFilter.zh => 'zh',
-      LanguageFilter.en => 'en',
-      LanguageFilter.ja => 'ja',
-      LanguageFilter.all => '',
-    };
+  final want = languageFilterCode(lang);
+  if (want != null) {
     // Reposts (kind-6/16) are judged by the note the user ACTUALLY SEES —
     // the reposted note — not the repost wrapper, whose own content is empty
     // (or the stringified-JSON of the target). Pre-fix, an empty wrapper
     // read as "no language" and leaked into EVERY filter, so English
-    // reposts flooded the 中文 feed ("转发贴混进中文过滤" bug).
-    //
-    // Resolution is synchronous and memo-friendly: the embedded NIP-18 JSON
-    // ([Event.embeddedRepost], cached per event) covers compliant reposts;
-    // a store lookup covers empty-content reposts whose target already
-    // reached the store; otherwise the wrapper itself decides.
+    // reposts flooded the 中文 feed ("转发贴混进中文过滤" bug). Resolution
+    // (embedded NIP-18 JSON → feed-source lookup → wrapper) + the
+    // null-language split (foreign script dropped, pure-link kept) live in
+    // [Event.matchesLanguage]; the SAME predicate drives the global window's
+    // language-aware retention, so what the filter shows is what the window
+    // keeps. The index is built lazily + memoized: most pages never need it
+    // (plain notes), and when they do it is one scan of the feed source.
     Map<String, Event>? byId;
     Map<String, Event> storeIndex() =>
         byId ??= <String, Event>{for (final ev in all) ev.id: ev};
-    Event languageSource(Event e) {
-      if (!e.isRepost) return e;
-      final embedded = e.embeddedRepost;
-      if (embedded != null) return embedded;
-      final target = e.repostedEventId;
-      if (target != null) {
-        final inner = storeIndex()[target];
-        if (inner != null) return inner;
-      }
-      return e;
-    }
-
-    // [Event.language] is memoized per event instance — the store dedupes by
-    // id and reuses instances across rebuilds, so each post's content is
-    // scanned once, not on every 200ms store flush. A `null` language means
-    // no letters were gathered; the feed then splits those posts instead of
-    // the old "null matches EVERY filter" rule, which leaked empty posts,
-    // `✄--- 2:25 ---✄` symbol posts and Cyrillic/Arabic/… posts into the
-    // 中文 feed ("不含中文的帖子混进来" bug):
-    // - letters of a foreign script present → belongs to none of zh/en/ja →
-    //   dropped from every specific filter;
-    // - no letters at all but a URL present → pure-link post, nothing to
-    //   attribute a language to → kept visible (v1.0.2 decision);
-    // - no letters, no URL (empty / symbols / numbers / emoji) → dropped.
-    events = events.where((e) {
-      final src = languageSource(e);
-      final l = src.language;
-      if (l != null) return l == want;
-      final c = src.content;
-      if (hasAnyLetter(c)) return false; // foreign script, not the target
-      return containsUrl(c); // pure-link posts stay; other junk goes
-    });
+    events = events.where(
+      (e) => e.matchesLanguage(want, (id) => storeIndex()[id]),
+    );
   }
   if (tag != null) {
     events = events.where((e) => e.hashtags.contains(tag));
@@ -4019,6 +3997,15 @@ class GlobalFeedWindowNotifier extends Notifier<GlobalFeedWindowState> {
   Timer? _flush;
   bool _dirty = false;
 
+  /// Monotonic counter bumped on EVERY window wipe (account-switch recreation,
+  /// [clear]). The feed's backward-paging depth cursor lives in page state
+  /// and must die with the window it paged into — comparing generations is
+  /// the staleness check, and it covers every wipe path (refresh, mode
+  /// switch, account switch, tag filter on/off, follows change) without
+  /// enumerating them.
+  int _generation = 0;
+  int get generation => _generation;
+
   /// Same leak guard as EventStoreNotifier / InteractionCacheNotifier: an
   /// account switch drops the previous account's window.
   String? _builtForAccount;
@@ -4031,7 +4018,17 @@ class GlobalFeedWindowNotifier extends Notifier<GlobalFeedWindowState> {
     if (_builtForAccount != accountKey) {
       _builtForAccount = accountKey;
       _window = GlobalFeedWindow();
+      _generation++;
     }
+    // Language-aware retention: the window must know the ACTIVE filter so
+    // cap eviction can protect matching posts from firehose churn (the 1000
+    // cap counts BY LANGUAGE — "开启语言过滤后总条目数应该按语言统计").
+    // Rebuilds on every filter change keep this current without touching the
+    // revisions, so nothing re-emits: retention is about WHICH posts survive
+    // future ingests, not about the snapshot held right now.
+    _window.languageFilter = languageFilterCode(
+      ref.watch(languageFilterProvider),
+    );
     ref.onDispose(() {
       _flush?.cancel();
       _flush = null;
@@ -4075,11 +4072,14 @@ class GlobalFeedWindowNotifier extends Notifier<GlobalFeedWindowState> {
   }
 
   /// Drop the whole window: leaving the global tab (user decision: 全球信息
-  /// 流不需要任何缓存，包括 sqlite 和内存).
+  /// 流不需要任何缓存，包括 sqlite 和内存). Bumps [generation] EVEN when the
+  /// window is already empty — the paging depth cursor points at the
+  /// subscription lifetime that just ended, not merely at held posts.
   void clear() {
     _flush?.cancel();
     _flush = null;
     _dirty = false;
+    _generation++;
     if (_window.isEmpty) return;
     _window.clear();
     state = _snapshot();

@@ -127,6 +127,10 @@ lib/
   有上限），**不进 2 万条事件库、不写 SQLite，离开 tab 整窗清空**——20000 条上限专供关注流
   + 相关事件（全球信息流「偶尔看一眼」，不做任何持久缓存）。翻页（`_loadMoreGlobal` 的
   `until` 页）同样路由进窗口。全球 tab 的渲染 / 语言过滤 / 互动计数全部以窗口为源。
+  **语言过滤开启时窗口按语言保留**：满 1000 条的驱逐优先丢「最旧的非目标语言帖」，
+  目标语言帖可累积满整个上限（1000 条配额按语言统计，不再被火流里占绝对多数的外语帖
+  几分钟内挤光）；判定用与渲染完全相同的 `Event.matchesLanguage`（转发帖按内嵌/窗口内
+  原帖判定）。
 - **关注 tab**：`followingOutboxProvider` → `OutboxRouter` 按 followee 的 kind-10002 outbox
   分组定向拉取（详见上面的 SVG）。事件经 `EventStoreNotifier.ingest` 入内存库，`currentFeedEventsProvider`
   既有 `follows.contains(pubkey)` 过滤复用，UI 零改动。
@@ -230,7 +234,12 @@ lib/
   （全部 / 公开书签 / 私人书签 / 各自定义分组）+ 全部模式按组分段（组头 + 计数），
   自定义分组读自 NIP-51 kind-30003 labeled bookmark lists（只读展示，管理功能下一批）。
 - **首页分页**：滚动到底触发 `_loadMore`（global 广播 `until` / following 走 outbox `until`），底部加
-  转圈指示器；ScrollUpdate 临近底部也触发（避免 fling 错过 ScrollEnd）。
+  转圈指示器；ScrollUpdate 临近底部也触发（避免 fling 错过 ScrollEnd）。**语言过滤 + 全球流时
+  自动连续向前翻页**：目标语言帖在火流里占比极小，单页 `until`（200 条）几乎翻不到，
+  `_loadMoreGlobal` 会带着深度游标连续向前翻页直到该页出现目标语言帖（单次手势上限 10 页 /
+  20 秒，空页即视为死胡同停止；游标跨手势记忆已翻到的深度，并随窗口 generation 在任何清窗
+  时——刷新/切 tab/切账号/话题过滤加减/关注变化——统一失效），
+  配合上面的按语言保留，翻出来的目标语言帖不会再被火流挤掉。
 - **首页 tab 滚动独立**：ListView 用 `PageStorageKey<FeedMode>(mode)`，全球/关注各自记忆滚动位置，
   切换不互相串。
 - **帖子计数**（`postCountsProvider`）：动作栏回复/转发按钮旁显示已观察到的计数（客户端侧，开过

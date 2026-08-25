@@ -211,6 +211,46 @@ class Event {
     return _embeddedRepost;
   }
 
+  /// The event whose CONTENT decides this card's language. For reposts
+  /// (kind-6/16) that is the note the user ACTUALLY SEES — the reposted note —
+  /// not the repost wrapper, whose own content is empty (or the stringified
+  /// JSON of the target): the embedded NIP-18 JSON first ([embeddedRepost],
+  /// covers compliant reposts without a fetch), then [lookup] for a target
+  /// already held by the feed source (the global window / the capped store);
+  /// otherwise the wrapper itself decides. Non-reposts are their own source.
+  /// Shared by the feed language filter and the global window's
+  /// language-aware retention so the two ALWAYS agree about which posts a
+  /// filter owns.
+  Event languageSource(Event? Function(String id) lookup) {
+    if (!isRepost) return this;
+    final embedded = embeddedRepost;
+    if (embedded != null) return embedded;
+    final target = repostedEventId;
+    if (target != null) {
+      final inner = lookup(target);
+      if (inner != null) return inner;
+    }
+    return this;
+  }
+
+  /// Whether this card belongs under the [want] ('zh'/'en'/'ja') language
+  /// filter. A detected language must equal [want]. A `null` language means
+  /// no letters were gathered; those split instead of the old "null matches
+  /// EVERY filter" rule, which leaked empty posts, `✄--- 2:25 ---✄` symbol
+  /// posts and Cyrillic/Arabic/… posts into the 中文 feed ("不含中文的帖子混进
+  /// 来" bug): letters of a foreign script present → belongs to none of
+  /// zh/en/ja → false; no letters at all but a URL present → pure-link post,
+  /// nothing to attribute a language to → kept visible (v1.0.2 decision);
+  /// no letters, no URL (empty / symbols / numbers / emoji) → false.
+  bool matchesLanguage(String want, Event? Function(String id) lookup) {
+    final src = languageSource(lookup);
+    final l = src.language;
+    if (l != null) return l == want;
+    final c = src.content;
+    if (hasAnyLetter(c)) return false; // foreign script, not the target
+    return containsUrl(c); // pure-link posts stay; other junk goes
+  }
+
   /// The event id this kind-1 note directly replies to (NIP-10), or null if it
   /// is a top-level post. Marker precedence: "reply" > legacy positional (empty
   /// marker, last one wins) > "root" (reply-to-root). "mention" tags are not

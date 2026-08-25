@@ -12,6 +12,11 @@
 ///
 /// Contents (all bounded):
 /// - posts: kind-1/6, newest-first by createdAt, capped at [maxPosts];
+///   when [languageFilter] is set, cap eviction prefers the OLDEST
+///   NON-matching post, so posts of the filtered language accumulate up to
+///   the full cap instead of being churned out by the firehose's dominant
+///   foreign-language majority (the 1000-post cap then counts BY LANGUAGE —
+///   "开启语言过滤后总条目数按语言统计");
 /// - interactions: kind-6/7 targeting a currently-held post, capped at
 ///   [maxInteractions] (oldest-arrival churn once full);
 /// - metadata: per-author newest kind-0, capped at [maxMetadata].
@@ -37,6 +42,17 @@ class GlobalFeedWindow {
   final int maxInteractions;
   final int maxMetadata;
   final int maxSeen;
+
+  /// Active feed language filter code ('zh'/'en'/'ja') or null (= 全部).
+  /// Set by the window's notifier from `languageFilterProvider`; consulted on
+  /// EVERY cap eviction so matching posts are protected from firehose churn:
+  /// over-cap drops the oldest post that does NOT match, and only falls back
+  /// to the oldest overall when the window is entirely matching posts. Null
+  /// restores the plain oldest-first eviction (the pre-filter behavior).
+  /// The match predicate is [Event.matchesLanguage] — the SAME one the feed
+  /// filter renders with, so a post the filter would show is exactly a post
+  /// the window fights to keep.
+  String? languageFilter;
 
   /// Posts (kind 1/6), newest-first by createdAt.
   final List<Event> _posts = [];
@@ -129,10 +145,26 @@ class GlobalFeedWindow {
     _postById[e.id] = e;
     _contentRevision++;
     if (_posts.length > maxPosts) {
-      final dropped = _posts.removeLast();
+      final dropped = _posts.removeAt(_evictionIndex());
       _postById.remove(dropped.id);
     }
     return true;
+  }
+
+  /// Index of the post to evict over the [maxPosts] cap. Without a language
+  /// filter: the oldest (last). With one: the OLDEST post NOT matching the
+  /// filter — scanning backward from the tail usually stops within a couple
+  /// of steps (the firehose majority is non-matching); only a window made up
+  /// ENTIRELY of matching posts pays the full scan and evicts its oldest.
+  /// Net effect: matching posts accumulate up to the full cap while
+  /// non-matching posts churn in the remaining slack.
+  int _evictionIndex() {
+    final lang = languageFilter;
+    if (lang == null) return _posts.length - 1;
+    for (var i = _posts.length - 1; i >= 0; i--) {
+      if (!_posts[i].matchesLanguage(lang, (id) => _postById[id])) return i;
+    }
+    return _posts.length - 1;
   }
 
   bool _ingestInteraction(Event e) {
