@@ -10,9 +10,9 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **1.1.5** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.1.5/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.1.6** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.1.6/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 当前为正式版（v1.1.5）。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为正式版（v1.1.6）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
 >
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / **v1.1.5 正式版**（跳过 1.1.4，避讳 4）。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ **v1.1.6 正式版**。
 
 ---
 
@@ -359,6 +359,16 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 通知中心、多账号、关注分组（NIP-51 kind-30000，Amethyst 兼容）、收藏（NIP-51 + NIP-44 私密）、
 屏蔽列表、媒体代理、服务器节点自定义 + 去中心化推荐、本地 SQLite 缓存秒开。覆盖安装即可从
 任一 0.x-beta 升级，登录 / 关注 / 屏蔽 / 收藏 / 本地缓存全部保留。
+
+**v1.1.6 相对 v1.1.5 的新增**：
+**全球信息流语言过滤深挖**——此前切到中文只剩十几条就「下刷一直返回空不更新」，两个根因一起修：
+1. **1000 条窗口配额改为按语言统计**：全球流的纯内存临时窗口上限 1000 帖，此前无差别按时间
+   挤掉最旧帖——火流里中文是极少数，几分钟就被外语多数挤光。现在语言过滤开启时，超限驱逐
+   **优先丢最旧的非目标语言帖**，目标语言帖可累积满整个 1000 条（判定与渲染共用同一谓词，
+   转发帖按内嵌/窗口内原帖判语言）；
+2. **下刷自动连续向前翻页**：目标语言帖占比极小，单页 200 条几乎翻不到，现在翻不到就自动继续
+   向前（单手勢上限 10 页/20 秒，翻到即停），不再进 30 秒空页冷却干等；深度游标跨手势记住已翻
+   位置，切换语言立即解锁新方向的深挖。翻出来的目标语言帖由第 1 条保住，不会再被火流挤掉。
 
 **v1.1.5 相对 v1.1.3 的修复**（版本号跳过 1.1.4，避讳数字 4）：
 **点帖子/主页上的 #标签跳首页过滤，也能翻到全部历史了**——此前「点标签过滤」和「关注下拉标签」
