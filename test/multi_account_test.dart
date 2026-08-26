@@ -6,12 +6,14 @@
 // is unavailable in tests — the fallback is the same code path the app uses
 // when the OS keystore is locked).
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:costr/app/providers.dart';
 import 'package:costr/models/event.dart';
 import 'package:costr/nostr/identity.dart';
 import 'package:costr/nostr/relay_pool.dart';
+import 'package:costr/services/account_registry.dart';
 import 'package:costr/services/local_cache.dart' as cache;
 import 'package:costr/services/secure_storage_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -55,6 +57,30 @@ class _BrokenSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async => throw Exception('keystore unavailable in tests');
+}
+
+/// Storage whose accounts-blob writes can be stalled on demand — simulates a
+/// slow Android Keystore so the optimistic switch can be proven to flip state
+/// BEFORE persistence completes. Reads are unaffected.
+class _GatedStorage extends SecureStorageService {
+  _GatedStorage(super.secure, {required super.fileDir});
+
+  Completer<void>? _gate;
+
+  void closeGate() => _gate ??= Completer<void>();
+
+  Future<void> openGate() async {
+    final g = _gate;
+    _gate = null;
+    if (g != null && !g.isCompleted) g.complete();
+  }
+
+  @override
+  Future<void> writeAccounts(AccountSet set) async {
+    final g = _gate;
+    if (g != null) await g.future;
+    return super.writeAccounts(set);
+  }
 }
 
 const _privA =
@@ -205,8 +231,46 @@ void main() {
 
       await container.read(identityProvider.notifier).switchTo(_idA.pubkeyHex);
       expect(container.read(identityProvider).value?.pubkeyHex, _idA.pubkeyHex);
+      // Persistence is optimistic-background now — drain it before asserting.
+      await container.read(accountsProvider.notifier).writesDrained;
       expect((await storage.readAccounts())?.activePubkey, _idA.pubkeyHex);
     });
+
+    test('switchTo flips state instantly even while the keystore write stalls', () async {
+        // The optimistic switch: identity/account state must move the MOMENT
+        // the user taps, not after the (seconds-slow on some Android devices)
+        // secure-storage blob write completes.
+        final storage = _GatedStorage(_BrokenSecureStorage(), fileDir: dir.path);
+        final container = ProviderContainer(
+          overrides: [
+            storageProvider.overrideWith((ref) => storage),
+            relayPoolProvider.overrideWith((ref) => RelayPool(const [])),
+          ],
+        );
+        addTearDown(container.dispose);
+        await container.read(accountsProvider.future);
+        await container.read(identityProvider.notifier).login(_idA.nsec);
+        await container.read(identityProvider.notifier).login(_idB.nsec);
+        expect(container.read(identityProvider).value?.pubkeyHex, _idB.pubkeyHex);
+
+        // Stall all further writes (simulates a slow Keystore)…
+        storage.closeGate();
+        await container
+            .read(identityProvider.notifier)
+            .switchTo(_idA.pubkeyHex);
+        // …yet the switch is already fully applied in-memory.
+        expect(container.read(identityProvider).value?.pubkeyHex, _idA.pubkeyHex);
+        expect(
+          container.read(accountsProvider).value?.activePubkey,
+          _idA.pubkeyHex,
+        );
+
+        // The background persist lands once the keystore unblocks.
+        await storage.openGate();
+        await container.read(accountsProvider.notifier).writesDrained;
+        expect((await storage.readAccounts())?.activePubkey, _idA.pubkeyHex);
+      },
+    );
 
     test('removing the active account activates the next one', () async {
       final (:container, :storage) = await _container(dir);

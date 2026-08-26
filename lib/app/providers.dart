@@ -384,8 +384,25 @@ class AccountsNotifier extends AsyncNotifier<AccountSet> {
   );
 
   /// Switch the active account to an already-stored pubkey.
-  Future<AccountSet> setActive(String pubkeyHex) =>
-      _commit((cur) => cur.withActive(pubkeyHex));
+  ///
+  /// OPTIMISTIC: the visible state flips FIRST and the secure-storage persist
+  /// runs in the background. The awaited keystore write used to be the whole
+  /// stall — the 「当前」 badge didn't move and nothing reacted for seconds on
+  /// devices with a slow Keystore ("切换账号卡顿"), even though nothing about a
+  /// switch needs the blob on disk before the UI may react. Switching is the
+  /// one operation safe to do optimistically: if the background persist is
+  /// lost (app killed mid-write), the next launch simply boots into the
+  /// previously-active account — no data lost, one re-tap. Login/remove stay
+  /// persist-first ([_commit]): a half-applied add/remove would misreport
+  /// which keys are on the device.
+  Future<AccountSet> setActive(String pubkeyHex) {
+    final cur = state.value ?? const AccountSet();
+    final next = cur.withActive(pubkeyHex);
+    if (next == cur) return Future.value(next);
+    state = AsyncData(next); // instant — badge + identity chain react now
+    unawaited(_writeAccounts(next));
+    return Future.value(next);
+  }
 
   /// Remove an account from the device. Removing the active account activates
   /// the next remaining one (or logs out entirely).
@@ -396,10 +413,30 @@ class AccountsNotifier extends AsyncNotifier<AccountSet> {
     final cur = state.value ?? const AccountSet();
     final next = op(cur);
     if (next == cur) return next;
-    await ref.read(storageProvider).writeAccounts(next);
+    await _writeAccounts(next);
     state = AsyncData(next);
     return next;
   }
+
+  /// Persistence of the single accounts blob, SERIALIZED: a slow optimistic
+  /// switch write must not land after a later login/remove write (or another
+  /// switch) and resurrect stale state on the one storage key. Each write
+  /// waits for the one before it.
+  Future<void> _writeQueue = Future.value();
+
+  Future<void> _writeAccounts(AccountSet set) {
+    final write = _writeQueue.then(
+      (_) => ref.read(storageProvider).writeAccounts(set),
+    );
+    // Keep the chain alive when a write fails (storage fallbacks handle most
+    // failures; the returned [write] still carries the error to awaiters).
+    _writeQueue = write.catchError((Object _) {});
+    return write;
+  }
+
+  /// Test seam: resolves when every persistence enqueued so far has landed.
+  @visibleForTesting
+  Future<void> get writesDrained => _writeQueue;
 }
 
 final accountsProvider = AsyncNotifierProvider<AccountsNotifier, AccountSet>(
@@ -671,9 +708,12 @@ class _CachedRelayList {
 
 final Map<String, _CachedRelayList> _relayListCache = {};
 
-/// Loads identity from secure storage, then opens relay connections. The router
-/// waits on this before resolving redirects, avoiding a cold-start race.
-/// Also triggers cache cleanup 30s after startup (Jumble pattern).
+/// Loads identity from secure storage and applies the persisted server lists.
+/// Relay connections themselves run in the BACKGROUND (see [_runBootstrap]) —
+/// the router only waits on this for the identity (login/feed redirect), so
+/// the first screen mounts and renders from the local cache immediately while
+/// relays connect and stream in afterwards. Also triggers cache cleanup 30s
+/// after startup (Jumble pattern).
 final bootstrapProvider = FutureProvider<void>((ref) async {
   try {
     await _runBootstrap(ref).timeout(const Duration(seconds: 30));
@@ -754,7 +794,16 @@ Future<void> _runBootstrap(Ref ref) async {
   await pool.updateUrls(lists.relays);
   await ref.read(searchPoolProvider).updateUrls(lists.search);
   await ref.read(indexerPoolProvider).updateUrls(lists.indexer);
-  await pool.connect();
+  // Relay connections run in the BACKGROUND — bootstrap (and therefore the
+  // splash → router mount) must NOT await them. The old `await pool.connect()`
+  // held the white screen until EVERY relay's WS/TLS handshake finished
+  // (Future.wait over the whole list; each handshake capped at 10s — one
+  // GFW-blackholed relay stalled the entire UI for the full 10s), even though
+  // the first screen renders entirely from the local SQLite cache. Nothing
+  // below needs a live socket first: REQs issued before a relay connects are
+  // tracked in the pool's _activeSubs and re-issued per relay on connect
+  // (_resendActive), so feeds fill in incrementally as relays land.
+  final connected = pool.connect();
   // Per-relay publish retry: when a publish succeeds on some relays but
   // background retries to the rest are exhausted (event published, but not
   // everywhere), save it to the drafts table so a later session retries the
@@ -809,22 +858,33 @@ Future<void> _runBootstrap(Ref ref) async {
   // needlessly. Publishes the USER's persisted list (not the code constant).
   final identity = ref.read(identityProvider).value;
   if (identity != null) {
+    // Both the kind-10002 republish and the draft retry need connected
+    // relays; they used to run after the awaited connect(). Chain them on
+    // the background [connected] future so they fire once sockets are up
+    // without blocking bootstrap. publishAndWait with zero connected relays
+    // returns a failure, which would skip the sync marker and needlessly
+    // re-publish on the next launch.
     unawaited(
-      publishRelayList(pool, identity, lists.relays).then((ok) async {
-        if (!ok) return;
-        try {
-          final db = await ref.read(localCacheProvider.future);
-          await db.writeServerList(
-            relayListSyncedKey(identity.pubkeyHex),
-            lists.relays,
-          );
-        } catch (_) {}
-      }),
+      connected.then(
+        (_) => publishRelayList(pool, identity, lists.relays).then((ok) async {
+          if (!ok) return;
+          try {
+            final db = await ref.read(localCacheProvider.future);
+            await db.writeServerList(
+              relayListSyncedKey(identity.pubkeyHex),
+              lists.relays,
+            );
+          } catch (_) {}
+        }),
+      ),
     );
     // Retry drafts (failed publishes from a prior session). publishAndWait
     // already does in-session per-relay retry; this covers cross-session.
     unawaited(
-      ref.read(localCacheProvider.future).then((db) => retryDrafts(pool, db)),
+      connected.then(
+        (_) =>
+            ref.read(localCacheProvider.future).then((db) => retryDrafts(pool, db)),
+      ),
     );
     // Bulk-prefetch metadata (kind 0) for the whole social graph (follows +
     // followers + self) so avatars/profiles resolve instantly. Deferred 5s
@@ -3195,11 +3255,14 @@ final userFollowsProvider = StreamProvider.family<List<String>, String>((
   // 1. SQLite cache (instant) — kind-3 is persisted by EventStoreNotifier.
   final cache = ref.read(localCacheProvider).value;
   List<String>? cachedFollows;
+  var newestCreatedAt = -1; // replaceable: never regress to an older revision
   if (cache != null) {
     try {
       final row = await cache.queryContactList(pubkey);
       if (row != null) {
-        cachedFollows = _replaceableToEvent(row).pTagPubkeys;
+        final cachedEvent = _replaceableToEvent(row);
+        cachedFollows = cachedEvent.pTagPubkeys;
+        newestCreatedAt = cachedEvent.createdAt;
       }
     } catch (_) {}
   }
@@ -3230,6 +3293,12 @@ final userFollowsProvider = StreamProvider.family<List<String>, String>((
   final done = Completer<void>();
   evSub = pool.rawEvents.listen((e) {
     if (!e.isContactList || e.pubkey != pubkey) return;
+    // Replaceable — newest createdAt wins. Relays answer in arbitrary order;
+    // accepting a STALE revision that lands after a newer one would shrink
+    // the list (the 关注 count visibly dropped when a slow relay's older
+    // kind-3 overwrote the newer one).
+    if (e.createdAt < newestCreatedAt) return;
+    newestCreatedAt = e.createdAt;
     latest = List<String>.from(e.pTagPubkeys);
     scheduleEmit();
   });
@@ -3355,28 +3424,22 @@ class FollowGroup {
   const FollowGroup(this.name, this.pubkeys, {this.source});
   final String name;
 
-  /// Members of this group that are ALSO in the user's kind-3 follows (what
-  /// the people rows render — only people you actually follow show up).
+  /// The group's members. For a custom group: EVERY `p` tag of the list's
+  /// newest kind-30000 revision — NIP-51 lists are independent of kind-3
+  /// follows, and Amethyst shows the full membership (a list may hold people
+  /// the author doesn't currently follow). For 默认分组 (no backing event):
+  /// the kind-3 follows not in any custom list.
   final List<String> pubkeys;
 
   /// The backing NIP-51 kind-30000 event (null for 默认分组). Carries the
   /// stable `d` identifier + event id needed for rename/delete.
   final Event? source;
 
-  /// The list's true member count — every `p` tag in [source] — NOT just the
-  /// followed members. Amethyst shows this number; previously Costr showed
-  /// [pubkeys.length] (followed ∩ group), which read as "too few" when a list
-  /// held people the user no longer followed. Defaults to [pubkeys.length]
-  /// for 默认分组 (no backing event).
-  int get memberCount {
-    final s = source;
-    if (s == null) return pubkeys.length;
-    var n = 0;
-    for (final t in s.tags) {
-      if (t.length >= 2 && t[0] == 'p' && t[1] is String) n++;
-    }
-    return n;
-  }
+  /// The list's member count as shown next to the group name — always the
+  /// deduped member count ([pubkeys] is built from the same newest revision's
+  /// `p` tags, so this equals `pubkeys.length`). Kept as a named getter for
+  /// call-site clarity.
+  int get memberCount => pubkeys.length;
 }
 
 /// Human-readable name of a NIP-51 parameterized replaceable list (kind-30000
@@ -3400,9 +3463,14 @@ String? listDisplayName(Event e) {
 }
 
 /// The logged-in user's follows grouped by NIP-51 kind-30000 categories.
-/// First entry is 默认分组 (follows not in any custom group). Then one entry
-/// per custom group (d-tag name) with the pubkeys in that group.
-/// pubkeys in custom groups are also kept in 默认分组 only if not in any group.
+/// First entry is 默认分组 (kind-3 follows not in any custom group). Then one
+/// entry per custom group (d-tag name).
+///
+/// A custom group's members are EVERY `p` tag of the group's NEWEST kind-30000
+/// revision — NIP-51 lists are independent of kind-3 follows, and Amethyst
+/// shows the full list membership. (Previously the rows were
+/// follows ∩ list-members, which read as "少很多" whenever a list held people
+/// the author doesn't currently follow — a real 56-member list showed 39.)
 ///
 /// Pure builder so the SQLite-cached snapshot and the relay-refreshed
 /// snapshot share one code path (Amethyst-style render-from-cache + background
@@ -3420,51 +3488,48 @@ List<FollowGroup> _buildFollowGroups(
   List<String> follows,
   List<Event> k30000Events,
 ) {
-  // 1. group by d → Set<pubkey> + newest backing event.
+  // 1. group by d → newest backing event (replaceable: newest createdAt wins).
   final dValues = <String>[]; // first-seen order
-  final groupPubkeys = <String, Set<String>>{};
   final groupSource = <String, Event>{}; // d → newest kind-30000 event
   for (final e in k30000Events) {
     final d = _kind30000D(e);
     if (d.isEmpty) continue; // default list (d="") — not a named group
-    final pks = <String>{};
-    for (final t in e.tags) {
-      if (t.length >= 2 && t[0] == 'p' && t[1] is String) {
-        pks.add(t[1] as String);
-      }
-    }
     if (!dValues.contains(d)) dValues.add(d);
-    groupPubkeys.putIfAbsent(d, () => <String>{}).addAll(pks);
     final prev = groupSource[d];
     if (prev == null || e.createdAt > prev.createdAt) groupSource[d] = e;
   }
 
-  // 2. Group the follows.
-  final result = <FollowGroup>[];
-  // Default group: follows not in any custom group.
-  final defaultGroup = <String>[];
-  for (final pk in follows) {
-    var inAnyGroup = false;
-    for (final d in dValues) {
-      if (groupPubkeys[d]!.contains(pk)) {
-        inAnyGroup = true;
-        break;
+  // 2. Members per group = every `p` tag of the NEWEST revision (deduped,
+  //    tag order) — NOT the union of all revisions: a stale relay copy must
+  //    not resurrect members a newer revision removed.
+  final membersByD = <String, List<String>>{};
+  final grouped = <String>{}; // every pubkey appearing in any list
+  for (final d in dValues) {
+    final members = <String>[];
+    final seen = <String>{};
+    for (final t in groupSource[d]!.tags) {
+      if (t.length >= 2 &&
+          t[0] == 'p' &&
+          t[1] is String &&
+          seen.add(t[1] as String)) {
+        members.add(t[1] as String);
       }
     }
-    if (!inAnyGroup) defaultGroup.add(pk);
+    membersByD[d] = members;
+    grouped.addAll(members);
   }
+
+  // 3. Build the result. Default group: kind-3 follows not in any custom list.
+  final result = <FollowGroup>[];
+  final defaultGroup = follows.where((pk) => !grouped.contains(pk)).toList();
   result.add(FollowGroup('默认分组', defaultGroup));
-  // Custom groups: always surfaced (even with zero followed members) so the
-  // user can see + manage (rename/delete) every list they published — matches
-  // Amethyst. Rows still only render followed members.
+  // Custom groups: always surfaced (even empty) so the user can see + manage
+  // (rename/delete) every list they published — matches Amethyst.
   for (final d in dValues) {
-    final inGroup = follows
-        .where((pk) => groupPubkeys[d]!.contains(pk))
-        .toList();
     // Display name: the NEWEST revision's `name` tag, else `d`. Stable per
     // group now that we key by d (no more 中文↔UUID flicker).
     final display = listDisplayName(groupSource[d]!) ?? d;
-    result.add(FollowGroup(display, inGroup, source: groupSource[d]));
+    result.add(FollowGroup(display, membersByD[d]!, source: groupSource[d]));
   }
   return result;
 }

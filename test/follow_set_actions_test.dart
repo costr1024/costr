@@ -127,16 +127,18 @@ void main() {
     });
   });
 
-  group('FollowGroup.memberCount', () {
+  group('FollowGroup.memberCount / membership', () {
     test('default group: pubkeys.length (no source event)', () {
       const g = FollowGroup('默认分组', ['a', 'b', 'c']);
       expect(g.memberCount, 3);
     });
 
     test(
-      'custom group: counts all p tags in source, not just followed members',
+      'custom group shows EVERY list member, not just kind-3 follows',
       () {
-        // List has 5 members but only 2 are still in the user's kind-3 follows.
+        // NIP-51 lists are independent of kind-3 follows; Amethyst shows the
+        // full membership. List has 5 members but only m1 is (still) followed.
+        // Pre-fix Costr rendered follows ∩ list (just m1) → "少很多".
         final source = _k30000([
           ['d', 'uuid-1'],
           ['name', '科技'],
@@ -146,12 +148,63 @@ void main() {
           ['p', 'm4', ''],
           ['p', 'm5', ''],
         ]);
-        final g = FollowGroup('科技', ['m1', 'm2'], source: source);
-        // True count is 5 (Amethyst shows this), NOT 2 (followed ∩ group).
-        expect(g.memberCount, 5);
-        expect(g.pubkeys.length, 2); // rows render only followed members
+        final groups = buildFollowGroupsForTest(const ['m1'], [source]);
+        expect(groups.length, 2); // 默认分组 + 科技
+        expect(groups[1].name, '科技');
+        expect(groups[1].pubkeys, ['m1', 'm2', 'm3', 'm4', 'm5']);
+        expect(groups[1].memberCount, 5);
+        // m1 is in the list → NOT duplicated into 默认分组.
+        expect(groups[0].pubkeys, isEmpty);
       },
     );
+
+    test('duplicate p tags dedupe; tag order preserved', () {
+      final source = _k30000([
+        ['d', 'uuid-2'],
+        ['name', '资讯'],
+        ['p', 'b', ''],
+        ['p', 'a', ''],
+        ['p', 'b', ''], // duplicate
+      ]);
+      final groups = buildFollowGroupsForTest(const <String>[], [source]);
+      expect(groups[1].pubkeys, ['b', 'a']);
+      expect(groups[1].memberCount, 2);
+    });
+
+    test('stale revision does not resurrect members a newer one removed', () {
+      // Relays may serve both revisions; only the NEWEST counts. The older
+      // revision's removed member (m-old) must not reappear via a union.
+      final stale = Event(
+        id: 'stale',
+        pubkey: 'pk',
+        createdAt: 100,
+        kind: 30000,
+        tags: [
+          ['d', 'uuid-3'],
+          ['p', 'm-keep', ''],
+          ['p', 'm-old', ''],
+        ],
+        content: '',
+        sig: 's',
+      );
+      final fresh = Event(
+        id: 'fresh',
+        pubkey: 'pk',
+        createdAt: 200,
+        kind: 30000,
+        tags: [
+          ['d', 'uuid-3'],
+          ['name', '好友'],
+          ['p', 'm-keep', ''],
+        ],
+        content: '',
+        sig: 's',
+      );
+      final groups = buildFollowGroupsForTest(const <String>[], [stale, fresh]);
+      expect(groups[1].name, '好友');
+      expect(groups[1].pubkeys, ['m-keep']); // m-old dropped by the newer rev
+      expect(groups[1].memberCount, 1);
+    });
   });
 
   group('NostrActions.followedHashtags (kind-10015 + NIP-44, Amethyst)', () {

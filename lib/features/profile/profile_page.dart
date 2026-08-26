@@ -357,8 +357,9 @@ class _Header extends ConsumerWidget {
 
 /// Profile stats row: 关注 / 关注者 counts (X-style: bold number + secondary
 /// label, see DESIGN.md §3 / ui_demo.html `.prof-stats`). The 关注 count is
-/// the pubkey's own follows ([userGroupedFollowsProvider] summed across
-/// groups); 关注者 is who follows them ([userFollowersProvider]). Shows "—"
+/// the pubkey's kind-3 p-tag count — what Amethyst shows — NOT a sum over
+/// follow groups (groups overlap and hold unfollowed members, so the sum
+/// diverges). 关注者 is who follows them ([userFollowersProvider]). Shows "—"
 /// while an async value is still loading or errored.
 class _ProfileStats extends ConsumerWidget {
   const _ProfileStats({required this.pubkey});
@@ -366,13 +367,14 @@ class _ProfileStats extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final followsAsync = ref.watch(userGroupedFollowsProvider(pubkey));
+    final me = ref.watch(identityProvider).value?.pubkeyHex;
+    // Own profile: the live follows list the follow button maintains
+    // (in-memory cache first, so a just-published kind-3 counts immediately).
+    // Other users: their fetched kind-3 ([userFollowsProvider]).
+    final followingCount = pubkey == me
+        ? ref.watch(followingStateProvider).value?.length
+        : ref.watch(userFollowsProvider(pubkey)).value?.length;
     final followersAsync = ref.watch(userFollowersProvider(pubkey));
-    // Sum the pubkey's follows across all groups (默认分组 + custom groups).
-    final followingCount = followsAsync.value?.fold<int>(
-      0,
-      (int s, FollowGroup g) => s + g.pubkeys.length,
-    );
     final followersCount = followersAsync.value?.length;
     final theme = Theme.of(context);
     final numStyle = theme.textTheme.bodyMedium?.copyWith(
