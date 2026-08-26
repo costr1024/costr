@@ -184,32 +184,68 @@ class _Header extends ConsumerWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Banner: manual-proxy image. On a blocked host the origin fails and a
-        // 「代理」 chip appears over the gradient; tapping loads via the proxy
-        // mirror (disk-cached). No banner → plain gradient.
+        // Banner: proxy only when the proxy-media feature is ON. On a blocked
+        // host the origin fails and a 「代理」 chip appears over the gradient;
+        // tapping loads via the proxy mirror (disk-cached). Feature OFF → plain
+        // image with the gradient fallback. No banner → plain gradient.
         SizedBox(
           height: 150,
           width: double.infinity,
           child: (meta?.banner != null && meta!.banner!.isNotEmpty)
-              ? ProxyableNetworkImage(
-                  url: meta!.banner!,
-                  fit: BoxFit.cover,
-                  placeholder: Container(
-                    width: double.infinity,
-                    height: 150,
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          Color(0xFF6750A4),
-                          Color(0xFF7B1FA2),
-                          Color(0xFF512DA8),
-                        ],
+              ? (ref.watch(proxyMediaEnabledProvider)
+                  ? ProxyableNetworkImage(
+                      url: meta!.banner!,
+                      fit: BoxFit.cover,
+                      placeholder: Container(
+                        width: double.infinity,
+                        height: 150,
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color(0xFF6750A4),
+                              Color(0xFF7B1FA2),
+                              Color(0xFF512DA8),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                )
+                    )
+                  : CostrNetworkImage(
+                      url: meta!.banner!,
+                      fit: BoxFit.cover,
+                      placeholder: (BuildContext _) => Container(
+                        width: double.infinity,
+                        height: 150,
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color(0xFF6750A4),
+                              Color(0xFF7B1FA2),
+                              Color(0xFF512DA8),
+                            ],
+                          ),
+                        ),
+                      ),
+                      errorWidget: (BuildContext _) => Container(
+                        width: double.infinity,
+                        height: 150,
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color(0xFF6750A4),
+                              Color(0xFF7B1FA2),
+                              Color(0xFF512DA8),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ))
               : Container(
                   decoration: const BoxDecoration(
                     gradient: LinearGradient(
@@ -232,7 +268,7 @@ class _Header extends ConsumerWidget {
             children: [
               Transform.translate(
                 offset: const Offset(0, -24),
-                child: Avatar(pubkey: pubkey, radius: 40, proxyable: true),
+                child: Avatar(pubkey: pubkey, radius: 40),
               ),
               const SizedBox(height: 4),
               // Row 1 (X-style): display name (bold, wraps to 2 lines if long)
