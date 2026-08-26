@@ -864,6 +864,10 @@ class _ComposePageState extends ConsumerState<ComposePage>
               relay: relayHintFor(ref, widget.quoteOf!.pubkey) ?? '',
             )
           : identity.signEvent(kind: 1, content: text, tags: extraTags);
+      // NIP-65 inbox delivery: also send the reply/mention to each recipient's
+      // own WRITE relays, in parallel with the publish to our own relays.
+      // Fire-and-forget — a relay-list lookup must not delay the send.
+      deliverEventToInboxes(ref, ref.read(relayPoolProvider), signed);
       final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
       if (!mounted) return;
       if (!ok.ok) {

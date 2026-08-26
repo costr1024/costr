@@ -147,6 +147,13 @@ lib/
   连接）。对方 kind-10002 中继清单本身也由 `userRelayListProvider` **默认池 + indexer 池并发**
   拉取（只在 indexer 上的清单也能找到），避免只在自家 outbox 发布资料的用户头像/主页永久
   加载不出。
+- **回复 / @ / 点赞 / 转发投递到对方收件箱（NIP-65 inbox）**：发布这类事件时，除了发到自己
+  的中继，`deliverEventToInboxes` 还会读取每个被 `p` 标签 @ 到的对方的 kind-10002 **write
+  （收件箱）中继**，用 `RelayPool.publishToUrls` 临时连接补投一份——对方客户端若只读自家
+  outbox（与我的中继不重叠）也能收到。reply/reaction/repost 都已 `p` 标签对方，故按 p 标签
+  即可确定收件人；自己的 pubkey 会被剔除（不投给自己）。fire-and-forget，绝不阻塞主发布；
+  对方清单取不到只是少投这一路，主发布不受影响。**入站**天然支持：自己的 kind-10002 把所有
+  中继声明为 read+write（即也充当收件箱），且这些中继本来就在读。
 - **帖子详情 / 回帖线程**：`threadAncestorsProvider`（上级链）按 NIP-10 `e`-tag 并行 BFS 上溯，
   tier-1 默认池广播 miss 后 **tier-2 用 `e`-tag 自带的 relay hint 定向 `fetchFromUrls`**
   （nevent/回复自带的中继提示往往是线程所在处）；`repliesProvider`（下级回帖）默认池 REQ

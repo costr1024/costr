@@ -333,6 +333,61 @@ String? relayHintFor(WidgetRef ref, String pubkey) {
   return null;
 }
 
+/// NIP-65 **inbox delivery**: publish [event] to the WRITE (inbox) relays of
+/// every user it `p`-tags, so a reply/mention/reaction/repost actually reaches
+/// recipients whose client reads its own outbox (which may not overlap the
+/// sender's relays). reply/reaction/repost all p-tag the target author, so the
+/// p-tags alone identify the recipients.
+///
+/// Best-effort: complements (never replaces) the normal publish to the sender's
+/// own relays. Each recipient's inbox set comes from their kind-10002 via
+/// [resolveRelayList] (injected so this is unit-testable — production passes
+/// [userRelayListProvider]). The sender's own pubkey is excluded (never
+/// deliver to self). [RelayPool.publishToUrls] does the transient dial + send.
+Future<void> deliverToInboxes(
+  RelayPool pool,
+  Event event, {
+  required Future<RelayList?> Function(String pubkey) resolveRelayList,
+}) async {
+  final recipients = <String>{};
+  for (final t in event.tags) {
+    if (t.length >= 2 && t[0] == 'p' && t[1] is String) {
+      final pk = (t[1] as String).trim();
+      if (pk.isNotEmpty) recipients.add(pk);
+    }
+  }
+  recipients.remove(event.pubkey);
+  if (recipients.isEmpty) return;
+  final inboxUrls = <String>{};
+  await Future.wait(
+    recipients.map((pk) async {
+      try {
+        final rl = await resolveRelayList(pk);
+        if (rl != null) inboxUrls.addAll(rl.write);
+      } catch (_) {
+        // A recipient whose relay list can't be resolved just isn't inbox-
+        // delivered; they're still reachable via the sender's own relays.
+      }
+    }),
+  );
+  if (inboxUrls.isEmpty) return;
+  await pool.publishToUrls(event, inboxUrls.toList());
+}
+
+/// Widget call-site convenience for [deliverToInboxes]: fire-and-forget,
+/// resolving each recipient's inbox via [userRelayListProvider] (memory /
+/// SQLite-cached, bounded network fallback). Call right after signing; it runs
+/// in parallel with the normal `publishAndWait` and must not block the send.
+void deliverEventToInboxes(WidgetRef ref, RelayPool pool, Event event) {
+  unawaited(
+    deliverToInboxes(
+      pool,
+      event,
+      resolveRelayList: (pk) => ref.read(userRelayListProvider(pk).future),
+    ),
+  );
+}
+
 // --- Accounts + Identity -----------------------------------------------------
 
 final storageProvider = Provider<SecureStorageService>((ref) {

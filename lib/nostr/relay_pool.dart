@@ -193,6 +193,58 @@ class RelayPool {
     return results;
   }
 
+  /// Publish [event] to specific relay [urls] via TRANSIENT connections —
+  /// NIP-65 **inbox delivery**: getting a reply/mention onto the recipient's
+  /// OWN write relays so it actually reaches them (their client reads their
+  /// outbox, which may not overlap the sender's relays). Best-effort: returns
+  /// the urls that accepted (ok:true or NIP-20 duplicate). Does NOT touch the
+  /// pool's persistent connections or active subscriptions.
+  ///
+  /// Transient clients don't answer NIP-42 AUTH challenges, so an auth-gated
+  /// inbox relay simply won't accept here — the event still reaches the
+  /// recipient via the sender's own relays if their client reads broadly.
+  Future<List<String>> publishToUrls(
+    Event event,
+    List<String> urls, {
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    final cleaned = urls
+        .map((u) => u.trim())
+        .where(
+          (u) =>
+              u.isNotEmpty && (u.startsWith('ws://') || u.startsWith('wss://')),
+        )
+        .toSet();
+    if (cleaned.isEmpty) return const <String>[];
+    final accepted = <String>[];
+    await Future.wait(
+      cleaned.map((url) async {
+        final client = makeClient(url);
+        late StreamSubscription<RelayOk> okSub;
+        final done = Completer<void>();
+        okSub = client.oks.where((ok) => ok.id == event.id).listen((ok) {
+          if (_effectiveOk(ok)) accepted.add(url);
+          if (!done.isCompleted) done.complete();
+        });
+        try {
+          // Cap the handshake at 5s so a black-holed inbox relay can't stall
+          // the (background) delivery.
+          await client.connect().timeout(const Duration(seconds: 5));
+          if (!client.isConnected) return;
+          client.publish(event);
+          await done.future.timeout(timeout);
+        } catch (_) {
+          // connect/publish failed or timed out — this inbox just isn't
+          // reached; best-effort.
+        } finally {
+          await okSub.cancel();
+          await client.dispose();
+        }
+      }),
+    );
+    return accepted;
+  }
+
   Future<void> connect() async {
     if (_connecting || _mergedWired) return;
     _connecting = true;

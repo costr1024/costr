@@ -10,6 +10,8 @@
 /// - 分享 → system share sheet with `https://njump.me/<note1>` (Amethyst-style).
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -144,6 +146,7 @@ class PostActions extends ConsumerWidget {
     final signed = NostrActions(
       identity,
     ).repost(event, relay: relayHintFor(ref, event.pubkey) ?? '');
+    deliverEventToInboxes(ref, ref.read(relayPoolProvider), signed);
     final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
     if (ok.ok) {
       // Same eviction-proof reflection as reactions: the repost count on the
@@ -253,6 +256,7 @@ class PostActions extends ConsumerWidget {
       customUrl: picked.url,
       relay: relayHintFor(ref, event.pubkey) ?? '',
     );
+    deliverEventToInboxes(ref, ref.read(relayPoolProvider), signed);
     final ok = await ref.read(relayPoolProvider).publishAndWait(signed);
     if (ok.ok) {
       // Eviction-proof local reflection of the just-published reaction. The
