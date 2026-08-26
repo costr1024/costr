@@ -10,9 +10,9 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **1.1.6** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.1.6/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.1.7** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.1.7/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 当前为正式版（v1.1.6）。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为正式版（v1.1.7）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
 >
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ **v1.1.6 正式版**。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / **v1.1.7 正式版**。
 
 ---
 
@@ -375,6 +375,30 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 通知中心、多账号、关注分组（NIP-51 kind-30000，Amethyst 兼容）、收藏（NIP-51 + NIP-44 私密）、
 屏蔽列表、媒体代理、服务器节点自定义 + 去中心化推荐、本地 SQLite 缓存秒开。覆盖安装即可从
 任一 0.x-beta 升级，登录 / 关注 / 屏蔽 / 收藏 / 本地缓存全部保留。
+
+**v1.1.7 相对 v1.1.6 的修复/新增**：
+1. **搜索框粘贴 npub/nprofile/note/nevent 直达**——此前粘贴实体按 NIP-19 解码前的原文当
+   关键词走 NIP-50 全文检索，而 NIP-50 只索引资料文本字段（name/about/nip05）、不索引
+   bech32 串，实测两个搜索中继对 npub 查询均零结果（「搜 npub/nprofile 搜不到人」）。现在
+   提交搜索先检测输入是否为 NIP-19 实体（`entityRoute`，含 `nostr:` 前缀、容错畸形 bech32，
+   `nsec` 明确不解析），命中直接跳转对应用户主页/帖子详情；普通关键词行为不变。
+2. **冷启动不再等中继连接**——启动门控 `bootstrapProvider` 此前 `await pool.connect()`：
+   `Future.wait` 等**全部**中继的 WS/TLS 握手（每个上限 10s——一个被 GFW 黑洞的中继就把
+   整个启动卡满 10s），期间一直白屏转圈，本地 SQLite 缓存根本没机会渲染。现在身份 + 服务器
+   列表就绪即完成 bootstrap、router 立即挂载、首屏直接从缓存渲染，中继在后台陆续连接、事件
+   增量进来；连接前发出的 REQ 由池的 `_activeSubs` 记录、连上后 `_resendActive` 自动补发。
+   依赖连接的 kind-10002 重发/草稿重试挂到后台连接完成后触发。
+3. **关注分组成员/计数对齐 Amethyst**——NIP-51 列表与 kind-3 关注相互独立（列表里可以有
+   当前未关注的人），但 Costr 的自定义分组此前只显示「列表成员 ∩ kind-3 关注」交集：实测
+   56 人的「真人用户」列表只显示 39、「长毛象玩家」38 人只显示 7（各分组全部「少很多」）。
+   现在分组成员行与计数显示列表**全量成员**（最新修订 `p` 标签去重、保序；旧修订并集会复活
+   已移除成员，故只取最新修订）。资料页「关注」总数同步改为直接取 kind-3 的 p 标签数——
+   不再按分组求和（跨组重复关注被重复计数：73≠70），并给 `userFollowsProvider` 加
+   createdAt 新胜守卫，慢中继的旧 kind-3 后到不再把数字打回去。
+4. **账号切换乐观更新**——切换此前要等安全存储（Android Keystore）把全部账号 blob 写完才
+   更新状态，慢 Keystore 设备上点按后要干等数秒、期间「当前」徽标不动也无任何反馈。现在
+   内存状态先翻转（徽标与整条身份链立即响应），写入进后台**串行队列**（防慢写入落在其后
+   的写入之后复活旧状态）；登录/移除仍为先落盘后翻状态（半生效会错报设备私钥状态）。
 
 **v1.1.6 相对 v1.1.5 的新增**：
 **全球信息流语言过滤深挖**——此前切到中文只剩十几条就「下刷一直返回空不更新」，两个根因一起修：
