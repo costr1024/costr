@@ -97,6 +97,168 @@ bool shouldProxyRetry(Object error) {
   return true;
 }
 
+/// Origin hosts learned as blocked during THIS session (an origin attempt
+/// failed with a block-like error). New [ProxyableNetworkImage]s for these
+/// hosts skip the doomed origin and go straight to the proxy mirror — so after
+/// the first nostr.build avatar times out, every other nostr.build
+/// avatar/banner loads via proxy without repeating the 8s timeout. In-memory
+/// only (resets per launch); the proxied bytes themselves persist in the disk
+/// cache, so a re-tap after restart is instant.
+final Set<String> _blockedHosts = <String>{};
+
+String _hostOf(String url) => Uri.tryParse(url)?.host ?? url;
+
+/// Whether [url]'s host was already learned as blocked this session.
+@visibleForTesting
+bool originHostBlocked(String url) => _blockedHosts.contains(_hostOf(url));
+
+/// Remember [url]'s host as blocked so later loads skip the doomed origin.
+@visibleForTesting
+void markOriginHostBlocked(String url) => _blockedHosts.add(_hostOf(url));
+
+/// Network image with a MANUAL "proxy" affordance, for avatars and banners
+/// whose origin host is blocked at the network layer (GFW). Loads the origin
+/// first; when that fails with a block-like error it shows a small 「代理」 chip
+/// over the placeholder — tapping reloads through [proxiedUrl], and the
+/// proxied bytes are disk-cached by [proxyMediaCacheManager] so subsequent
+/// shows are instant. Deliberately opt-in (matches the post-media manual
+/// pattern): it never auto-proxies, and a definitive 404 shows the plain
+/// placeholder without offering the proxy.
+class ProxyableNetworkImage extends StatefulWidget {
+  const ProxyableNetworkImage({
+    super.key,
+    required this.url,
+    required this.placeholder,
+    this.width,
+    this.height,
+    this.fit = BoxFit.cover,
+    this.clipOval = false,
+    this.borderRadius,
+  });
+
+  final String url;
+
+  /// Shown while loading, and behind the 「代理」 chip once the origin fails.
+  final Widget placeholder;
+  final double? width;
+  final double? height;
+  final BoxFit fit;
+  final bool clipOval;
+  final double? borderRadius;
+
+  @override
+  State<ProxyableNetworkImage> createState() => _ProxyableNetworkImageState();
+}
+
+class _ProxyableNetworkImageState extends State<ProxyableNetworkImage> {
+  bool _useProxy = false;
+  bool _originFailed = false;
+  bool _proxyFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Host already learned blocked this session → skip the doomed origin.
+    if (originHostBlocked(widget.url)) _useProxy = true;
+  }
+
+  String get _effectiveUrl => _useProxy ? proxiedUrl(widget.url) : widget.url;
+
+  void _onLoadError(Object error) {
+    if (!mounted) return;
+    if (_useProxy) {
+      // The proxy attempt itself failed → give up to the plain placeholder.
+      if (!_proxyFailed) setState(() => _proxyFailed = true);
+      return;
+    }
+    if (!shouldProxyRetry(error)) {
+      // A definitive 404 — the media is gone, proxying won't help; show the
+      // placeholder without offering the proxy.
+      if (!_proxyFailed) setState(() => _proxyFailed = true);
+      return;
+    }
+    markOriginHostBlocked(widget.url);
+    if (!_originFailed) setState(() => _originFailed = true);
+  }
+
+  void _retryWithProxy() => setState(() => _useProxy = true);
+
+  @override
+  Widget build(BuildContext context) {
+    Widget content;
+    if (_originFailed && !_useProxy) {
+      // Origin blocked → placeholder + centered 「代理」 chip (manual opt-in).
+      content = Stack(
+        fit: StackFit.passthrough,
+        alignment: Alignment.center,
+        children: [widget.placeholder, _ProxyChip(onTap: _retryWithProxy)],
+      );
+    } else if (_proxyFailed) {
+      content = widget.placeholder;
+    } else {
+      final provider = CachedNetworkImageProvider(
+        _effectiveUrl,
+        cacheManager: proxyMediaCacheManager,
+        errorListener: _onLoadError,
+      );
+      content = Image(
+        image: provider,
+        width: widget.width,
+        height: widget.height,
+        fit: widget.fit,
+        frameBuilder: (c, child, frame, syncLoaded) =>
+            (syncLoaded || frame != null) ? child : widget.placeholder,
+        errorBuilder: (c, _, _) => widget.placeholder,
+      );
+    }
+    if (widget.clipOval) return ClipOval(child: content);
+    if (widget.borderRadius != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(widget.borderRadius!),
+        child: content,
+      );
+    }
+    return content;
+  }
+}
+
+/// The small centered 「代理」 chip shown over a failed avatar/banner. Tapping
+/// opts it into loading through the proxy mirror.
+class _ProxyChip extends StatelessWidget {
+  const _ProxyChip({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black54,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(Icons.language, size: 13, color: Colors.white),
+              SizedBox(width: 3),
+              Text(
+                '代理',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Network image that loads [url] (or its [proxiedUrl] mirror when
 /// [forceProxy] is true) and reports load failures via [onError].
 ///

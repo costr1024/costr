@@ -24,6 +24,7 @@ import '../../nostr/actions.dart';
 import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/display_name.dart';
+import '../../widgets/proxied_network_image.dart';
 import 'user_post_item.dart';
 import '../../widgets/immersive.dart';
 
@@ -183,32 +184,46 @@ class _Header extends ConsumerWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (meta?.banner != null && meta!.banner!.isNotEmpty)
-          SizedBox(
-            height: 150,
-            width: double.infinity,
-            child: Image.network(
-              meta!.banner!,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => const SizedBox.shrink(),
-            ),
-          )
-        else
-          Container(
-            height: 150,
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF6750A4),
-                  Color(0xFF7B1FA2),
-                  Color(0xFF512DA8),
-                ],
-              ),
-            ),
-          ),
+        // Banner: manual-proxy image. On a blocked host the origin fails and a
+        // 「代理」 chip appears over the gradient; tapping loads via the proxy
+        // mirror (disk-cached). No banner → plain gradient.
+        SizedBox(
+          height: 150,
+          width: double.infinity,
+          child: (meta?.banner != null && meta!.banner!.isNotEmpty)
+              ? ProxyableNetworkImage(
+                  url: meta!.banner!,
+                  fit: BoxFit.cover,
+                  placeholder: Container(
+                    width: double.infinity,
+                    height: 150,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF6750A4),
+                          Color(0xFF7B1FA2),
+                          Color(0xFF512DA8),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              : Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF6750A4),
+                        Color(0xFF7B1FA2),
+                        Color(0xFF512DA8),
+                      ],
+                    ),
+                  ),
+                ),
+        ),
         Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -217,7 +232,7 @@ class _Header extends ConsumerWidget {
             children: [
               Transform.translate(
                 offset: const Offset(0, -24),
-                child: Avatar(pubkey: pubkey, radius: 40),
+                child: Avatar(pubkey: pubkey, radius: 40, proxyable: true),
               ),
               const SizedBox(height: 4),
               // Row 1 (X-style): display name (bold, wraps to 2 lines if long)

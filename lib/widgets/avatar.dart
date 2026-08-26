@@ -11,9 +11,20 @@ import '../utils/nip19.dart';
 import 'proxied_network_image.dart';
 
 class Avatar extends ConsumerWidget {
-  const Avatar({super.key, required this.pubkey, this.radius = 18});
+  const Avatar({
+    super.key,
+    required this.pubkey,
+    this.radius = 18,
+    this.proxyable = false,
+  });
   final String pubkey;
   final double radius;
+
+  /// When true, a blocked picture host surfaces a 「代理」 chip over the
+  /// fallback (tap → load through the proxy mirror). Used for the large
+  /// profile-header avatar; list avatars keep the plain no-affordance path so
+  /// a feed of tiny avatars doesn't sprout buttons.
+  final bool proxyable;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -26,6 +37,17 @@ class Avatar extends ConsumerWidget {
 
     if (url == null || url.trim().isEmpty) return fallback;
 
+    if (proxyable) {
+      // Manual-proxy path: origin first, 「代理」 chip on block failure.
+      return ProxyableNetworkImage(
+        url: url,
+        width: radius * 2,
+        height: radius * 2,
+        fit: BoxFit.cover,
+        clipOval: true,
+        placeholder: fallback,
+      );
+    }
     return ClipOval(
       // No auto-proxy here (manual proxy is a post-media affordance; avatars
       // fall back to the initial-letter circle on failure). [metadataProvider]

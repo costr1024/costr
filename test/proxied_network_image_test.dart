@@ -60,4 +60,14 @@ void main() {
       expect(shouldProxyRetry(Exception('connection reset by peer')), isTrue);
     });
   });
+
+  group('blocked-host learning (ProxyableNetworkImage)', () {
+    test('markOriginHostBlocked is keyed by HOST, not the full url', () {
+      markOriginHostBlocked('https://nostr.build/i/abc.png');
+      // A different path on the same host is also known-blocked…
+      expect(originHostBlocked('https://nostr.build/i/other.jpg'), isTrue);
+      // …another host is not.
+      expect(originHostBlocked('https://example.com/x.png'), isFalse);
+    });
+  });
 }
