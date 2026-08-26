@@ -196,6 +196,10 @@ lib/
   `onChanged` 空），现接入持久化设置（config 表 `aggregate_notifications`，默认开）。关闭后
   聚合键从 `type:目标帖id` 变为 `type:事件id`，每条回复/点赞/转发各占一条通知；通知生成器
   `ref.watch` 该设置，切换即整体重建生效。关注通知恒按 follower 聚合（不受开关影响）。
+  **「回复与提及 / 喜欢与转发 / 新关注者」三个类别开关同样落地**：此前均为硬编码摆设，现各自接入
+  持久化设置（config 表 `notify_replies_mentions` / `notify_likes_reposts` / `notify_new_followers`，
+  都默认开）。通知生成器在分类后、建条目前按类别过滤——关掉某类，该类事件不再产生通知、也不计入
+  未读角标；生成器 `ref.watch` 三个开关，切换即重建生效。引用（quote）归入「回复与提及」。
 - **媒体加载**（头像/帖子图片/视频）：`CostrNetworkImage` 走带超时的 `flutter_cache_manager`
   FileService——**连接+响应 8s 硬超时**（默认无超时，被墙域名要等 OS TCP 30–60s 才报失败）+ 浏览器
   UA（部分图床/代理 403 非浏览器 UA，导致代理 URL 浏览器能开、app 开不了）。**代理媒体是本地可配置项**

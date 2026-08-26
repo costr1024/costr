@@ -21,20 +21,23 @@ class NotificationSettingsPage extends ConsumerWidget {
           _SwitchRow(
             title: '回复与提及',
             subtitle: '别人 @你 或回复你的帖子时通知',
-            value: true,
-            onChanged: (v) {},
+            value: ref.watch(notifyRepliesMentionsProvider),
+            onChanged: (v) =>
+                ref.read(notifyRepliesMentionsProvider.notifier).set(v),
           ),
           _SwitchRow(
             title: '喜欢与转发',
             subtitle: '别人喜欢、转发你的帖子时通知',
-            value: true,
-            onChanged: (v) {},
+            value: ref.watch(notifyLikesRepostsProvider),
+            onChanged: (v) =>
+                ref.read(notifyLikesRepostsProvider.notifier).set(v),
           ),
           _SwitchRow(
             title: '新关注者',
             subtitle: '有人开始关注你时通知',
-            value: true,
-            onChanged: (v) {},
+            value: ref.watch(notifyNewFollowersProvider),
+            onChanged: (v) =>
+                ref.read(notifyNewFollowersProvider.notifier).set(v),
           ),
           _SwitchRow(
             title: '整合通知',

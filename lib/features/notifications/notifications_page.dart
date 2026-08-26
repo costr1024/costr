@@ -105,6 +105,13 @@ final notificationsProvider = StreamProvider.autoDispose
       // re-collected with the new grouping (merged per-post vs one item per
       // interaction). No manual invalidation needed at the call site.
       final aggregate = ref.watch(aggregateNotificationsProvider);
+      // Category switches (回复与提及 / 喜欢与转发 / 新关注者, DESIGN §5.3, all
+      // default ON): events whose category is OFF are dropped before they
+      // become items. Watching them re-runs this generator on flip, so the
+      // list re-filters immediately without manual invalidation.
+      final wantReplies = ref.watch(notifyRepliesMentionsProvider);
+      final wantLikes = ref.watch(notifyLikesRepostsProvider);
+      final wantFollows = ref.watch(notifyNewFollowersProvider);
       // Wait for the event store's cold-start hydration before snapshotting
       // own posts + registering the listener. Reply/mention classification
       // gates e-tags against myEventIds: judging an event BEFORE hydration
@@ -251,6 +258,18 @@ final notificationsProvider = StreamProvider.autoDispose
         if (!mentionsMe && referencedId == null) return;
 
         final type = _classify(e, mentionsMe, referencedId != null);
+        // Category switches (回复与提及 / 喜欢与转发 / 新关注者): drop events
+        // whose category is turned off BEFORE building any item. Quote counts
+        // with replies/mentions (it @s the quoted author's audience the same
+        // way a mention does).
+        final wanted = switch (type) {
+          NotificationType.reply ||
+          NotificationType.mention ||
+          NotificationType.quote => wantReplies,
+          NotificationType.reaction || NotificationType.repost => wantLikes,
+          NotificationType.follow => wantFollows,
+        };
+        if (!wanted) return;
         // Navigation + aggregation target. For reactions/reposts this is the
         // post interacted with: prefer the gated referencedId, but when it
         // misses (liked/reposted own post is OLDER than the recent-200 own

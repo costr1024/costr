@@ -1661,6 +1661,84 @@ final aggregateNotificationsProvider =
       AggregateNotificationsNotifier.new,
     );
 
+// --- Notification category toggles (LOCAL-only; DESIGN §5.3) --------------
+//
+// Which kinds of events surface a notification. All default ON; the
+// notification generator watches these and re-runs when one flips, so the
+// list re-filters immediately. Stored in the SQLite config table, never
+// signed/published. Categories map to the 设置→通知设置 switches:
+//   回复与提及 → reply + mention      喜欢与转发 → reaction + repost
+//   新关注者   → follow
+
+/// Shared read/write for a boolean notification-category toggle keyed [key],
+/// defaulting ON (only an explicit stored 'false' disables a category).
+Future<bool> _readNotifyCategory(Ref ref, String key) async {
+  final cache = await ref.read(localCacheProvider.future);
+  return (await cache.readConfig(key)) != 'false';
+}
+
+Future<void> _writeNotifyCategory(Ref ref, String key, bool v) async {
+  final cache = await ref.read(localCacheProvider.future);
+  await cache.writeConfig(key, v ? 'true' : 'false');
+}
+
+final savedNotifyRepliesMentionsProvider = FutureProvider<bool>(
+  (ref) => _readNotifyCategory(ref, 'notify_replies_mentions'),
+);
+
+class NotifyRepliesMentionsNotifier extends Notifier<bool> {
+  @override
+  bool build() => ref.watch(savedNotifyRepliesMentionsProvider).value ?? true;
+  Future<void> set(bool v) async {
+    if (v == state) return;
+    state = v;
+    await _writeNotifyCategory(ref, 'notify_replies_mentions', v);
+  }
+}
+
+final notifyRepliesMentionsProvider =
+    NotifierProvider<NotifyRepliesMentionsNotifier, bool>(
+      NotifyRepliesMentionsNotifier.new,
+    );
+
+final savedNotifyLikesRepostsProvider = FutureProvider<bool>(
+  (ref) => _readNotifyCategory(ref, 'notify_likes_reposts'),
+);
+
+class NotifyLikesRepostsNotifier extends Notifier<bool> {
+  @override
+  bool build() => ref.watch(savedNotifyLikesRepostsProvider).value ?? true;
+  Future<void> set(bool v) async {
+    if (v == state) return;
+    state = v;
+    await _writeNotifyCategory(ref, 'notify_likes_reposts', v);
+  }
+}
+
+final notifyLikesRepostsProvider =
+    NotifierProvider<NotifyLikesRepostsNotifier, bool>(
+      NotifyLikesRepostsNotifier.new,
+    );
+
+final savedNotifyNewFollowersProvider = FutureProvider<bool>(
+  (ref) => _readNotifyCategory(ref, 'notify_new_followers'),
+);
+
+class NotifyNewFollowersNotifier extends Notifier<bool> {
+  @override
+  bool build() => ref.watch(savedNotifyNewFollowersProvider).value ?? true;
+  Future<void> set(bool v) async {
+    if (v == state) return;
+    state = v;
+    await _writeNotifyCategory(ref, 'notify_new_followers', v);
+  }
+}
+
+final notifyNewFollowersProvider =
+    NotifierProvider<NotifyNewFollowersNotifier, bool>(
+      NotifyNewFollowersNotifier.new,
+    );
+
 /// Global "are the app bars currently visible" state. Scrolled surfaces
 /// ([ImmersiveScrollDetector]) drive this DOWN when the user scrolls toward
 /// the bottom and UP back to true. Only consulted when
