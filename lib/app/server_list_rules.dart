@@ -118,6 +118,13 @@ List<List<String>> nip65RelayTags(List<String> urls) {
   return tags;
 }
 
+/// True when [url] is advertised WRITE-only in [nip65RelayTags] — an INBOX
+/// relay that others deliver events addressed to us to (bostr's `/inbox`
+/// endpoint). The 服务器节点 page lists these in their own section so the
+/// write-only role is visible instead of blending into the read relays.
+/// Mirrors the classification in [nip65RelayTags] — keep them in sync.
+bool isInboxRelay(String url) => normalizeServerUrl(url) == bostrInboxRelay;
+
 /// Validate a URL the user wants to ADD to [category]'s list, given the
 /// list's current [existing] entries. Returns a plain-language Chinese error
 /// message, or null when the URL is acceptable. Centralizes every rule the

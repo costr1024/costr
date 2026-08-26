@@ -226,12 +226,9 @@ void main() {
 
   group('nip65RelayTags', () {
     test('ordinary relay → bare r tag (read+write)', () {
-      expect(
-        nip65RelayTags(['wss://relay.ditto.pub/']),
-        [
-          ['r', 'wss://relay.ditto.pub'],
-        ],
-      );
+      expect(nip65RelayTags(['wss://relay.ditto.pub/']), [
+        ['r', 'wss://relay.ditto.pub'],
+      ]);
     });
 
     test('bostr plain URL → read marker; bostr /inbox → write marker', () {
@@ -268,5 +265,32 @@ void main() {
       expect(nip65RelayTags(['', '  ']), isEmpty);
     });
   });
-}
 
+  group('isInboxRelay', () {
+    test('only the bostr /inbox endpoint is an inbox relay', () {
+      expect(isInboxRelay('wss://relay.bostr.online/inbox'), isTrue);
+      // Trailing slash / case variants match too (normalized compare).
+      expect(isInboxRelay('WSS://relay.bostr.online/inbox/'), isTrue);
+    });
+
+    test('the bostr plain URL and every other relay are NOT inbox', () {
+      expect(isInboxRelay('wss://relay.bostr.online'), isFalse);
+      expect(isInboxRelay('wss://relay.bostr.online/inbox2'), isFalse);
+      expect(isInboxRelay('wss://relay.ditto.pub'), isFalse);
+      expect(isInboxRelay('wss://other.example/inbox'), isFalse);
+    });
+
+    test('classification mirrors nip65RelayTags write markers', () {
+      const urls = [
+        'wss://relay.gulugulu.moe/',
+        'wss://relay.bostr.online/',
+        'wss://relay.bostr.online/inbox',
+        'wss://nostr.data.haus/',
+      ];
+      for (final u in urls) {
+        final tag = nip65RelayTags([u]).single;
+        expect(isInboxRelay(u), tag.length == 3 && tag[2] == 'write');
+      }
+    });
+  });
+}

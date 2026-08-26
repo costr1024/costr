@@ -1,8 +1,10 @@
-/// Server nodes page (DESIGN.md §7 — 服务器节点). Two sections:
+/// Server nodes page (DESIGN.md §7 — 服务器节点). Sections:
 ///
 /// 1. **中继服务器** — the WebSocket relays Costr is connected to, with live
 ///    connection status and a real WS round-trip latency (REQ→EOSE with an
-///    impossible filter, ≈ network RTT — NOT an ICMP ping).
+///    impossible filter, ≈ network RTT — NOT an ICMP ping). Inbox
+///    (write-only, NIP-65) relays are split out into a **收件箱中继** section
+///    right below, from the same underlying relay list.
 /// 2. **Blossom 图床服务器** — the HTTP media-upload servers, tried in priority
 ///    order on upload, with a real HTTP round-trip latency (HEAD request).
 ///
@@ -290,24 +292,26 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     final theme = Theme.of(context);
     // Relay rows are pre-built so each row computes its write-rate warning
     // once (the warning also decides whether the row taps through to the
-    // customize sheet).
+    // customize sheet). Inbox (write-only, NIP-65) relays are listed in
+    // their OWN section so their role is visible (others deliver events
+    // addressed to us there); everything else stays in the read section.
     final relayRows = <Widget>[];
+    final inboxRows = <Widget>[];
     for (final url in _relays) {
       final warning = writeRateWarning(_writeSamples[url] ?? const <bool>[]);
-      relayRows.add(
-        _ServerRow(
-          url: url,
-          online: _relayStatus[url] == RelayStatus.connected,
-          connecting: _relayStatus[url] == RelayStatus.connecting,
-          samples: _relayCache[url] ?? const <int>[],
-          measuring: _measuring.contains('relay|$url'),
-          warning: warning,
-          rejectReason: warning != null ? _rejectReason[url] : null,
-          onTap: warning != null
-              ? () => _openCustomize(ServerCategory.relay)
-              : null,
-        ),
+      final row = _ServerRow(
+        url: url,
+        online: _relayStatus[url] == RelayStatus.connected,
+        connecting: _relayStatus[url] == RelayStatus.connecting,
+        samples: _relayCache[url] ?? const <int>[],
+        measuring: _measuring.contains('relay|$url'),
+        warning: warning,
+        rejectReason: warning != null ? _rejectReason[url] : null,
+        onTap: warning != null
+            ? () => _openCustomize(ServerCategory.relay)
+            : null,
       );
+      (isInboxRelay(url) ? inboxRows : relayRows).add(row);
     }
     return Scaffold(
       appBar: AppBar(
@@ -338,6 +342,16 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
             onCustomize: () => _openCustomize(ServerCategory.relay),
           ),
           ...relayRows,
+          // Inbox (write-only, NIP-65) relays get their own section — hidden
+          // entirely when the user's list has none. Editing them happens in
+          // the SAME relay customize sheet (one shared list).
+          if (inboxRows.isNotEmpty) ...[
+            _SectionHeader(
+              '收件箱中继（inbox）',
+              onCustomize: () => _openCustomize(ServerCategory.relay),
+            ),
+            ...inboxRows,
+          ],
           _SectionHeader(
             '搜索中继（NIP-50）',
             onCustomize: () => _openCustomize(ServerCategory.search),
@@ -390,6 +404,13 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
                   body:
                       '你每天刷的帖子来自这里。'
                       'Costr 连着这些中继，实时收发大家发的文字、转发和点赞。',
+                ),
+                _ExplainerRow(
+                  title: '收件箱中继',
+                  body:
+                      '别人回复你、@你时，把内容投递到这里（NIP-65 的 write 中继）。'
+                      '它属于上面「中继服务器」的同一份列表，只是角色是只写不读，'
+                      '单独列出方便你确认它在线。',
                 ),
                 _ExplainerRow(
                   title: '搜索中继',
