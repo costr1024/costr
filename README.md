@@ -324,11 +324,14 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 
 ## 默认中继
 
-主池（9 台，广播用）：`damus.bostr.online/`（damus 反代，便于大陆直连）·`relay.gulugulu.moe/`·
+主池（8 台，广播用）：`damus.bostr.online/`（damus 反代，便于大陆直连）·`relay.gulugulu.moe/`·
 `relay.ditto.pub/`（接受写入、被广泛订阅）·`relay.bostr.online/`（写入需 NIP-42 认证 + 白名单）·
-`nostr.data.haus/`·`relay.momostr.pink/`·`relay.nostr.net/`·`relay.0xchat.com/`·`top.testrelay.top/`。
+`nostr.data.haus/`·`relay.momostr.pink/`·`relay.nostr.net/`·`relay.0xchat.com/`。
+（`top.testrelay.top/` 已移出：它会对同 id 事件剥掉自定义表情 tag 导致 :emoji: 渲染坏；存量
+安装由启动一次性迁移 `server_list_retired_v1` 清除。）
 
-搜索专用（NIP-50，独立 `searchPoolProvider`）：`relay.ditto.pub/`·`search.nos.today/`。
+搜索专用（NIP-50，独立 `searchPoolProvider`）：`search.nos.today/`。
+（`relay.ditto.pub/` 已移出搜索池：订阅多了会 "rate-limited"；它仍是主池中继。）
 索引中继（陌生用户资料补漏）：`indexer.coracle.social/`·`user.kindpag.es/`。
 
 中继列表同时是 NIP-65（kind 10002）用户元数据——每次冷启动后台签发一次 kind 10002

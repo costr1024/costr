@@ -39,7 +39,9 @@ import 'package:path/path.dart' as p;
 
 /// Default relays. bostr requires NIP-42 auth to write (read-only for us);
 /// ditto/damus/gulugulu accept writes and are broadly queried, so posts reach
-/// other clients.
+/// other clients. (top.testrelay.top was retired: it strips custom-emoji tags
+/// off same-id variant events, breaking :emoji: renders — see
+/// relay-stripped-variants.)
 const List<String> defaultRelays = <String>[
   'wss://damus.bostr.online/',
   'wss://relay.gulugulu.moe/',
@@ -49,7 +51,6 @@ const List<String> defaultRelays = <String>[
   'wss://relay.momostr.pink/',
   'wss://relay.nostr.net/',
   'wss://relay.0xchat.com/',
-  'wss://top.testrelay.top/',
 ];
 
 // Order-insensitive server-list equality lives in server_list_rules.dart
@@ -60,10 +61,10 @@ const List<String> defaultRelays = <String>[
 /// searchUsersProvider) is routed ONLY to these, NOT [defaultRelays], because
 /// most relays don't support the NIP-50 `search` filter and silently ignore
 /// it — returning a firehose of recent kind-1/kind-0 events unrelated to the
-/// query (the "irrelevant results" bug). search.nos.today + relay.ditto.pub
-/// both implement NIP-50 full-text search.
+/// query (the "irrelevant results" bug). search.nos.today implements NIP-50
+/// full-text search. (relay.ditto.pub was retired from SEARCH: it rate-limits
+/// "too many subscriptions"; it stays in [defaultRelays] for reads/writes.)
 const List<String> searchRelays = <String>[
-  'wss://relay.ditto.pub/',
   'wss://search.nos.today/',
 ];
 
@@ -830,6 +831,60 @@ Future<void> _migrateWheatRelayOnce(Ref ref) async {
   }
 }
 
+/// Pure list transform for [_migrateRetiredServersOnce]: returns [stored] with
+/// any URL in [retired] removed (compared after [normalizeServerUrl]). Returns
+/// [stored] UNCHANGED (same instance) when nothing matches so callers can skip
+/// the write. Kept pure + `@visibleForTesting`.
+@visibleForTesting
+List<String> removeRetiredServers(List<String> stored, Set<String> retired) {
+  final retiredNorm = retired.map(normalizeServerUrl).toSet();
+  final kept = <String>[];
+  var changed = false;
+  for (final raw in stored) {
+    if (retiredNorm.contains(normalizeServerUrl(raw))) {
+      changed = true;
+    } else {
+      kept.add(raw);
+    }
+  }
+  return changed ? kept : stored;
+}
+
+/// One-shot removal of retired servers from STORED lists so existing installs
+/// drop them too (changing the code defaults only affects fresh installs):
+/// - relay category: `wss://top.testrelay.top/` (strips custom-emoji tags off
+///   same-id variant events → broken :emoji: renders).
+/// - search category: `wss://relay.ditto.pub/` (rate-limits "too many
+///   subscriptions"; it REMAINS a default relay, just no longer a dedicated
+///   NIP-50 search relay).
+/// Runs BEFORE [serverListsProvider] is first read so the pools connect to the
+/// cleaned lists; guarded so a failure can never wedge startup.
+Future<void> _migrateRetiredServersOnce(Ref ref) async {
+  const marker = 'server_list_retired_v1';
+  try {
+    final db = await ref.read(localCacheProvider.future);
+    if (await db.readConfig(marker) == '1') return;
+    const retiredByCategory = <ServerCategory, Set<String>>{
+      ServerCategory.relay: {'wss://top.testrelay.top/'},
+      ServerCategory.search: {'wss://relay.ditto.pub/'},
+    };
+    for (final entry in retiredByCategory.entries) {
+      final key = serverListKeys[entry.key]!;
+      final stored = await db.readServerList(key);
+      if (stored == null) continue;
+      final migrated = removeRetiredServers(stored, entry.value);
+      if (!identical(migrated, stored)) {
+        await db.writeServerList(key, migrated);
+        // Drop the cached value (if any) so the next read sees the cleanup.
+        ref.invalidate(serverListsProvider);
+      }
+    }
+    await db.writeConfig(marker, '1');
+  } catch (_) {
+    // Best-effort: never block startup on the migration.
+  }
+}
+
 Future<void> _runBootstrap(Ref ref) async {
   await ref.watch(identityProvider.future);
   final pool = ref.read(relayPoolProvider);
@@ -839,6 +894,9 @@ Future<void> _runBootstrap(Ref ref) async {
   // add relay.momostr.pink (both verified read+write). Existing installs keep
   // their stored list otherwise — this only touches the dead relay.
   await _migrateWheatRelayOnce(ref);
+  // One-shot removal of retired servers (top.testrelay.top from relays,
+  // relay.ditto.pub from search) so existing installs drop them too.
+  await _migrateRetiredServersOnce(ref);
   // Apply the user's persisted server lists BEFORE the first connect:
   // updateUrls on a never-connected pool is a pure list swap, so the pool
   // then connects to exactly what the user configured. Reading the pools here

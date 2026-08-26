@@ -689,4 +689,43 @@ void main() {
       ]);
     });
   });
+
+  group('removeRetiredServers', () {
+    test('removes retired urls, keeps the rest in order', () {
+      final stored = [
+        'wss://relay.gulugulu.moe',
+        'wss://top.testrelay.top/',
+        'wss://relay.ditto.pub',
+      ];
+      expect(
+        removeRetiredServers(stored, const {'wss://top.testrelay.top/'}),
+        ['wss://relay.gulugulu.moe', 'wss://relay.ditto.pub'],
+      );
+    });
+
+    test('matches regardless of trailing slash / case', () {
+      final stored = ['wss://Top.TestRelay.top', 'wss://relay.ditto.pub/'];
+      expect(
+        removeRetiredServers(stored, const {'wss://top.testrelay.top/'}),
+        ['wss://relay.ditto.pub/'],
+      );
+    });
+
+    test('no match returns the SAME instance (skip the write)', () {
+      final stored = ['wss://relay.gulugulu.moe', 'wss://relay.ditto.pub'];
+      final out = removeRetiredServers(
+        stored,
+        const {'wss://top.testrelay.top/'},
+      );
+      expect(identical(out, stored), isTrue);
+    });
+
+    test('removing every entry yields an empty list', () {
+      final stored = ['wss://relay.ditto.pub/'];
+      expect(
+        removeRetiredServers(stored, const {'wss://relay.ditto.pub/'}),
+        isEmpty,
+      );
+    });
+  });
 }
