@@ -228,7 +228,10 @@ lib/
   永久转圈**：`searchUsersProvider` 无初始 yield（帖子侧有 SQLite-FTS 首包），原收尾 flush 又被
   `if (dirty)` 门控，零命中时 `StreamController` 未 emit 即关闭 → Riverpod 永远停在
   `AsyncLoading`，切走再回搜索 tab 仍转圈；现在对齐 `repliesProvider`，收尾**恒吐一次快照（即便
-  空列表）**再关流，provider 落到 data（「无用户结果」）。
+  空列表）**再关流，provider 落到 data（「无用户结果」）。**粘贴 npub/nprofile/note/nevent 直达**：
+  提交搜索时先检测输入是否为 NIP-19 实体（含 `nostr:` 前缀、容错畸形 bech32，`nsec` 不解析），
+  命中则解码后直接跳转对应用户主页/帖子详情——NIP-50 只索引资料文本字段（name/about/nip05）、
+  不索引 bech32 串本身，拿 npub 当关键词搜必然零结果；普通关键词仍走 NIP-50。
 - **收藏**（`bookmarkEvent`）：SQLite 缓存优先取当前 kind-10003 再签名发布，**不再每次等 10s 中继 ACK**
   （冷启动才回落中继 + 防清空守卫）；收藏 tab 与关注页同款分组 UI：横滑 chip 行
   （全部 / 公开书签 / 私人书签 / 各自定义分组）+ 全部模式按组分段（组头 + 计数），

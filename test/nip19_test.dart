@@ -286,4 +286,52 @@ void main() {
       expect(rangeInUrl(text, s, s + npub.length), isFalse);
     });
   });
+
+  group('entityRoute (search-box direct resolution)', () {
+    const pubHex =
+        '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
+    const idHex =
+        '0000000000000000000000000000000000000000000000000000000000000001';
+    final npub = hexToNpub(pubHex);
+    final note = hexToNote(idHex);
+
+    test('npub → /u/<pubkey-hex>', () {
+      expect(entityRoute(npub), '/u/$pubHex');
+    });
+
+    test('nprofile → /u/<pubkey-hex>', () {
+      final nprofile = hexToNprofile(pubHex, relays: ['wss://r.example/']);
+      expect(entityRoute(nprofile), '/u/$pubHex');
+    });
+
+    test('note → /n/<event-id-hex>', () {
+      expect(entityRoute(note), '/n/$idHex');
+    });
+
+    test('nevent → /n/<event-id-hex>', () {
+      final nevent = hexToNevent(idHex, authorHex: pubHex);
+      expect(entityRoute(nevent), '/n/$idHex');
+    });
+
+    test('accepts nostr: prefix and surrounding whitespace', () {
+      expect(entityRoute('  nostr:$npub  '), '/u/$pubHex');
+    });
+
+    test('plain keyword → null (falls through to NIP-50 search)', () {
+      expect(entityRoute('jack'), isNull);
+      expect(entityRoute('百度'), isNull);
+      expect(entityRoute(''), isNull);
+    });
+
+    test('nsec is NEVER resolved to a route', () {
+      final nsec = hexToNsec(
+        '0000000000000000000000000000000000000000000000000000000000000001',
+      );
+      expect(entityRoute(nsec), isNull);
+    });
+
+    test('malformed npub → null (no throw)', () {
+      expect(entityRoute('npub1qqqqqq'), isNull);
+    });
+  });
 }

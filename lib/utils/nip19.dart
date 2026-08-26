@@ -228,6 +228,24 @@ String? entityToEventIdHex(String entity) {
   return null;
 }
 
+/// Resolve a pasted/typed NIP-19 entity to an in-app route: `/u/<pubkey-hex>`
+/// for `npub1…`/`nprofile1…`, `/n/<event-id-hex>` for `note1…`/`nevent1…`.
+/// Returns null for anything else — plain keywords, `nsec1…` (never resolve
+/// secret keys to a destination), malformed bech32. Accepts an optional
+/// `nostr:` prefix and surrounding whitespace. Used by the search box: NIP-50
+/// full-text search indexes profile TEXT (name/about/nip05), not bech32
+/// strings, so feeding it an npub finds nobody — entities must be decoded and
+/// opened directly instead (Amethyst's behavior).
+String? entityRoute(String query) {
+  final q = query.trim();
+  if (q.isEmpty) return null;
+  final pk = entityToPubkeyHex(q);
+  if (pk != null) return '/u/$pk';
+  final id = entityToEventIdHex(q);
+  if (id != null) return '/n/$id';
+  return null;
+}
+
 /// Shorten an `npub1...`/`nsec1...` for display: first 8 + … + last 4.
 String shortenEntity(String entity) {
   if (entity.length <= 16) return entity;

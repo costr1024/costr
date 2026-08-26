@@ -13,6 +13,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/providers.dart';
 import '../../app/theme.dart';
 import '../../models/event.dart';
+import '../../utils/nip19.dart';
 import '../../widgets/avatar.dart';
 import '../../widgets/immersive.dart';
 import '../feed/event_card.dart';
@@ -62,7 +63,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   void _clearSearch() => _controller.clear(); // → _onTextChanged
 
-  void _submit() => setState(() => _query = _controller.text.trim());
+  void _submit() {
+    final text = _controller.text.trim();
+    // A pasted/typed NIP-19 entity (npub/nprofile/note/nevent) opens the
+    // profile/post DIRECTLY instead of going to NIP-50 full-text search:
+    // NIP-50 indexes profile TEXT (name/about/nip05), not bech32 strings, so
+    // an npub query returns nothing ("搜索 npub/nprofile 搜不到对应的用户").
+    final route = entityRoute(text);
+    if (route != null) {
+      context.push(route);
+      return;
+    }
+    setState(() => _query = text);
+  }
 
   @override
   Widget build(BuildContext context) {
