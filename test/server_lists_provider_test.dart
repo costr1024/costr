@@ -728,4 +728,33 @@ void main() {
       );
     });
   });
+
+  group('addBostrInboxRelay', () {
+    test('appends the bostr /inbox relay when absent', () {
+      final stored = ['wss://relay.bostr.online/', 'wss://relay.ditto.pub/'];
+      expect(addBostrInboxRelay(stored), [
+        'wss://relay.bostr.online/',
+        'wss://relay.ditto.pub/',
+        bostrInboxRelay,
+      ]);
+    });
+
+    test('already present → same instance (skip the write)', () {
+      final stored = ['wss://relay.bostr.online/', bostrInboxRelay];
+      expect(identical(addBostrInboxRelay(stored), stored), isTrue);
+    });
+
+    test('present with a trailing slash → same instance', () {
+      final stored = ['wss://relay.bostr.online/inbox/'];
+      expect(identical(addBostrInboxRelay(stored), stored), isTrue);
+    });
+
+    test('at the per-category cap → not added', () {
+      final stored = List<String>.generate(
+        maxServersPerCategory,
+        (i) => 'wss://r$i.example',
+      );
+      expect(identical(addBostrInboxRelay(stored), stored), isTrue);
+    });
+  });
 }

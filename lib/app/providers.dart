@@ -41,12 +41,16 @@ import 'package:path/path.dart' as p;
 /// ditto/damus/gulugulu accept writes and are broadly queried, so posts reach
 /// other clients. (top.testrelay.top was retired: it strips custom-emoji tags
 /// off same-id variant events, breaking :emoji: renders — see
-/// relay-stripped-variants.)
+/// relay-stripped-variants.) `relay.bostr.online/inbox` is bostr's dedicated
+/// INBOX endpoint: advertised as the write (inbox) relay in our kind-10002 so
+/// others deliver events addressed to us there, and connected so we read them
+/// back (see [nip65RelayTags]).
 const List<String> defaultRelays = <String>[
   'wss://damus.bostr.online/',
   'wss://relay.gulugulu.moe/',
   'wss://relay.ditto.pub/',
   'wss://relay.bostr.online/',
+  'wss://relay.bostr.online/inbox',
   'wss://nostr.data.haus/',
   'wss://relay.momostr.pink/',
   'wss://relay.nostr.net/',
@@ -850,11 +854,28 @@ List<String> removeRetiredServers(List<String> stored, Set<String> retired) {
   return changed ? kept : stored;
 }
 
-/// One-shot removal of retired servers from STORED lists so existing installs
-/// drop them too (changing the code defaults only affects fresh installs):
-/// - relay category: `wss://top.testrelay.top/` (strips custom-emoji tags off
-///   same-id variant events → broken :emoji: renders).
-/// - search category: `wss://relay.ditto.pub/` (rate-limits "too many
+/// Pure transform for [_migrateRetiredServersOnce]: appends
+/// [bostrInboxRelay] (bostr's dedicated inbox endpoint) when it isn't already
+/// present and there is room under [maxServersPerCategory]. Returns [stored]
+/// UNCHANGED (same instance) when nothing is added, so callers can skip the
+/// write. Kept pure + `@visibleForTesting`.
+@visibleForTesting
+List<String> addBostrInboxRelay(List<String> stored) {
+  final normalized = stored.map(normalizeServerUrl).toList();
+  if (normalized.contains(bostrInboxRelay)) return stored;
+  if (normalized.length >= maxServersPerCategory) return stored;
+  return <String>[...stored, bostrInboxRelay];
+}
+
+/// One-shot cleanup + inbox addition on STORED server lists so existing
+/// installs match the new defaults (changing the code defaults only affects
+/// fresh installs):
+/// - relay category: REMOVE `wss://top.testrelay.top/` (strips custom-emoji
+///   tags off same-id variant events → broken :emoji: renders) and ADD
+///   `wss://relay.bostr.online/inbox` (bostr's inbox endpoint — advertised as
+///   our write/inbox relay in kind-10002 and connected so we read back events
+///   delivered there).
+/// - search category: REMOVE `wss://relay.ditto.pub/` (rate-limits "too many
 ///   subscriptions"; it REMAINS a default relay, just no longer a dedicated
 ///   NIP-50 search relay).
 /// Runs BEFORE [serverListsProvider] is first read so the pools connect to the
@@ -872,7 +893,10 @@ Future<void> _migrateRetiredServersOnce(Ref ref) async {
       final key = serverListKeys[entry.key]!;
       final stored = await db.readServerList(key);
       if (stored == null) continue;
-      final migrated = removeRetiredServers(stored, entry.value);
+      var migrated = removeRetiredServers(stored, entry.value);
+      if (entry.key == ServerCategory.relay) {
+        migrated = addBostrInboxRelay(migrated);
+      }
       if (!identical(migrated, stored)) {
         await db.writeServerList(key, migrated);
         // Drop the cached value (if any) so the next read sees the cleanup.
@@ -894,8 +918,9 @@ Future<void> _runBootstrap(Ref ref) async {
   // add relay.momostr.pink (both verified read+write). Existing installs keep
   // their stored list otherwise — this only touches the dead relay.
   await _migrateWheatRelayOnce(ref);
-  // One-shot removal of retired servers (top.testrelay.top from relays,
-  // relay.ditto.pub from search) so existing installs drop them too.
+  // One-shot server-list cleanup + inbox addition (drop top.testrelay.top from
+  // relays, relay.ditto.pub from search, add relay.bostr.online/inbox) so
+  // existing installs match the new defaults.
   await _migrateRetiredServersOnce(ref);
   // Apply the user's persisted server lists BEFORE the first connect:
   // updateUrls on a never-connected pool is a pure list swap, so the pool

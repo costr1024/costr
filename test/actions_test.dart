@@ -278,6 +278,24 @@ void main() {
           ['r', 'wss://only.example'],
         ]);
       });
+
+      test('bostr relays get read/write markers (inbox model)', () {
+        // relay.bostr.online is READ-only at the plain URL; its dedicated
+        // /inbox endpoint is the WRITE (inbox) relay. Other relays stay
+        // read+write (bare tag).
+        final e = actions.relayList([
+          'wss://relay.gulugulu.moe/',
+          'wss://relay.bostr.online/',
+          'wss://relay.bostr.online/inbox',
+        ]);
+        final rTags = e.tags.where((t) => t.isNotEmpty && t[0] == 'r').toList();
+        expect(rTags, [
+          ['r', 'wss://relay.gulugulu.moe'],
+          ['r', 'wss://relay.bostr.online', 'read'],
+          ['r', 'wss://relay.bostr.online/inbox', 'write'],
+        ]);
+        expect(id.verifyEventSignature(id: e.id, sig: e.sig), isTrue);
+      });
     });
   });
 }

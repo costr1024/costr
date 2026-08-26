@@ -6,6 +6,7 @@ library;
 import 'dart:convert';
 import 'dart:math' show Random;
 
+import '../app/server_list_rules.dart';
 import '../models/bookmark_entry.dart';
 import '../models/event.dart';
 import '../models/mute_set.dart';
@@ -395,14 +396,13 @@ class NostrActions {
   }
 
   /// NIP-65 relay list (kind 10002). Declares which relays other clients
-  /// should query for this author's events (outbox/inbox model). Each `["r",
-  /// url]` tag with no third marker means the relay is used for both read and
-  /// write. kind 10002 is replaceable, so re-publishing simply replaces the
-  /// prior list.
+  /// should query for this author's events (outbox/inbox model), emitting
+  /// read/write markers via [nip65RelayTags]: every relay is read+write (bare
+  /// `r` tag) except relay.bostr.online, which is READ-only at the plain URL
+  /// and WRITE-only (inbox) at its `/inbox` endpoint. kind 10002 is
+  /// replaceable, so re-publishing simply replaces the prior list.
   Event relayList(List<String> urls) {
-    final tags = <List<String>>[
-      for (final url in urls) ['r', url],
-    ];
+    final tags = nip65RelayTags(urls);
     return id.signEvent(kind: 10002, content: '', tags: [...tags, _clientTag]);
   }
 

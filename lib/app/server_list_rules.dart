@@ -90,6 +90,34 @@ bool sameServerSet(List<String> a, List<String> b) {
   return sa.length == sb.length && sa.containsAll(sb);
 }
 
+/// The bostr inbox endpoint: bostr routes inbox deliveries to a dedicated
+/// `/inbox` path, so we advertise the plain URL for reads and the `/inbox`
+/// URL as our write (inbox) relay.
+const String bostrPlainRelay = 'wss://relay.bostr.online';
+const String bostrInboxRelay = '$bostrPlainRelay/inbox';
+
+/// NIP-65 kind-10002 `r` tags for the user's relay list. Every relay is
+/// read+write (a bare `r` tag) EXCEPT the bostr pair: [bostrPlainRelay] is
+/// marked READ-only (others find our posts there) and [bostrInboxRelay] is
+/// marked WRITE-only (others deliver events addressed to us there). Keeping
+/// the plain bostr URL out of the write set and the `/inbox` URL out of the
+/// read set matches how bostr splits its outbox/inbox. Pure + testable.
+List<List<String>> nip65RelayTags(List<String> urls) {
+  final tags = <List<String>>[];
+  for (final raw in urls) {
+    final url = normalizeServerUrl(raw);
+    if (url.isEmpty) continue;
+    if (url == bostrPlainRelay) {
+      tags.add(['r', url, 'read']);
+    } else if (url == bostrInboxRelay) {
+      tags.add(['r', url, 'write']);
+    } else {
+      tags.add(['r', url]);
+    }
+  }
+  return tags;
+}
+
 /// Validate a URL the user wants to ADD to [category]'s list, given the
 /// list's current [existing] entries. Returns a plain-language Chinese error
 /// message, or null when the URL is acceptable. Centralizes every rule the

@@ -223,4 +223,50 @@ void main() {
       );
     });
   });
+
+  group('nip65RelayTags', () {
+    test('ordinary relay → bare r tag (read+write)', () {
+      expect(
+        nip65RelayTags(['wss://relay.ditto.pub/']),
+        [
+          ['r', 'wss://relay.ditto.pub'],
+        ],
+      );
+    });
+
+    test('bostr plain URL → read marker; bostr /inbox → write marker', () {
+      expect(
+        nip65RelayTags([
+          'wss://relay.bostr.online/',
+          'wss://relay.bostr.online/inbox',
+        ]),
+        [
+          ['r', 'wss://relay.bostr.online', 'read'],
+          ['r', 'wss://relay.bostr.online/inbox', 'write'],
+        ],
+      );
+    });
+
+    test('mixed list preserves order and marks only the bostr pair', () {
+      expect(
+        nip65RelayTags([
+          'wss://relay.gulugulu.moe/',
+          'wss://relay.bostr.online/',
+          'wss://relay.bostr.online/inbox',
+          'wss://nostr.data.haus/',
+        ]),
+        [
+          ['r', 'wss://relay.gulugulu.moe'],
+          ['r', 'wss://relay.bostr.online', 'read'],
+          ['r', 'wss://relay.bostr.online/inbox', 'write'],
+          ['r', 'wss://nostr.data.haus'],
+        ],
+      );
+    });
+
+    test('skips empty entries', () {
+      expect(nip65RelayTags(['', '  ']), isEmpty);
+    });
+  });
 }
+

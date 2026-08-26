@@ -324,11 +324,12 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 
 ## 默认中继
 
-主池（8 台，广播用）：`damus.bostr.online/`（damus 反代，便于大陆直连）·`relay.gulugulu.moe/`·
+主池（9 台，广播用）：`damus.bostr.online/`（damus 反代，便于大陆直连）·`relay.gulugulu.moe/`·
 `relay.ditto.pub/`（接受写入、被广泛订阅）·`relay.bostr.online/`（写入需 NIP-42 认证 + 白名单）·
-`nostr.data.haus/`·`relay.momostr.pink/`·`relay.nostr.net/`·`relay.0xchat.com/`。
+`relay.bostr.online/inbox`（bostr 专用**收件箱**端点）·`nostr.data.haus/`·`relay.momostr.pink/`·
+`relay.nostr.net/`·`relay.0xchat.com/`。
 （`top.testrelay.top/` 已移出：它会对同 id 事件剥掉自定义表情 tag 导致 :emoji: 渲染坏；存量
-安装由启动一次性迁移 `server_list_retired_v1` 清除。）
+安装由启动一次性迁移 `server_list_retired_v1` 清除，并把 `/inbox` 中继补进已存列表。）
 
 搜索专用（NIP-50，独立 `searchPoolProvider`）：`search.nos.today/`。
 （`relay.ditto.pub/` 已移出搜索池：订阅多了会 "rate-limited"；它仍是主池中继。）
@@ -336,6 +337,11 @@ Riverpod 3。长生命周期（relay pool、event store、identity）用非 auto
 
 中继列表同时是 NIP-65（kind 10002）用户元数据——每次冷启动后台签发一次 kind 10002
 （replaceable，重复发布只替换不堆积），让其他客户端按 outbox/inbox 模型找到你的中继。
+**发布带 read/write 标记**（`nip65RelayTags`）：所有中继默认 read+write（裸 `r` 标签），
+唯独 bostr 一对——`relay.bostr.online` 标 `read`（别人来这找你的帖子），
+`relay.bostr.online/inbox` 标 `write`（别人把给你的回复/提及投递到这个收件箱端点）。
+回复/@/点赞/转发时，除发自己的中继外还会补投到**对方**的 kind-10002 write 中继
+（`deliverEventToInboxes`），对方只读自家 outbox 也能收到。
 
 ---
 
