@@ -22,8 +22,15 @@ import '../../widgets/proxied_network_image.dart';
 import 'zap_sheet.dart';
 
 class EventCard extends ConsumerStatefulWidget {
-  const EventCard({super.key, required this.event});
+  const EventCard({super.key, required this.event, this.threadDepth = 0});
   final Event event;
+
+  /// Reply nesting depth when this card is rendered inside a thread tree
+  /// (0 = top-level). When > 0 a full-height vertical thread line is drawn
+  /// at the card's left edge (X-style) as a depth alignment guide — in its
+  /// own slot, never covering the avatar — so deep threads stay readable
+  /// with a small capped indent instead of `depth * 24px` compression.
+  final int threadDepth;
 
   @override
   ConsumerState<EventCard> createState() => _EventCardState();
@@ -52,6 +59,84 @@ class _EventCardState extends ConsumerState<EventCard> {
     final meta = ref.watch(metadataProvider(event.pubkey)).value;
     final status = ref.watch(userStatusProvider(event.pubkey)).value;
     final theme = Theme.of(context);
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        // Row 1 (X-style): avatar + display name + relative time + menu,
+        // all on one line so the nickname sits level with the avatar.
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            GestureDetector(
+              onTap: () => context.push('/u/${event.pubkey}'),
+              child: Avatar(pubkey: event.pubkey, radius: 16),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Row(
+                children: <Widget>[
+                  Flexible(
+                    child: GestureDetector(
+                      onTap: () => context.push('/u/${event.pubkey}'),
+                      child: DisplayName(
+                        pubkey: event.pubkey,
+                        meta: meta,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _relativeTime(event.createdAt),
+                    style: theme.textTheme.labelSmall,
+                  ),
+                  // Per-post "代理媒体" toggle. Shown ONLY when the
+                  // user has enabled the proxy-media feature (a LOCAL
+                  // setting, never synced to relays) AND this post
+                  // actually contains image/video links — text-only
+                  // posts hide it. Tapping routes THIS post's media
+                  // through proxy.bostr.online. Hidden entirely when
+                  // the feature is off.
+                  if (ref.watch(proxyMediaEnabledProvider) &&
+                      postHasMedia(event)) ...[
+                    const SizedBox(width: 6),
+                    _ProxyMediaButton(active: _proxyMedia, onTap: _toggleProxy),
+                  ],
+                  _PostMenu(event: event),
+                ],
+              ),
+            ),
+          ],
+        ),
+        // Row 2+: status / reply context / content / actions, indented to
+        // align with the nickname (avatar diameter 32 + 10 gap = 42).
+        Padding(
+          padding: const EdgeInsets.only(left: 42),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              if (status != null && status.isNotEmpty)
+                _StatusLine(text: status),
+              if (event.isReply) _ReplyContext(event: event),
+              const SizedBox(height: 6),
+              _NsfwAwareContent(event: event, proxyMedia: _proxyMedia),
+              if (event.hashtags.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                _Hashtags(tags: event.hashtags),
+              ],
+              const SizedBox(height: 2),
+              _ReactionChips(eventId: event.id),
+              const SizedBox(height: 2),
+              PostActions(event: event),
+            ],
+          ),
+        ),
+      ],
+    );
     return InkWell(
       onTap: () => pushPostDetail(context, event.id),
       child: Container(
@@ -60,90 +145,43 @@ class _EventCardState extends ConsumerState<EventCard> {
             bottom: BorderSide(color: CostrColors.of(context).border),
           ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              // Row 1 (X-style): avatar + display name + relative time + menu,
-              // all on one line so the nickname sits level with the avatar.
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: <Widget>[
-                  GestureDetector(
-                    onTap: () => context.push('/u/${event.pubkey}'),
-                    child: Avatar(pubkey: event.pubkey, radius: 16),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Row(
-                      children: <Widget>[
-                        Flexible(
-                          child: GestureDetector(
-                            onTap: () => context.push('/u/${event.pubkey}'),
-                            child: DisplayName(
-                              pubkey: event.pubkey,
-                              meta: meta,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.labelMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
+        // Thread line (X-style): a nested reply gets a FULL-HEIGHT vertical
+        // line at the card's left edge — an alignment guide for its depth
+        // level, continuous across stacked sibling cards. It lives in its
+        // own slot, so it never covers the avatar, and the indent per level
+        // is small + capped (see _RepliesSection) so deep threads no longer
+        // compress into a sliver.
+        child: widget.threadDepth > 0
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      SizedBox(
+                        width: 14,
+                        child: Column(
+                          children: <Widget>[
+                            Expanded(
+                              child: Container(
+                                width: 2,
+                                color: CostrColors.of(context).border,
                               ),
                             ),
-                          ),
+                          ],
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _relativeTime(event.createdAt),
-                          style: theme.textTheme.labelSmall,
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(8, 12, 12, 12),
+                          child: content,
                         ),
-                        // Per-post "代理媒体" toggle. Shown ONLY when the
-                        // user has enabled the proxy-media feature (a LOCAL
-                        // setting, never synced to relays) AND this post
-                        // actually contains image/video links — text-only
-                        // posts hide it. Tapping routes THIS post's media
-                        // through proxy.bostr.online. Hidden entirely when
-                        // the feature is off.
-                        if (ref.watch(proxyMediaEnabledProvider) &&
-                            postHasMedia(event)) ...[
-                          const SizedBox(width: 6),
-                          _ProxyMediaButton(
-                            active: _proxyMedia,
-                            onTap: _toggleProxy,
-                          ),
-                        ],
-                        _PostMenu(event: event),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              // Row 2+: status / reply context / content / actions, indented to
-              // align with the nickname (avatar diameter 32 + 10 gap = 42).
-              Padding(
-                padding: const EdgeInsets.only(left: 42),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    if (status != null && status.isNotEmpty)
-                      _StatusLine(text: status),
-                    if (event.isReply) _ReplyContext(event: event),
-                    const SizedBox(height: 6),
-                    _NsfwAwareContent(event: event, proxyMedia: _proxyMedia),
-                    if (event.hashtags.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      _Hashtags(tags: event.hashtags),
+                      ),
                     ],
-                    const SizedBox(height: 2),
-                    _ReactionChips(eventId: event.id),
-                    const SizedBox(height: 2),
-                    PostActions(event: event),
-                  ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ),
+              )
+            : Padding(padding: const EdgeInsets.all(12), child: content),
       ),
     );
   }
@@ -452,9 +490,7 @@ class _ReplyContext extends ConsumerWidget {
         ? mute.hidesEvent(parentEvent)
         : (parentPubkey != null && mute.isMutedPubkey(parentPubkey));
     if (parentMuted) {
-      final hint = parentEvent != null
-          ? mute.hintFor(parentEvent)
-          : '该账号已被屏蔽';
+      final hint = parentEvent != null ? mute.hintFor(parentEvent) : '该账号已被屏蔽';
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),
         child: InkWell(

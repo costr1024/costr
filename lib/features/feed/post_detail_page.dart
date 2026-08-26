@@ -170,10 +170,7 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
                     // their miss, so without it the parent stays missing for
                     // the whole session even after the relay recovers.
                     if (chain.isNotEmpty && threadRoot.isReply)
-                      _AncestorsRetryRow(
-                        top: threadRoot,
-                        focusedId: widget.id,
-                      ),
+                      _AncestorsRetryRow(top: threadRoot, focusedId: widget.id),
                     if (focusedIsRoot) ...[
                       // The focused post IS the thread root (a top-level
                       // post, or a reply whose ancestors haven't resolved
@@ -404,8 +401,15 @@ class _RepliesSectionState extends ConsumerState<_RepliesSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             for (final tr in threaded)
+              // X-style threading: a SMALL capped indent per level (deep
+              // threads no longer compress into a sliver) plus a full-height
+              // vertical thread line drawn inside EventCard at the card's
+              // left edge. The line is in its own slot, so it never covers
+              // the avatar.
               Padding(
-                padding: EdgeInsets.only(left: tr.depth * 24.0),
+                padding: EdgeInsets.only(
+                  left: (tr.depth > 4 ? 4 : tr.depth) * 10.0,
+                ),
                 child: tr.event.id == widget.highlightId
                     ? AnimatedContainer(
                         key: widget.highlightKey,
@@ -418,9 +422,12 @@ class _RepliesSectionState extends ConsumerState<_RepliesSection> {
                               : null,
                           borderRadius: BorderRadius.circular(14),
                         ),
-                        child: EventCard(event: tr.event),
+                        child: EventCard(
+                          event: tr.event,
+                          threadDepth: tr.depth,
+                        ),
                       )
-                    : EventCard(event: tr.event),
+                    : EventCard(event: tr.event, threadDepth: tr.depth),
               ),
           ],
         );
