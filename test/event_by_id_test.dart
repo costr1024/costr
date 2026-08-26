@@ -94,6 +94,11 @@ class _StubCache implements cache.LocalCache {
   @override
   Future<List<cache.EventRow>> queryFeed({int limit = 200}) async => const [];
   @override
+  Future<List<cache.EventRow>> queryFeedForAuthors(
+    List<String> authors, {
+    int limit = 1000,
+  }) async => const [];
+  @override
   Future<List<cache.EventRow>> queryRecentReactions({int limit = 500}) async =>
       const [];
   @override

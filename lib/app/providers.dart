@@ -1245,8 +1245,32 @@ class EventStoreNotifier extends Notifier<List<Event>> {
     try {
       // Kind-1 feed (1000 newest — deep enough that a relaunch restores the
       // depth the user had scrolled to (load-more pages are persisted by
-      // _persist), instead of dumping them back at the newest 200)
-      final feedRows = await db.queryFeed(limit: 1000);
+      // _persist), instead of dumping them back at the newest 200).
+      //
+      // SCOPED TO THE ACTIVE ACCOUNT: the events table is shared by every
+      // account on the device, so the old global newest-1000 let other
+      // accounts' followees crowd out the active account's posts — its
+      // following feed then hydrated empty and waited on the network
+      // ("多账号关注流不秒出"). Load only this account's follows (+ own posts)
+      // so each account's feed restores instantly, whatever the account count.
+      final me = ref.read(identityProvider).value?.pubkeyHex;
+      var follows = const <String>[];
+      if (me != null) {
+        try {
+          final k3 = await db.queryContactList(me);
+          if (k3 != null) follows = _replaceableToEvent(k3).pTagPubkeys;
+        } catch (_) {}
+      }
+      if (gen != _hydrateGen || _disposed) return;
+      final feedAuthors = <String>[
+        ...follows,
+        if (me != null && !follows.contains(me)) me,
+      ];
+      // Always await the feed query even when [feedAuthors] is empty — the
+      // query method early-returns a completed future, but keeping the await
+      // preserves hydration's microtask cadence (a timing-sensitive store
+      // flush window that like/reaction regression tests depend on).
+      final feedRows = await db.queryFeedForAuthors(feedAuthors, limit: 1000);
       if (gen != _hydrateGen || _disposed) return;
       for (final row in feedRows) {
         _store.add(_cacheRowToEvent(row));

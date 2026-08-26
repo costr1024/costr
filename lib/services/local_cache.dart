@@ -239,6 +239,26 @@ class LocalCache extends _$LocalCache {
         .get();
   }
 
+  /// Kind-1/6 feed rows authored by any of [authors], newest first. Used to
+  /// hydrate ONE account's following feed from the shared [events] table: the
+  /// table holds posts cached for EVERY account on the device, so loading the
+  /// global newest-N (the old [queryFeed] path) let other accounts' followees
+  /// crowd out the active account's and its following feed hydrated empty.
+  /// Scoping to the account's follows (+ own posts) makes each account's feed
+  /// restore instantly regardless of how many accounts share the device.
+  /// [authors] may be empty → no rows (a follows-less account has no feed).
+  Future<List<EventRow>> queryFeedForAuthors(
+    List<String> authors, {
+    int limit = 1000,
+  }) {
+    if (authors.isEmpty) return Future.value(const <EventRow>[]);
+    return (select(events)
+          ..where((e) => e.pubkey.isIn(authors) & e.kind.isIn(const [1, 6]))
+          ..orderBy([(e) => OrderingTerm.desc(e.createdAt)])
+          ..limit(limit))
+        .get();
+  }
+
   Future<List<EventRow>> queryUserPosts(String pubkey, {int limit = 100}) {
     return (select(events)
           ..where((e) => e.pubkey.equals(pubkey) & e.kind.equals(1))
