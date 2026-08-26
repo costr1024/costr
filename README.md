@@ -160,6 +160,12 @@ lib/
   之外**并发**拉取**被回帖作者 outbox read 中继**的 `#e` 回帖，回帖按 **时间线 + 层级**
   （`threadReplies`：父子树深度优先、同层最旧在前、按深度缩进）展示而非扁平 createdAt 倒序。
   回帖流收尾恒吐一次快照（即便空），避免零回复时 `StreamProvider` 卡在 `AsyncLoading` 转圈圈。
+  **从任意回复进入看整条线程（Amethyst 式）**：打开的帖子若本身是回帖，不再只显示它的
+  「上游祖先 + 它 + 它的直接回复」窄链，而是定位到线程 **root**，展示 root + **全部回帖树**
+  （所有兄弟回复、逐级嵌套），并在树中**高亮 + 滚动定位**到用户打开的那条回帖
+  （`_RepliesSection` 自带高亮态、异步回帖树排版完成后 `ensureVisible` 定位，避免父级
+  `SingleChildScrollView` 被重建冲掉滚动）。该回帖若尚未在回帖流里（仍在加载）会被临时并入
+  （`ensureEvent`），保证打开的帖子不会短暂消失。
   **按 id 查找抗抖动**：`eventByIdProvider` 的默认池广播放在按 id 共享的在途 Future 里（不绑定
   单个 provider 生命周期）——页面重建引起的 provider dispose/重建不再掐断监听、丢弃中继迟到
   的应答，重建后的查找直接并入同一在途请求（也不重复发 REQ）；中继对订阅回 `CLOSED`（如

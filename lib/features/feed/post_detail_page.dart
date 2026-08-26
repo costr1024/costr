@@ -64,10 +64,24 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
     super.dispose();
   }
 
+  /// Flash the focused card's highlight and auto-turn it off. Idempotent while
+  /// already highlighted. Shared by the top-level positioning (focused post IS
+  /// the root) and the reply-tree path ([_RepliesSection.onFocusedReady]).
+  void _flashHighlight() {
+    if (!mounted) return;
+    if (!_highlight) setState(() => _highlight = true);
+    _highlightOff?.cancel();
+    _highlightOff = Timer(const Duration(milliseconds: 1800), () {
+      if (mounted) setState(() => _highlight = false);
+    });
+  }
+
   /// Scroll the focused card into view (near the top, keeping a little
   /// context above it) and flash a highlight so it's easy to spot. Scheduled
   /// post-frame because the card must be laid out before it can be scrolled
-  /// to. Idempotent per chain length.
+  /// to. Idempotent per chain length. (When the focused post is a REPLY shown
+  /// inside the async reply tree, the scroll happens in [_RepliesSection]
+  /// instead once the reply is actually laid out.)
   void _positionToFocused(int chainLen) {
     if (_positionedForLen == chainLen) return;
     _positionedForLen = chainLen;
@@ -81,19 +95,15 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOutCubic,
       );
-      if (!_highlight) setState(() => _highlight = true);
-      _highlightOff?.cancel();
-      _highlightOff = Timer(const Duration(milliseconds: 1800), () {
-        if (mounted) setState(() => _highlight = false);
-      });
+      _flashHighlight();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // Mute set applies to the whole thread: muted ancestors/replies stay
-    // invisible (see below); the focused post itself is explicit navigation.
-    final mute = ref.watch(myMuteSetProvider);
+    // Mute filtering of the reply tree happens inside [_RepliesSection] (which
+    // watches the mute set itself); the thread root / focused post stay
+    // visible since the user navigated here explicitly.
     // Fetch this post's reactions/reposts while the thread is open. The
     // like tally / reaction chips / 「谁点赞/转发了」chevron all derive from
     // the capped in-memory store, which evicts kind-7 first — on a live
@@ -135,22 +145,16 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
             }
             // chain is root-first ending in focused; null while still loading.
             final chain = chainAv.value ?? const <Event>[];
-            // Muted authors vanish from the chain too (屏蔽 applies to the
-            // thread, not just the feed). The focused post itself stays —
-            // the user navigated to it explicitly. Dropped ancestors simply
-            // leave a gap; replies below re-thread on their own.
-            final ancestors = chain.length > 1
-                ? chain
-                      .sublist(0, chain.length - 1)
-                      .where((e) => !mute.hidesEvent(e))
-                      .toList()
-                : <Event>[];
             final displayFocused = chain.isNotEmpty ? chain.last : focused;
+            // The thread ROOT: the topmost resolved ancestor. When the focused
+            // post has no ancestors it IS the root (a top-level post).
+            final threadRoot = chain.isNotEmpty ? chain.first : displayFocused;
+            final focusedIsRoot = threadRoot.id == displayFocused.id;
             final theme = Theme.of(context);
             // Once the chain has settled (AsyncValue data), position to the
             // focused post. Called during build but only schedules a post-frame
             // callback — no setState during build. Re-runs when the chain
-            // length changes (ancestors prepended async).
+            // length changes (ancestors resolve async).
             if (chainAv.value != null) _positionToFocused(chain.length);
             return SingleChildScrollView(
               child: Padding(
@@ -165,40 +169,55 @@ class _PostDetailPageState extends ConsumerState<PostDetailPage> {
                     // Offer an explicit retry: the one-shot lookups cache
                     // their miss, so without it the parent stays missing for
                     // the whole session even after the relay recovers.
-                    if (chain.isNotEmpty && chain.first.isReply)
+                    if (chain.isNotEmpty && threadRoot.isReply)
                       _AncestorsRetryRow(
-                        top: chain.first,
+                        top: threadRoot,
                         focusedId: widget.id,
                       ),
-                    for (final e in ancestors) EventCard(event: e),
-                    if (ancestors.isNotEmpty) ...[
+                    if (focusedIsRoot) ...[
+                      // The focused post IS the thread root (a top-level
+                      // post, or a reply whose ancestors haven't resolved
+                      // yet): show it as the highlighted focus card with its
+                      // replies below — the pre-existing layout.
+                      AnimatedContainer(
+                        key: _focusedKey,
+                        duration: const Duration(milliseconds: 600),
+                        decoration: BoxDecoration(
+                          color: _highlight
+                              ? CostrColors.of(
+                                  context,
+                                ).brand.withValues(alpha: 0.10)
+                              : null,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: EventCard(event: threadRoot),
+                      ),
+                      _RepliesSection(eventId: threadRoot.id),
+                    ] else ...[
+                      // The focused post is a REPLY deep in a thread. Show
+                      // the thread ROOT, then the root's COMPLETE reply tree —
+                      // every sibling reply, threaded — highlighting and
+                      // scrolling to the focused reply within it. This surfaces
+                      // the whole conversation ("从 root 到全部回复"), not just
+                      // the focused reply's narrow ancestor/descendant chain.
+                      EventCard(event: threadRoot),
                       const SizedBox(height: 4),
                       Padding(
                         padding: const EdgeInsets.only(left: 2, bottom: 2),
                         child: Text(
-                          '你打开的帖子',
+                          '你打开的帖子在下方高亮',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: CostrColors.of(context).text3,
                           ),
                         ),
                       ),
-                    ],
-                    // Highlight flash on the focused card right after the
-                    // auto-scroll, so the user can pick it out of the chain.
-                    AnimatedContainer(
-                      key: _focusedKey,
-                      duration: const Duration(milliseconds: 600),
-                      decoration: BoxDecoration(
-                        color: _highlight
-                            ? CostrColors.of(
-                                context,
-                              ).brand.withValues(alpha: 0.10)
-                            : null,
-                        borderRadius: BorderRadius.circular(14),
+                      _RepliesSection(
+                        eventId: threadRoot.id,
+                        highlightId: displayFocused.id,
+                        highlightKey: _focusedKey,
+                        ensureEvent: displayFocused,
                       ),
-                      child: EventCard(event: displayFocused),
-                    ),
-                    _RepliesSection(eventId: displayFocused.id),
+                    ],
                   ],
                 ),
               ),
@@ -252,15 +271,92 @@ class _AncestorsRetryRow extends ConsumerWidget {
   }
 }
 
-/// Direct replies to [eventId], newest-first. Plain [EventCard]s (the former
+/// Replies to [eventId], threaded. Plain [EventCard]s (the former
 /// avatar-column connector line was removed).
-class _RepliesSection extends ConsumerWidget {
-  const _RepliesSection({required this.eventId});
+///
+/// When [highlightId] is set (the focused post is a reply shown inside its
+/// root's reply tree), the matching reply is kept visible even if its author
+/// is muted and wrapped in a highlight [AnimatedContainer] keyed by
+/// [highlightKey]. Because the reply tree loads ASYNC (the focused reply may
+/// not be laid out when the page first builds), this section scrolls the
+/// highlighted reply into view ITSELF once it is rendered and flashes the
+/// highlight — the highlight state lives here so flashing it rebuilds only
+/// this section, never the parent's SingleChildScrollView (which would reset
+/// the just-performed scroll).
+/// [ensureEvent] (the focused post) is spliced in if the fetched replies
+/// don't contain it yet, so the post the user opened never vanishes while the
+/// root's reply tree is still loading.
+class _RepliesSection extends ConsumerStatefulWidget {
+  const _RepliesSection({
+    required this.eventId,
+    this.highlightId,
+    this.highlightKey,
+    this.ensureEvent,
+  });
   final String eventId;
+  final String? highlightId;
+  final GlobalKey? highlightKey;
+  final Event? ensureEvent;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(repliesProvider(eventId));
+  ConsumerState<_RepliesSection> createState() => _RepliesSectionState();
+}
+
+class _RepliesSectionState extends ConsumerState<_RepliesSection> {
+  bool _scrolledToHighlight = false;
+  // Highlight flash state lives HERE (not in the parent) so flashing it only
+  // rebuilds this section — rebuilding the parent would recreate the
+  // SingleChildScrollView and reset the scroll we just performed.
+  bool _highlight = false;
+  Timer? _highlightOff;
+
+  @override
+  void dispose() {
+    _highlightOff?.cancel();
+    super.dispose();
+  }
+
+  /// Scroll the highlighted reply into view once it is actually laid out. The
+  /// reply tree loads async and can be tall, so the target's RenderObject may
+  /// not be attached on the very first post-frame callback — retry a handful
+  /// of frames until it is (or it never appears, e.g. filtered away).
+  void _maybeScrollToHighlight() {
+    if (_scrolledToHighlight) return;
+    if (widget.highlightKey == null) return;
+    _attemptHighlightScroll(20);
+  }
+
+  void _attemptHighlightScroll(int remaining) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _scrolledToHighlight) return;
+      final ctx = widget.highlightKey?.currentContext;
+      if (ctx == null) {
+        if (remaining > 0) _attemptHighlightScroll(remaining - 1);
+        return;
+      }
+      _scrolledToHighlight = true;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.25,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+      ).then((_) {
+        // Flash the highlight only AFTER the scroll animation finishes, and
+        // via THIS section's setState so the parent (and its
+        // SingleChildScrollView) is not rebuilt and the scroll is kept.
+        if (!mounted) return;
+        setState(() => _highlight = true);
+        _highlightOff?.cancel();
+        _highlightOff = Timer(const Duration(milliseconds: 1800), () {
+          if (mounted) setState(() => _highlight = false);
+        });
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(repliesProvider(widget.eventId));
     // Mute set is read at the top (not inside the data closure) so the watch
     // is registered on every build.
     final mute = ref.watch(myMuteSetProvider);
@@ -271,12 +367,25 @@ class _RepliesSection extends ConsumerWidget {
       ),
       error: (Object e, _) => Text('回复加载失败：$e'),
       data: (List<Event> replies) {
+        // Splice in the focused post if the fetched replies don't contain it
+        // yet (still loading / cached separately) so it never disappears.
+        var all = replies;
+        final ensure = widget.ensureEvent;
+        if (ensure != null && !replies.any((e) => e.id == ensure.id)) {
+          all = <Event>[...replies, ensure];
+        }
         // Replies from muted authors are dropped BEFORE threading — their
         // children get reparented to the root by [threadReplies], so a
         // blocked author can't hide a conversation branch, only themself.
+        // The highlighted reply (the post the user explicitly opened) is
+        // exempt so it never vanishes out from under the navigation.
         final shown = mute.isEmpty
-            ? replies
-            : replies.where((e) => !mute.hidesEvent(e)).toList();
+            ? all
+            : all
+                  .where(
+                    (e) => e.id == widget.highlightId || !mute.hidesEvent(e),
+                  )
+                  .toList();
         if (shown.isEmpty) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
@@ -286,14 +395,32 @@ class _RepliesSection extends ConsumerWidget {
         // Flatten into a timeline-ordered + hierarchical tree (each reply
         // followed by its own sub-thread) and indent per depth so the reply
         // structure is visible instead of a flat createdAt-desc jumble.
-        final threaded = threadReplies(shown, eventId);
+        final threaded = threadReplies(shown, widget.eventId);
+        final hasHighlight =
+            widget.highlightId != null &&
+            threaded.any((tr) => tr.event.id == widget.highlightId);
+        if (hasHighlight) _maybeScrollToHighlight();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             for (final tr in threaded)
               Padding(
                 padding: EdgeInsets.only(left: tr.depth * 24.0),
-                child: EventCard(event: tr.event),
+                child: tr.event.id == widget.highlightId
+                    ? AnimatedContainer(
+                        key: widget.highlightKey,
+                        duration: const Duration(milliseconds: 600),
+                        decoration: BoxDecoration(
+                          color: _highlight
+                              ? CostrColors.of(
+                                  context,
+                                ).brand.withValues(alpha: 0.10)
+                              : null,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: EventCard(event: tr.event),
+                      )
+                    : EventCard(event: tr.event),
               ),
           ],
         );
