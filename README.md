@@ -10,9 +10,9 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **1.1.7** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.1.7/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.2.0** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.2.0/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 当前为正式版（v1.1.7）。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为正式版（v1.2.0）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
 >
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / **v1.1.7 正式版**。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / v1.1.7 正式版 / **v1.2.0 正式版**。
 
 ---
 
@@ -412,6 +412,34 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 通知中心、多账号、关注分组（NIP-51 kind-30000，Amethyst 兼容）、收藏（NIP-51 + NIP-44 私密）、
 屏蔽列表、媒体代理、服务器节点自定义 + 去中心化推荐、本地 SQLite 缓存秒开。覆盖安装即可从
 任一 0.x-beta 升级，登录 / 关注 / 屏蔽 / 收藏 / 本地缓存全部保留。
+
+**v1.2.0 相对 v1.1.7 的修复/新增**：
+1. **关注流缓存按账号隔离水合**——此前 `events` 表全设备共享、冷启动取「全局最新 1000 条」，
+   多账号时当前账号关注的人被别的账号关注的人挤出这 1000 条，关注流过滤后是空的、只能等
+   outbox 联网重拉（「多账号关注流不秒出」）。现在水合只取「本账号关注的人 + 自己」的帖子
+   （`queryFeedForAuthors`），无论几个账号，各自的关注流冷启动/切号都能秒出缓存。
+2. **通知类别开关落地**——「回复与提及 / 喜欢与转发 / 新关注者」三个开关此前均为硬编码摆设
+   （`value: true`、`onChanged` 空）。现各自接入持久化设置（默认开），通知生成器分类后、建条目
+   前按类别过滤，关掉某类即不再产生该类通知、也不计未读角标；生成器 `ref.watch` 三开关，
+   切换即重建生效。
+3. **头像/背景图被墙手动走代理**——资料页大头像与背景图改用 `ProxyableNetworkImage`（手动、
+   非自动）：先直连原图，被墙类失败（超时/连接被重置，404 不算）时在占位图上浮现「代理」小
+   按钮，点按改走 `proxy.bostr.online` 镜像并落 `flutter_cache_manager` 磁盘缓存（后续秒出）；
+   同一 host 学到被墙后按域名记忆（会话内），其余该域名图直接走代理、不再重复 8s 超时。
+4. **回复/@/点赞/转发投递到对方 NIP-65 收件箱**——发布这类事件时除发自己的中继，
+   `deliverEventToInboxes` 还读取每个被 `p` 标签 @ 到的对方的 kind-10002 **write（收件箱）
+   中继**并补投一份（临时连接 `publishToUrls`），对方客户端只读自家 outbox 也能收到。
+   fire-and-forget 与主发布并行、绝不阻塞；自己剔除（不投自己）。
+5. **kind-10002 发布 read/write 标记 + bostr /inbox 收件箱**——`nip65RelayTags`：发布的中继
+   清单里所有中继默认 read+write（裸 `r` 标签），唯 `relay.bostr.online` 标 `read`、其
+   `/inbox` 端点标 `write`（收件箱）——bostr 把收件投递路由到专用 `/inbox` 路径。
+   `relay.bostr.online/inbox` 加入默认中继（主池连接它、列表页可见）。
+6. **默认中继调整**——`top.testrelay.top` 移出主池（它会对同 id 事件剥掉自定义表情 tag 导致
+   :emoji: 渲染坏）；`relay.ditto.pub` 移出 NIP-50 搜索池（订阅多了会 rate-limited，仍是主池
+   中继）。存量安装由启动一次性迁移清除/补齐。
+7. **通知聚合人数精确显示**——条目保存全部互动作者（旧的 5 人上限 + `extraCount` 每来一人 +1，
+   5 人回复会渲染成「5 人和另外 4 人」、读起来像 9 人）；现标题显示前 3 个名字 +「和另外 N 人」，
+   N 由 `pubkeys.length` 精确推出。
 
 **v1.1.7 相对 v1.1.6 的修复/新增**：
 1. **搜索框粘贴 npub/nprofile/note/nevent 直达**——此前粘贴实体按 NIP-19 解码前的原文当
