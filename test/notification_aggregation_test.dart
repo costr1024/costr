@@ -450,4 +450,114 @@ void main() {
       expect(repost.repostedEventId, isNull);
     });
   });
+
+  group('foldAggregateAuthor — exact author list (count bug)', () {
+    test('5 authors → exactly 5, no phantom overflow', () {
+      var pubkeys = <String>[];
+      for (final pk in ['a', 'b', 'c', 'd', 'e']) {
+        pubkeys = foldAggregateAuthor(pubkeys, pk);
+      }
+      expect(pubkeys, ['a', 'b', 'c', 'd', 'e']);
+      // The head line derives "和另外 N 人" from length: 5 authors show 3
+      // names + "和另外 2 人". The old capped-list + always-+1 extraCount
+      // rendered the same 5 authors as "5 人和另外 4 人" (read as 9 people).
+      expect(pubkeys.length, 5);
+    });
+
+    test('every distinct author is kept — count stays exact past 5', () {
+      var pubkeys = <String>[];
+      for (final pk in ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']) {
+        pubkeys = foldAggregateAuthor(pubkeys, pk);
+      }
+      expect(pubkeys.length, 9); // no cap → "和另外 6 人" is exact
+    });
+
+    test('a repeat author is a no-op (identity)', () {
+      const start = ['a', 'b'];
+      final merged = foldAggregateAuthor(start, 'a');
+      expect(identical(merged, start), isTrue);
+    });
+
+    test('repeat author is never double counted', () {
+      var pubkeys = <String>[];
+      for (final pk in ['a', 'b', 'c', 'd', 'e', 'f', 'f', 'a']) {
+        pubkeys = foldAggregateAuthor(pubkeys, pk);
+      }
+      expect(pubkeys, ['a', 'b', 'c', 'd', 'e', 'f']);
+    });
+  });
+
+  group('notificationItemKey — 整合通知 toggle (aggregate flag)', () {
+    final reply = _ev(
+      kind: 1,
+      id: 'reply_ev',
+      pubkey: 'pk',
+      createdAt: 1,
+      tags: const [
+        ['e', 'my_post', '', 'root'],
+      ],
+    );
+
+    test('aggregate ON (default): replies to the same post share a key', () {
+      final other = _ev(
+        kind: 1,
+        id: 'reply_ev_2',
+        pubkey: 'pk2',
+        createdAt: 2,
+        tags: const [
+          ['e', 'my_post', '', 'root'],
+        ],
+      );
+      expect(
+        notificationItemKey(NotificationType.reply, reply, 'my_post'),
+        notificationItemKey(NotificationType.reply, other, 'my_post'),
+      );
+    });
+
+    test('aggregate OFF: each reply gets its own key', () {
+      final other = _ev(
+        kind: 1,
+        id: 'reply_ev_2',
+        pubkey: 'pk2',
+        createdAt: 2,
+        tags: const [
+          ['e', 'my_post', '', 'root'],
+        ],
+      );
+      final k1 = notificationItemKey(
+        NotificationType.reply,
+        reply,
+        'my_post',
+        aggregate: false,
+      );
+      final k2 = notificationItemKey(
+        NotificationType.reply,
+        other,
+        'my_post',
+        aggregate: false,
+      );
+      expect(k1, isNot(equals(k2)));
+      expect(k1, 'reply:reply_ev');
+      expect(k2, 'reply:reply_ev_2');
+    });
+
+    test('aggregate OFF still keys follow by pubkey (revision dedup)', () {
+      final v1 = _ev(kind: 3, id: 'rev1', pubkey: 'follower', createdAt: 1);
+      final v2 = _ev(kind: 3, id: 'rev2', pubkey: 'follower', createdAt: 2);
+      expect(
+        notificationItemKey(
+          NotificationType.follow,
+          v1,
+          null,
+          aggregate: false,
+        ),
+        notificationItemKey(
+          NotificationType.follow,
+          v2,
+          null,
+          aggregate: false,
+        ),
+      );
+    });
+  });
 }

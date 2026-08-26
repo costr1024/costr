@@ -1606,6 +1606,37 @@ final immersiveBrowseProvider = NotifierProvider<ImmersiveBrowseNotifier, bool>(
   ImmersiveBrowseNotifier.new,
 );
 
+// --- Notification aggregation (LOCAL-only toggle; never published) --------
+
+/// Whether multiple interactions on the SAME post roll up into ONE
+/// notification item ("整合通知", DESIGN §5.3 — default ON). When OFF, every
+/// reply/like/repost gets its own notification row. LOCAL client preference,
+/// stored in the SQLite config table, never signed/published. Read by the
+/// notification generator (which re-runs when this flips) and driven by the
+/// 设置→通知设置 switch.
+final savedAggregateNotificationsProvider = FutureProvider<bool>((ref) async {
+  final cache = await ref.read(localCacheProvider.future);
+  // Default ON: only an explicit stored 'false' turns aggregation off.
+  return (await cache.readConfig('aggregate_notifications')) != 'false';
+});
+
+class AggregateNotificationsNotifier extends Notifier<bool> {
+  @override
+  bool build() => ref.watch(savedAggregateNotificationsProvider).value ?? true;
+
+  Future<void> set(bool v) async {
+    if (v == state) return;
+    state = v;
+    final cache = await ref.read(localCacheProvider.future);
+    await cache.writeConfig('aggregate_notifications', v ? 'true' : 'false');
+  }
+}
+
+final aggregateNotificationsProvider =
+    NotifierProvider<AggregateNotificationsNotifier, bool>(
+      AggregateNotificationsNotifier.new,
+    );
+
 /// Global "are the app bars currently visible" state. Scrolled surfaces
 /// ([ImmersiveScrollDetector]) drive this DOWN when the user scrolls toward
 /// the bottom and UP back to true. Only consulted when

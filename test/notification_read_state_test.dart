@@ -59,7 +59,6 @@ NotificationItem _item({
 }) => NotificationItem(
   type: type,
   pubkeys: const ['p'],
-  extraCount: 0,
   time: time,
   id: id,
   unread: true,

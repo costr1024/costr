@@ -46,7 +46,6 @@ NotificationItem _item({
 }) => NotificationItem(
   type: NotificationType.reply,
   pubkeys: ['p' * 64],
-  extraCount: 0,
   time: time,
   preview: preview,
   id: id,
@@ -198,7 +197,6 @@ void main() {
       NotificationItem(
         type: NotificationType.reaction,
         pubkeys: ['q' * 64],
-        extraCount: 0,
         time: 99980,
         reactionEmoji: '👍',
         id: 'react0',

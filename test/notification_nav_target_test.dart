@@ -216,7 +216,6 @@ void main() {
     }) => NotificationItem(
       type: t,
       pubkeys: ['b' * 64],
-      extraCount: 0,
       time: 1,
       targetEventId: target,
       sourceEventId: source,

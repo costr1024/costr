@@ -34,7 +34,6 @@ class NotificationItem {
   const NotificationItem({
     required this.type,
     required this.pubkeys,
-    required this.extraCount,
     required this.time,
     this.preview,
     this.targetEventId,
@@ -46,8 +45,13 @@ class NotificationItem {
     required this.unread,
   });
   final NotificationType type;
+
+  /// EVERY distinct author who triggered this (aggregated) item — no cap. The
+  /// head line shows the first 3 names and derives "和另外 N 人" from
+  /// `pubkeys.length`, so the count is always exact. (The old design capped
+  /// this at 5 + a separate `extraCount` that was incremented wrong, making 5
+  /// authors render as "5 人和另外 4 人".)
   final List<String> pubkeys;
-  final int extraCount;
   final int time;
   final String? preview;
 
@@ -96,6 +100,11 @@ Duration followGateTimeout = const Duration(seconds: 6);
 final notificationsProvider = StreamProvider.autoDispose
     .family<List<NotificationItem>, String>((ref, myPubkey) async* {
       final pool = ref.watch(relayPoolProvider);
+      // 整合通知 toggle (DESIGN §5.3, default ON): watching it makes this
+      // generator RE-RUN when the user flips the switch — the whole list is
+      // re-collected with the new grouping (merged per-post vs one item per
+      // interaction). No manual invalidation needed at the call site.
+      final aggregate = ref.watch(aggregateNotificationsProvider);
       // Wait for the event store's cold-start hydration before snapshotting
       // own posts + registering the listener. Reply/mention classification
       // gates e-tags against myEventIds: judging an event BEFORE hydration
@@ -253,17 +262,24 @@ final notificationsProvider = StreamProvider.autoDispose
                 type == NotificationType.repost)
             ? (referencedId ?? primaryETagTarget(e))
             : referencedId;
-        final itemKey = notificationItemKey(type, e, targetId);
+        final itemKey = notificationItemKey(type, e, targetId,
+            aggregate: aggregate);
 
         void addOrUpdate() {
           // Aggregate: if an item with the same type+target exists, add pubkey.
+          // (When the 整合通知 toggle is OFF the key is per-event, so this
+          // lookup never matches and every interaction gets its own item.)
           final existing = items.where((i) => i.id == itemKey).firstOrNull;
           if (existing != null) {
-            if (!existing.pubkeys.contains(e.pubkey)) {
+            final mergedPubkeys = foldAggregateAuthor(
+              existing.pubkeys,
+              e.pubkey,
+            );
+            // Same author again → fold is a no-op (identical list) → skip.
+            if (!identical(mergedPubkeys, existing.pubkeys)) {
               final updated = NotificationItem(
                 type: existing.type,
-                pubkeys: [...existing.pubkeys, e.pubkey].take(5).toList(),
-                extraCount: existing.extraCount + 1,
+                pubkeys: mergedPubkeys,
                 time: e.createdAt,
                 preview: existing.preview,
                 targetEventId: existing.targetEventId,
@@ -287,7 +303,6 @@ final notificationsProvider = StreamProvider.autoDispose
               NotificationItem(
                 type: type,
                 pubkeys: [e.pubkey],
-                extraCount: 0,
                 time: e.createdAt,
                 preview: preview,
                 targetEventId: targetId,
@@ -549,13 +564,40 @@ Future<bool?> previousContactListContainsMe(
 /// brand-new event id, so keying on the event id would spawn a duplicate
 /// "X followed you" notification for every revision of X's list. Key on the
 /// *follower's pubkey* instead so all of X's revisions collapse into one.
+/// The aggregation key a notification event rolls up under.
+///
+/// With [aggregate] ON (default, DESIGN §5.3 整合通知) every interaction on the
+/// SAME target shares one key → one item: `reply:<myPostId>`,
+/// `reaction:<myPostId>`, `repost:<myPostId>` ("A 和另外 3 人回复了你的帖子").
+/// With it OFF the key is per EVENT (`reply:<eventId>`, …) so each
+/// reply/like/repost gets its own notification row. Follow is special either
+/// way: a contact-list revision is per-author, keyed `follow:<pubkey>` (a
+/// follower's repeat revisions must not stack — "重复关注通知" bug).
 String notificationItemKey(
   NotificationType type,
   Event e,
-  String? referencedId,
-) {
+  String? referencedId, {
+  bool aggregate = true,
+}) {
   if (type == NotificationType.follow) return 'follow:${e.pubkey}';
+  if (!aggregate) return '${type.name}:${e.id}';
   return '${type.name}:${referencedId ?? e.id}';
+}
+
+/// Fold a new author [pubkey] into an aggregated notification item's author
+/// list. Returns the updated list — EVERY distinct author is kept (no cap) so
+/// the "和另外 N 人" count derived from `pubkeys.length` is exact. If [pubkey]
+/// is already present (the same author interacting again) the input list is
+/// returned unchanged (identity), so callers can skip the no-op with an
+/// `identical` check.
+///
+/// Extracted for unit testing: the old logic capped the list at 5 and kept a
+/// separate `extraCount` that was incremented for EVERY arrival, so 5 authors
+/// rendered as "5 人和另外 4 人" (read as 9 people).
+@visibleForTesting
+List<String> foldAggregateAuthor(List<String> pubkeys, String pubkey) {
+  if (pubkeys.contains(pubkey)) return pubkeys;
+  return [...pubkeys, pubkey];
 }
 
 /// The event id the detail page should open when [item] is tapped, or null
@@ -1513,22 +1555,25 @@ class _NotificationTile extends ConsumerWidget {
                     text: TextSpan(
                       style: theme.textTheme.bodyMedium,
                       children: [
-                        if (item.extraCount > 0)
-                          TextSpan(
-                            text:
-                                '${item.pubkeys.length} 人和另外 ${item.extraCount} 人',
+                        // Who: up to 3 names; when more people are in the item
+                        // than shown, append "和另外 N 人". pubkeys holds every
+                        // distinct author, so the count is exact. (Previously
+                        // rendered the misleading "N 人和另外 M 人" with a
+                        // double-counted M.)
+                        for (final (i, pk)
+                            in item.pubkeys.take(3).indexed) ...[
+                          if (i > 0) TextSpan(text: '、', style: headStyle),
+                          ...displayNameSpans(
+                            pubkey: pk,
+                            meta: ref.watch(metadataProvider(pk)).value,
                             style: headStyle,
-                          )
-                        else
-                          for (final (i, pk)
-                              in item.pubkeys.take(3).indexed) ...[
-                            if (i > 0) TextSpan(text: '、', style: headStyle),
-                            ...displayNameSpans(
-                              pubkey: pk,
-                              meta: ref.watch(metadataProvider(pk)).value,
-                              style: headStyle,
-                            ),
-                          ],
+                          ),
+                        ],
+                        if (item.pubkeys.length > 3)
+                          TextSpan(
+                            text: ' 和另外 ${item.pubkeys.length - 3} 人',
+                            style: headStyle,
+                          ),
                         TextSpan(
                           text: ' $verb',
                           style: TextStyle(

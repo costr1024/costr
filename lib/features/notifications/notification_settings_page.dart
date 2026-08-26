@@ -5,6 +5,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/providers.dart';
 import '../../app/theme.dart';
 
 class NotificationSettingsPage extends ConsumerWidget {
@@ -38,8 +39,9 @@ class NotificationSettingsPage extends ConsumerWidget {
           _SwitchRow(
             title: '整合通知',
             subtitle: '同一帖子的多条互动合并成一条，少打扰你',
-            value: true,
-            onChanged: (v) {},
+            value: ref.watch(aggregateNotificationsProvider),
+            onChanged: (v) =>
+                ref.read(aggregateNotificationsProvider.notifier).set(v),
           ),
           const _SectionHeader('提示'),
           const _InfoRow(
