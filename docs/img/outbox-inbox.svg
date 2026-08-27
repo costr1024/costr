@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 240" width="420" height="240" font-family="system-ui,sans-serif">
+  <rect width="420" height="240" fill="#FFFFFF"/>
+  <text x="210" y="22" font-size="13" font-weight="600" fill="#0F1419" text-anchor="middle">发件箱（outbox）与 收件箱（inbox）：帖子从哪来、回复到哪去</text>
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6z" fill="#536471"/></marker></defs>
+
+  <!-- Lane 1: 你刷的内容 = 去对方的发件箱取 -->
+  <text x="210" y="56" font-size="10" fill="#536471" text-anchor="middle">你刷的帖子·评论·点赞·转发，去对方的发件箱取</text>
+  <rect x="40" y="70" width="100" height="46" rx="10" fill="#0F1419"/>
+  <text x="90" y="90" font-size="12" fill="#FFFFFF" text-anchor="middle">你</text>
+  <text x="90" y="106" font-size="9" fill="#B0B8BF" text-anchor="middle">Costr</text>
+  <rect x="280" y="70" width="100" height="46" rx="10" fill="#F7F9F9" stroke="#EFF3F4"/>
+  <text x="330" y="90" font-size="11" fill="#0F1419" text-anchor="middle">别人的「发件箱」</text>
+  <text x="330" y="106" font-size="9" fill="#536471" text-anchor="middle">NIP-65 read 中继</text>
+  <path d="M278 93 C 240 93, 190 93, 142 93" stroke="#536471" stroke-width="1" fill="none" marker-end="url(#a)"/>
+
+  <!-- Lane 2: 别人给你的内容 = 写进你的收件箱 -->
+  <text x="210" y="150" font-size="10" fill="#536471" text-anchor="middle">别人回复你·@你·私信你，写进你的收件箱</text>
+  <rect x="40" y="164" width="100" height="46" rx="10" fill="#F7F9F9" stroke="#EFF3F4"/>
+  <text x="90" y="184" font-size="11" fill="#0F1419" text-anchor="middle">别人</text>
+  <text x="90" y="200" font-size="9" fill="#536471" text-anchor="middle">回复 / @ / 私信</text>
+  <rect x="280" y="164" width="100" height="46" rx="10" fill="#F7F9F9" stroke="#EFF3F4"/>
+  <text x="330" y="184" font-size="11" fill="#0F1419" text-anchor="middle">你的「收件箱」</text>
+  <text x="330" y="200" font-size="9" fill="#536471" text-anchor="middle">NIP-65 write 中继</text>
+  <path d="M142 187 C 190 187, 240 187, 278 187" stroke="#536471" stroke-width="1" fill="none" marker-end="url(#a)"/>
+
+  <text x="210" y="231" font-size="10" fill="#536471" text-anchor="middle">发件箱＝一个人帖子所在的中继；收件箱＝投递给本人的中继；大多数中继两者都是</text>
+</svg>

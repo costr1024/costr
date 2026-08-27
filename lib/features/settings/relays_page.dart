@@ -1,10 +1,13 @@
 /// Server nodes page (DESIGN.md §7 — 服务器节点). Sections:
 ///
-/// 1. **中继服务器** — the WebSocket relays Costr is connected to, with live
-///    connection status and a real WS round-trip latency (REQ→EOSE with an
-///    impossible filter, ≈ network RTT — NOT an ICMP ping). Inbox
-///    (write-only, NIP-65) relays are split out into a **收件箱中继** section
-///    right below, from the same underlying relay list.
+/// 1. **发件箱中继（outbox）** / **收件箱中继（inbox）** — the WebSocket relays
+///    Costr is connected to, with live connection status and a real WS
+///    round-trip latency (REQ→EOSE with an impossible filter, ≈ network RTT —
+///    NOT an ICMP ping). They are the SAME underlying relay list, split by
+///    NIP-65 role: the outbox section shows the read relays, the inbox
+///    section the write relays. A read+write relay appears in BOTH; the bostr
+///    plain relay (read-only) is outbox-only and the bostr /inbox endpoint
+///    (write-only) is inbox-only.
 /// 2. **Blossom 图床服务器** — the HTTP media-upload servers, tried in priority
 ///    order on upload, with a real HTTP round-trip latency (HEAD request).
 ///
@@ -30,6 +33,7 @@ import '../../app/server_list_rules.dart';
 import '../../app/theme.dart';
 import '../../nostr/relay_pool.dart';
 import '../../services/blossom_upload.dart' show measureBlossomRtt;
+import '../../widgets/outbox_inbox_diagram.dart';
 import 'server_list_sheet.dart';
 
 const int _kKeep = 3;
@@ -287,31 +291,40 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
     }
   }
 
+  /// Builds one relay row for [url]: connection status + RTT samples + the
+  /// write success-rate warning (which also decides whether the row taps
+  /// through to the relay customize sheet). Called once per section a relay
+  /// belongs to (outbox and/or inbox), so a read+write relay gets its own
+  /// widget instance in each.
+  _ServerRow _relayRow(String url) {
+    final warning = writeRateWarning(_writeSamples[url] ?? const <bool>[]);
+    return _ServerRow(
+      url: url,
+      online: _relayStatus[url] == RelayStatus.connected,
+      connecting: _relayStatus[url] == RelayStatus.connecting,
+      samples: _relayCache[url] ?? const <int>[],
+      measuring: _measuring.contains('relay|$url'),
+      warning: warning,
+      rejectReason: warning != null ? _rejectReason[url] : null,
+      onTap: warning != null
+          ? () => _openCustomize(ServerCategory.relay)
+          : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // Relay rows are pre-built so each row computes its write-rate warning
-    // once (the warning also decides whether the row taps through to the
-    // customize sheet). Inbox (write-only, NIP-65) relays are listed in
-    // their OWN section so their role is visible (others deliver events
-    // addressed to us there); everything else stays in the read section.
-    final relayRows = <Widget>[];
+    // NIP-65 roles: a relay can be READ (outbox / 发件箱) and/or WRITE (inbox
+    // / 收件箱). Most are read+write and therefore appear in BOTH sections;
+    // the bostr plain relay is read-only (outbox only) and the bostr /inbox
+    // endpoint is write-only (inbox only). Rows are pre-built per section so
+    // each computes its write-rate warning once.
+    final outboxRows = <Widget>[];
     final inboxRows = <Widget>[];
     for (final url in _relays) {
-      final warning = writeRateWarning(_writeSamples[url] ?? const <bool>[]);
-      final row = _ServerRow(
-        url: url,
-        online: _relayStatus[url] == RelayStatus.connected,
-        connecting: _relayStatus[url] == RelayStatus.connecting,
-        samples: _relayCache[url] ?? const <int>[],
-        measuring: _measuring.contains('relay|$url'),
-        warning: warning,
-        rejectReason: warning != null ? _rejectReason[url] : null,
-        onTap: warning != null
-            ? () => _openCustomize(ServerCategory.relay)
-            : null,
-      );
-      (isInboxRelay(url) ? inboxRows : relayRows).add(row);
+      if (isOutboxRelay(url)) outboxRows.add(_relayRow(url));
+      if (isInboxRelay(url)) inboxRows.add(_relayRow(url));
     }
     return Scaffold(
       appBar: AppBar(
@@ -333,18 +346,19 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               '保留最近 $_kKeep 次取平均，停留此页时每 '
               '${_kRefreshInterval.inSeconds} 秒自动重测一次。'
               '绿色=快，黄色=较慢，红色=连不上。'
-              '中继服务器还会记录你的发帖成功率，反复发送失败会标红并建议更换。',
+              '发件箱/收件箱中继还会记录你的发帖成功率，反复发送失败会标红并建议更换。',
               style: theme.textTheme.bodySmall,
             ),
           ),
           _SectionHeader(
-            '中继服务器',
+            '发件箱中继（outbox）',
             onCustomize: () => _openCustomize(ServerCategory.relay),
           ),
-          ...relayRows,
-          // Inbox (write-only, NIP-65) relays get their own section — hidden
+          ...outboxRows,
+          // Inbox (NIP-65 write) relays get their own section — hidden
           // entirely when the user's list has none. Editing them happens in
-          // the SAME relay customize sheet (one shared list).
+          // the SAME relay customize sheet (one shared list). Read+write
+          // relays appear in BOTH the outbox and inbox sections.
           if (inboxRows.isNotEmpty) ...[
             _SectionHeader(
               '收件箱中继（inbox）',
@@ -388,6 +402,10 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
               samples: _blossomCache[url] ?? const <int>[],
               measuring: _measuring.contains('blossom|$url'),
             ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: const OutboxInboxDiagram(),
+          ),
           const SizedBox(height: 12),
           // Plain-language explainer for each server type. Nostr's
           // many relay "roles" are confusing — spell out what each does so
@@ -400,17 +418,18 @@ class _RelaysPageState extends ConsumerState<RelaysPage> {
                 Text('这些服务器都是干嘛的？', style: theme.textTheme.titleSmall),
                 const SizedBox(height: 8),
                 _ExplainerRow(
-                  title: '中继服务器',
+                  title: '发件箱中继',
                   body:
-                      '你每天刷的帖子来自这里。'
-                      'Costr 连着这些中继，实时收发大家发的文字、转发和点赞。',
+                      '你发的帖子写进这些中继（NIP-65 的 read 中继）。'
+                      '你关注的人发的帖子、评论、点赞、转发，也是 Costr 去对方的发件箱取来的。'
+                      '列表里除了只写的 /inbox，其余都兼任你的发件箱。',
                 ),
                 _ExplainerRow(
                   title: '收件箱中继',
                   body:
-                      '别人回复你、@你时，把内容投递到这里（NIP-65 的 write 中继）。'
-                      '它属于上面「中继服务器」的同一份列表，只是角色是只写不读，'
-                      '单独列出方便你确认它在线。',
+                      '别人回复你、@你、给你发私信时，对方客户端把内容写进你的收件箱'
+                      '（NIP-65 的 write 中继），你再从这里收到。'
+                      '列表里除了只读的 bostr.online，其余都兼任你的收件箱。',
                 ),
                 _ExplainerRow(
                   title: '搜索中继',

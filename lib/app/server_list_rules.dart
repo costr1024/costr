@@ -118,12 +118,23 @@ List<List<String>> nip65RelayTags(List<String> urls) {
   return tags;
 }
 
-/// True when [url] is advertised WRITE-only in [nip65RelayTags] — an INBOX
-/// relay that others deliver events addressed to us to (bostr's `/inbox`
-/// endpoint). The 服务器节点 page lists these in their own section so the
-/// write-only role is visible instead of blending into the read relays.
-/// Mirrors the classification in [nip65RelayTags] — keep them in sync.
-bool isInboxRelay(String url) => normalizeServerUrl(url) == bostrInboxRelay;
+/// True when [url] is a NIP-65 **write (inbox)** relay per [nip65RelayTags]:
+/// a relay others deliver events addressed to us to. That is EVERY relay
+/// EXCEPT the read-only [bostrPlainRelay] — the dedicated [bostrInboxRelay]
+/// is write-only, and every other relay is read+write (bare `r` tag), so both
+/// are inboxes. The 服务器节点 page lists these under 收件箱中继. Mirrors the
+/// write markers in [nip65RelayTags] — keep them in sync.
+bool isInboxRelay(String url) =>
+    normalizeServerUrl(url) != bostrPlainRelay;
+
+/// True when [url] is a NIP-65 **read (outbox)** relay per [nip65RelayTags]:
+/// a relay our posts are published to and others fetch our content from. That
+/// is EVERY relay EXCEPT the write-only [bostrInboxRelay] — [bostrPlainRelay]
+/// is read-only, and every other relay is read+write (bare `r` tag), so both
+/// are outboxes. The 服务器节点 page lists these under 发件箱中继. Mirrors the
+/// read markers in [nip65RelayTags] — keep them in sync.
+bool isOutboxRelay(String url) =>
+    normalizeServerUrl(url) != bostrInboxRelay;
 
 /// Validate a URL the user wants to ADD to [category]'s list, given the
 /// list's current [existing] entries. Returns a plain-language Chinese error

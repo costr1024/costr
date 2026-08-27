@@ -267,30 +267,52 @@ void main() {
   });
 
   group('isInboxRelay', () {
-    test('only the bostr /inbox endpoint is an inbox relay', () {
+    test('every write relay is an inbox relay', () {
+      // The dedicated write-only endpoint…
       expect(isInboxRelay('wss://relay.bostr.online/inbox'), isTrue);
-      // Trailing slash / case variants match too (normalized compare).
       expect(isInboxRelay('WSS://relay.bostr.online/inbox/'), isTrue);
+      // …and every ordinary read+write relay are all inboxes too.
+      expect(isInboxRelay('wss://relay.ditto.pub'), isTrue);
+      expect(isInboxRelay('wss://relay.gulugulu.moe/'), isTrue);
+      expect(isInboxRelay('wss://other.example/inbox'), isTrue);
     });
 
-    test('the bostr plain URL and every other relay are NOT inbox', () {
+    test('only the read-only bostr plain relay is NOT an inbox', () {
       expect(isInboxRelay('wss://relay.bostr.online'), isFalse);
-      expect(isInboxRelay('wss://relay.bostr.online/inbox2'), isFalse);
-      expect(isInboxRelay('wss://relay.ditto.pub'), isFalse);
-      expect(isInboxRelay('wss://other.example/inbox'), isFalse);
+      expect(isInboxRelay('WSS://relay.bostr.online/'), isFalse);
+    });
+  });
+
+  group('isOutboxRelay', () {
+    test('every read relay is an outbox relay', () {
+      // The read-only bostr plain relay…
+      expect(isOutboxRelay('wss://relay.bostr.online'), isTrue);
+      expect(isOutboxRelay('WSS://relay.bostr.online/'), isTrue);
+      // …and every ordinary read+write relay are all outboxes too.
+      expect(isOutboxRelay('wss://relay.ditto.pub'), isTrue);
+      expect(isOutboxRelay('wss://relay.gulugulu.moe/'), isTrue);
     });
 
-    test('classification mirrors nip65RelayTags write markers', () {
-      const urls = [
-        'wss://relay.gulugulu.moe/',
-        'wss://relay.bostr.online/',
-        'wss://relay.bostr.online/inbox',
-        'wss://nostr.data.haus/',
-      ];
-      for (final u in urls) {
-        final tag = nip65RelayTags([u]).single;
-        expect(isInboxRelay(u), tag.length == 3 && tag[2] == 'write');
-      }
+    test('only the write-only bostr /inbox endpoint is NOT an outbox', () {
+      expect(isOutboxRelay('wss://relay.bostr.online/inbox'), isFalse);
+      expect(isOutboxRelay('WSS://relay.bostr.online/inbox/'), isFalse);
     });
+  });
+
+  test('inbox/outbox classification mirrors nip65RelayTags markers', () {
+    const urls = [
+      'wss://relay.gulugulu.moe/',
+      'wss://relay.bostr.online/',
+      'wss://relay.bostr.online/inbox',
+      'wss://nostr.data.haus/',
+    ];
+    for (final u in urls) {
+      final tag = nip65RelayTags([u]).single;
+      // Bare `r` tag (len 2) = read+write; a 3rd field narrows the role.
+      final hasRead = tag.length == 2 || tag[2] == 'read';
+      final hasWrite = tag.length == 2 || tag[2] == 'write';
+      expect(isOutboxRelay(u), hasRead, reason: 'outbox for $u');
+      expect(isInboxRelay(u), hasWrite, reason: 'inbox for $u');
+    }
   });
 }
