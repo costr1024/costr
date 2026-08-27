@@ -55,8 +55,14 @@ class NostrActions {
     String content, {
     List<List<String>> extraTags = const [],
     String relay = '',
+    String? root,
   }) {
-    final rootId = parent.rootEventId;
+    // [root] lets the caller supply a RESOLVED thread root (walked up the
+    // ancestor chain) instead of trusting the parent's own `root` marker —
+    // parents authored by clients that omit/corrupt the marker would
+    // otherwise make us tag the wrong root, hiding our reply from the true
+    // root's thread.
+    final rootId = root ?? parent.rootEventId;
     final tags = <List<String>>[
       ['e', rootId, relay, 'root'],
       ['e', parent.id, relay, 'reply'],

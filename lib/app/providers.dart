@@ -3397,6 +3397,24 @@ final threadAncestorsProvider = FutureProvider.family<List<Event>, String>((
     chain.insert(0, parent);
     cur = parent;
   }
+  // NIP-10 root marker trumps the replyTo walk. The walk can dead-end at an
+  // intermediate post that references the TRUE root only via a `mention`
+  // marker (its own replyToId is null) — the focused reply's `root` e tag
+  // still names the real thread root. Without honoring it the page threads
+  // under that intermediate post and fetches only its direct replies, so
+  // most of the conversation — including the user's own replies — never
+  // shows ("帖子链不完整、点进去看不到我的回复"). Prepend the declared root
+  // when the walk missed it.
+  final declaredRootId = focused.rootEventId;
+  if (declaredRootId != focused.id &&
+      !chain.any((e) => e.id == declaredRootId)) {
+    var declaredRoot = byId[declaredRootId];
+    if (declaredRoot == null) {
+      declaredRoot = await ref.read(eventByIdProvider(declaredRootId).future);
+      if (declaredRoot != null) byId[declaredRoot.id] = declaredRoot;
+    }
+    if (declaredRoot != null) chain.insert(0, declaredRoot);
+  }
   // Persist the whole chain to SQLite (regardless of author) so the user can
   // reply to any of these posts later. Fire-and-forget — must not delay the
   // chain display; the events are already in memory here.
@@ -5136,7 +5154,13 @@ List<ThreadedReply> threadReplies(List<Event> replies, String rootId) {
 /// previously viewed via [EventStoreNotifier.cacheThreadEvent]) instantly,
 /// then streams fresh relay replies in with a 250ms debounce. Resolves on the
 /// FIRST relay EOSE (not all) so a slow relay doesn't stall the list.
-final repliesProvider = StreamProvider.family<List<Event>, String>((
+///
+/// autoDispose: every visit to a thread refetches. The provider used to be
+/// cached forever once its one-shot load closed the stream, so a thread
+/// opened BEFORE a reply existed stayed frozen at the stale list no matter
+/// how often the user re-opened it ("无论如何也看不到回复"). SQLite makes the
+/// refetch instant; the relay phase stays bounded (~10s worst case).
+final repliesProvider = StreamProvider.autoDispose.family<List<Event>, String>((
   ref,
   eventId,
 ) async* {
@@ -5148,13 +5172,32 @@ final repliesProvider = StreamProvider.family<List<Event>, String>((
   // zero replies. An empty initial yield shows "暂无回复" for a split second
   // until live replies stream in — a brief flash, far better than an
   // eternal spinner.
+  //
+  // BFS over cached replies: direct replies to the root first, then expand
+  // the query set to the replies themselves. Two classes need the expansion:
+  // cached sub-thread replies, and — the "回复链里发的回复看不到" bug —
+  // replies whose NIP-10 root tag points at the WRONG ancestor (parent
+  // authored by a client that omitted the root marker, so the reply tagged
+  // that parent instead of the true root): they are only findable via their
+  // actual `e`-tag target, so a flat queryReplies(root) never sees them.
+  // Bounded to 100 queried ids so a huge cached thread can't fan out.
   final cache = ref.read(localCacheProvider).value;
   final merged = <String, Event>{}; // id -> event
   if (cache != null) {
     try {
-      for (final row in await cache.queryReplies(eventId)) {
-        final e = _cacheRowToEvent(row);
-        if (isReplyToEvent(e, eventId)) merged[e.id] = e;
+      final queue = <String>[eventId];
+      final queried = <String>{};
+      while (queue.isNotEmpty && queried.length < 100) {
+        final target = queue.removeAt(0);
+        if (!queried.add(target)) continue;
+        for (final row in await cache.queryReplies(target)) {
+          final e = _cacheRowToEvent(row);
+          if (merged.containsKey(e.id)) continue;
+          if (isReplyToEvent(e, target)) {
+            merged[e.id] = e;
+            queue.add(e.id);
+          }
+        }
       }
     } catch (_) {}
   }

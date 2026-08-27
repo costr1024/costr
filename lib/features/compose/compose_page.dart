@@ -905,12 +905,36 @@ class _ComposePageState extends ConsumerState<ComposePage>
       ];
       // Content already has attachment URLs (appended by _appendToEditor on
       // upload completion) — don't append again.
+      //
+      // NIP-10 root robustness: when the post we reply to is itself a reply,
+      // its OWN `root` marker may be missing or wrong (authored by a client
+      // that skipped it). Trusting parent.rootEventId blindly then tags our
+      // reply with the wrong root — the true root's thread never shows it:
+      // the local cache query and the relay `#e` REQ both match on the root
+      // id ("回复链里发的回复看不到" bug). Resolve the chain the SAME way the
+      // detail page does (shared threadAncestorsProvider → identical root →
+      // the post-send invalidate below also hits the exact provider key the
+      // open thread page watches). Bounded wait; on any miss fall back to the
+      // parent's own marker (the old behavior).
+      String? resolvedRootId;
+      if (widget.replyTo != null) {
+        try {
+          final chain = await ref
+              .read(threadAncestorsProvider(widget.replyTo!.id).future)
+              .timeout(const Duration(seconds: 4));
+          if (chain.isNotEmpty) resolvedRootId = chain.first.id;
+        } catch (_) {
+          // Lookup failed / timed out → parent's own marker below.
+        }
+        if (!mounted) return;
+      }
       final signed = widget.replyTo != null
           ? actions.reply(
               widget.replyTo!,
               text,
               extraTags: extraTags,
               relay: relayHintFor(ref, widget.replyTo!.pubkey) ?? '',
+              root: resolvedRootId,
             )
           : widget.quoteOf != null
           ? actions.quote(
@@ -965,10 +989,13 @@ class _ComposePageState extends ConsumerState<ComposePage>
           // under compose is usually the ROOT's thread view, which watches
           // repliesProvider(rootId); invalidating only the direct parent
           // left nested replies (replying to a reply) invisible until the
-          // user left and re-entered the thread.
+          // user left and re-entered the thread. resolvedRootId is the
+          // chain-walked true root — what the detail page actually watches
+          // when the parent's own root marker is missing/wrong.
           final replyTargets = <String>{
             widget.replyTo!.id,
             widget.replyTo!.rootEventId,
+            ?resolvedRootId,
           };
           for (final target in replyTargets) {
             ref.invalidate(repliesProvider(target));
