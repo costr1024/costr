@@ -10,7 +10,7 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **1.2.3** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.2.3/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.2.3** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.2.3/app-release.apk)（≈74 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
 > 当前为正式版（v1.2.3）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
@@ -455,6 +455,11 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
    帖子，链会从那里断掉，大部分回复（包括自己的）看不到；③线程每次打开都重新取数，
    不再停留在「打开过一次就再不更新」的旧列表；④正文里的 naddr 地址引用
    （`nostr:naddr1…`，通常是长文）渲染成引用样式卡片，点按进原文。
+5. **修复音频「无法加载 / 快进没反应」**——①音频改「边下边播」后，部分手机点播放
+   立刻显示「音频无法加载」（应用内一个本机端口被安卓默认的禁明文传输规则拦下），
+   现音频正常播放；②播放中 ±10 秒、拖进度条、倍速即时生效，此前要等整段缓冲完
+   才有反应；③个别流拿不到音频总时长时，进度条退化为只显示当前位置、总时长显 –:–，
+   控件不再失灵。
 
 **v1.2.2 相对 v1.2.1 的修复/新增**：
 1. **服务器节点页按 NIP-65 角色拆「发件箱/收件箱」两区**——此前收件箱区只含 `bostr/inbox`
