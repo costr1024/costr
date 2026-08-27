@@ -508,10 +508,12 @@ class RelayPool {
       Duration(seconds: 3),
     ],
     Duration perRoundTimeout = const Duration(seconds: 5),
+    Duration noProgressTimeout = const Duration(milliseconds: 1500),
   }) async {
     final expected = event.id;
     final delays = retryDelays;
     final perRound = perRoundTimeout;
+    final noProgress = noProgressTimeout;
 
     // NOTE: the optimistic local echo used to happen here (before any relay
     // accepted). It now happens ONLY on the success path (just before
@@ -525,7 +527,7 @@ class RelayPool {
     }
 
     for (var attempt = 0; attempt <= delays.length; attempt++) {
-      final round = _PublishRound(this, event, targets, perRound);
+      final round = _PublishRound(this, event, targets, perRound, noProgress);
       final verdicts = await round.early;
       final accepted = verdicts.values.where(_effectiveOk).toList();
       if (accepted.isNotEmpty) {
@@ -547,7 +549,7 @@ class RelayPool {
             }
           }
           if (missing.isNotEmpty) {
-            _backgroundRetryPublish(event, missing, delays, perRound);
+            _backgroundRetryPublish(event, missing, delays, perRound, noProgress);
           }
         }());
         // Echo locally ONLY now that at least one relay accepted — so the
@@ -581,7 +583,20 @@ class RelayPool {
       if (next.isEmpty) break; // all unrecoverable — no point retrying
       targets = next;
       if (attempt < delays.length) {
-        await Future.delayed(delays[attempt]);
+        // NIP-42: when the round failed PURELY on `auth-required` rejections,
+        // the AUTH handshake is already in flight (the pool answers a
+        // challenge the instant it lands) — one RTT is enough, so cap the
+        // foreground retry delay at 300ms instead of the full configured
+        // delay before re-sending (the «回复偶尔卡 1~2s» fix). It's a CAP,
+        // not an override: a shorter configured delay (e.g. in tests) is kept.
+        // Any non-auth verdict keeps the normal delay.
+        const authCap = Duration(milliseconds: 300);
+        final allAuth =
+            all.isNotEmpty && all.values.every(_isAuthRejection);
+        final delay = delays[attempt];
+        await Future.delayed(
+          allAuth && delay > authCap ? authCap : delay,
+        );
       }
     }
     return RelayOk(
@@ -614,6 +629,7 @@ class RelayPool {
     List<RelayConnection> relays,
     List<Duration> delays,
     Duration perRound,
+    Duration noProgress,
   ) {
     () async {
       var targets = relays;
@@ -625,7 +641,7 @@ class RelayPool {
         await Future.delayed(delays[attempt]);
         targets = targets.where((c) => c.isConnected).toList();
         if (targets.isEmpty) break;
-        final round = _PublishRound(this, event, targets, perRound);
+        final round = _PublishRound(this, event, targets, perRound, noProgress);
         final verdicts = await round.settled;
         final still = <RelayConnection>[];
         for (final c in targets) {
@@ -688,9 +704,12 @@ class RelayPool {
 /// verdicts into [verdicts].
 ///
 /// [early] resolves the moment the outcome is decided — the FIRST effective
-/// acceptance, every relay verdicted, or the per-round window elapsing — so
-/// the caller (the user's send button) never waits on the slowest relay (the
-/// «发帖要等 1～3s» fix). [settled] resolves when every relay has verdicted
+/// acceptance, every relay verdicted, a NO-PROGRESS settle (some relay
+/// rejected but none accepted, and silent relays would otherwise hold the
+/// round open for the full window), or the per-round window elapsing — so the
+/// caller (the user's send button) never waits on the slowest relay NOR on a
+/// connected-but-silent zombie relay (the «发帖要等 1～3s» / «回复偶尔卡几秒»
+/// fix). [settled] resolves when every relay has verdicted
 /// or the window elapsed: it keeps collecting AFTER [early] so a slower
 /// relay's genuine verdict still lands in the write statistics and decides
 /// whether that relay really needs a retry — instead of re-sending to every
@@ -704,10 +723,28 @@ class RelayPool {
 /// for NIP-42 `auth-required` rejections (a transient handshake retried
 /// automatically; only the post-auth verdict is a real sample).
 class _PublishRound {
-  _PublishRound(this._pool, this.event, this.relays, Duration perRound) {
+  _PublishRound(
+    this._pool,
+    this.event,
+    this.relays,
+    Duration perRound,
+    Duration noProgress,
+  ) {
     _pending = relays.map((c) => c.url).toSet();
     _sub = _pool.oks.listen(_onOk);
     _timer = Timer(perRound, _settle);
+    // No-progress settle: once SOME relay has verdicted (rejected / auth) but
+    // nobody has accepted within [noProgress], stop waiting on the SILENT
+    // relays and let publishAndWait retry. A connected-but-silent (zombie)
+    // relay otherwise keeps `_pending` non-empty so [early] rides out the
+    // FULL [perRound] window before any retry (the «回复偶尔卡几秒» fix).
+    // Retrying is safe: a merely-slow relay answers the re-send with
+    // `duplicate:` which [_effectiveOk] treats as success. Guarded by
+    // `verdicts.isNotEmpty` so the all-silent / all-slow cases still get the
+    // full window (nothing would be gained by settling earlier).
+    _noProgress = Timer(noProgress, () {
+      if (!_early.isCompleted && verdicts.isNotEmpty) _settle();
+    });
     for (final c in relays) {
       c.publish(event);
     }
@@ -721,6 +758,7 @@ class _PublishRound {
   final Completer<Map<String, RelayOk>> _settled = Completer();
   late final StreamSubscription<RelayOk> _sub;
   late final Timer _timer;
+  late final Timer _noProgress;
   late final Set<String> _pending;
 
   Future<Map<String, RelayOk>> get early => _early.future;
@@ -744,6 +782,7 @@ class _PublishRound {
 
   void _settle() {
     _timer.cancel();
+    _noProgress.cancel();
     _sub.cancel();
     if (!_early.isCompleted) _early.complete(Map.of(verdicts));
     if (!_settled.isCompleted) _settled.complete(Map.of(verdicts));

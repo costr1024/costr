@@ -69,6 +69,7 @@ class _SuccessPool extends RelayPool {
       Duration(seconds: 3),
     ],
     Duration perRoundTimeout = const Duration(seconds: 5),
+    Duration noProgressTimeout = const Duration(milliseconds: 1500),
   }) async => RelayOk(event.id, true, '');
 }
 

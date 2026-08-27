@@ -460,6 +460,86 @@ void main() {
       await pool.dispose();
     });
 
+    test(
+      'no-progress settle: reject + a silent relay does NOT wait the full '
+      'round window',
+      () async {
+        // The «回复偶尔卡几秒» root cause: a connected-but-silent relay keeps
+        // `_pending` non-empty, so `early` used to ride out the FULL
+        // per-round window before any retry. With the no-progress settle, as
+        // soon as one relay has verdicted (rejected) and none accepted, the
+        // round settles early and the silent relay is retried right away.
+        final rej = _FakeRelay('wss://rej');
+        final silent = _FakeRelay('wss://silent');
+        final pool = RelayPool([rej, silent]);
+        await pool.connect();
+        final ev = _event('np1');
+        final sw = Stopwatch()..start();
+        final fut = pool.publishAndWait(
+          ev,
+          retryDelays: const [Duration(milliseconds: 20)],
+          perRoundTimeout: const Duration(seconds: 5), // long window
+          noProgressTimeout: const Duration(milliseconds: 60), // short
+        );
+        await Future<void>.delayed(Duration.zero);
+        // Round 1: rej rejects (non-auth → unrecoverable), silent stays mute.
+        rej.emitOk(RelayOk(ev.id, false, 'rate-limited', url: 'wss://rej'));
+        // Wait until the retry round re-publishes to the silent relay — this
+        // must happen soon after the 60ms no-progress settle, NOT after the
+        // 5s window.
+        final deadline = DateTime.now().add(const Duration(seconds: 2));
+        while (silent.sent.where((m) => m[0] == 'EVENT').length < 2) {
+          if (DateTime.now().isAfter(deadline)) break;
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        silent.emitOk(RelayOk(ev.id, true, '', url: 'wss://silent'));
+        final ok = await fut;
+        sw.stop();
+        expect(ok.ok, isTrue);
+        // Finished far before the 5s per-round window → early settle worked.
+        expect(sw.elapsed, lessThan(const Duration(seconds: 2)));
+        // silent got round 1 + the retry round = 2 EVENTs.
+        expect(silent.sent.where((m) => m[0] == 'EVENT').length, 2);
+        await pool.dispose();
+      },
+    );
+
+    test(
+      'all-auth round retries after the short auth cap, not the long delay',
+      () async {
+        // The other «卡 1~2s» root cause: an all-auth round waited the FULL
+        // configured foreground delay (1s in prod) even though the AUTH
+        // handshake completes in ~1 RTT. Now the delay is capped at 300ms.
+        final a = _FakeRelay('wss://a');
+        final pool = RelayPool([a]);
+        await pool.connect();
+        final ev = _event('au1');
+        final sw = Stopwatch()..start();
+        final fut = pool.publishAndWait(
+          ev,
+          retryDelays: const [Duration(seconds: 3)], // long normal delay
+          perRoundTimeout: const Duration(seconds: 5),
+          noProgressTimeout: const Duration(seconds: 4),
+        );
+        await Future<void>.delayed(Duration.zero);
+        // Round 1: the single relay rejects with auth-required → all-auth.
+        a.emitOk(RelayOk(ev.id, false, 'auth-required', url: 'wss://a'));
+        // The retry must land ~300ms later (auth cap), not ~3s later.
+        final deadline = DateTime.now().add(const Duration(seconds: 2));
+        while (a.sent.where((m) => m[0] == 'EVENT').length < 2) {
+          if (DateTime.now().isAfter(deadline)) break;
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        sw.stop();
+        a.emitOk(RelayOk(ev.id, true, '', url: 'wss://a'));
+        final ok = await fut;
+        expect(ok.ok, isTrue);
+        expect(sw.elapsed, lessThan(const Duration(seconds: 2)));
+        expect(a.sent.where((m) => m[0] == 'EVENT').length, 2);
+        await pool.dispose();
+      },
+    );
+
     test('unrecoverable rejection → no retry (relay dropped)', () async {
       final a = _FakeRelay('wss://a');
       final pool = RelayPool([a]);

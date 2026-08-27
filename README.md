@@ -62,7 +62,7 @@ Costr 的设计原则写在其 [设计宪法](docs/DESIGN.md) 里，核心可归
 | 大陆可达 | 默认中继含 `damus.bostr.online` 反代便于直连；NIP-42 AUTH 已支持 | 默认中继常被墙 |
 | 关注流拉取 | 按每个 followee 的 NIP-65 outbox 定向拉取（分组、30 上限、回落广播） | 多为广播到默认中继 |
 | 单用户主页 | outbox 定向拉取（`fetchFromUrls` + `since` 增量） | 类似 outbox 路由 |
-| 发布可靠性 | per-relay 1s/2s/3s 重试 + 全失败存草稿跨会话补发 | 多为单次广播 |
+| 发布可靠性 | per-relay 1s/2s/3s 重试 + 全失败存草稿跨会话补发；**auth 轮与「无进展」轮提前收敛**，发送/回复不再偶发卡几秒 | 多为单次广播 |
 | 自定义表情/打闪 | NIP-30 + NIP-57 Zap（中文文案：打闪 / 聪） | 视客户端而定 |
 | 本地缓存 | drift/SQLite，社交图谱 gated 持久化 + 30 天清理 | 各有缓存策略 |
 | 代码库 | Flutter 单码库五端 | Android 原生 / Flutter / Web 各异 |
