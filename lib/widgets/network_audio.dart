@@ -27,8 +27,7 @@ import '../app/theme.dart';
 import '../services/link_preview.dart' show displayDomain;
 import '../utils/format.dart';
 import 'proxied_network_image.dart' show proxiedUrl;
-import 'video_controls.dart'
-    show clampSeek, showSpeedPickerSheet, shareMediaUrl;
+import 'video_controls.dart' show showSpeedPickerSheet, shareMediaUrl;
 
 /// Number of bars in the synthetic waveform (Amethyst uses 96).
 const int kAudioWaveformBars = 96;
@@ -143,11 +142,15 @@ class _NetworkAudioState extends State<NetworkAudio> {
   AudioPlayer? _player;
   StreamSubscription<PlayerState>? _stateSub;
   StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration?>? _durationSub;
 
   _AudioPhase _phase = _AudioPhase.idle;
   bool _playing = false;
   bool _buffering = false;
   Duration _position = Duration.zero;
+  // Zero = source length unknown (proxied/VBR streams may never report one).
+  // Every control degrades gracefully instead of dividing by it: slider
+  // disabled, total shows –:–, ±10s stops clamping at the (unknown) top.
   Duration _duration = Duration.zero;
   double _speed = 1.0;
 
@@ -194,8 +197,10 @@ class _NetworkAudioState extends State<NetworkAudio> {
   void _teardown() {
     _stateSub?.cancel();
     _positionSub?.cancel();
+    _durationSub?.cancel();
     _stateSub = null;
     _positionSub = null;
+    _durationSub = null;
     _player?.dispose();
     _player = null;
     _playing = false;
@@ -254,12 +259,19 @@ class _NetworkAudioState extends State<NetworkAudio> {
     _positionSub = p.positionStream.listen((d) {
       if (mounted) setState(() => _position = d);
     });
+    // Some sources (proxied streams, VBR mpga without a length header) never
+    // resolve duration at setUrl time but report it later — track it live.
+    _durationSub = p.durationStream.listen((d) {
+      if (mounted && d != null && d > Duration.zero) {
+        setState(() => _duration = d);
+      }
+    });
     final effectiveUrl = widget.forceProxy
         ? proxiedUrl(widget.url)
         : widget.url;
     try {
       // preload: true (default) — duration is known when the future settles.
-      await p.setUrl(effectiveUrl);
+      await p.setUrl(effectiveUrl).timeout(const Duration(seconds: 20));
       await p.setSpeed(_speed);
       _AudioCoordinator.instance.exclusivePlay(this);
       await p.play();
@@ -285,12 +297,19 @@ class _NetworkAudioState extends State<NetworkAudio> {
   void _step(int seconds) {
     final p = _player;
     if (p == null || _phase != _AudioPhase.ready) return;
-    p.seek(clampSeek(_scrubPos ?? _position, seconds, _duration));
+    final cur = _scrubPos ?? _position;
+    var next = cur + Duration(seconds: seconds);
+    if (next < Duration.zero) next = Duration.zero;
+    // Unknown length → no top clamp (clampSeek would collapse everything to
+    // 0 and read as "快进快退没反应").
+    if (_duration > Duration.zero && next > _duration) next = _duration;
+    p.seek(next);
   }
 
   void _scrubStart(double millis) {
     final p = _player;
     if (p == null || _phase != _AudioPhase.ready) return;
+    if (_duration <= Duration.zero) return; // unknown length → nothing to map
     _wasPlaying = p.playing;
     if (_wasPlaying) p.pause();
     setState(() => _scrubPos = Duration(milliseconds: millis.round()));
@@ -298,12 +317,14 @@ class _NetworkAudioState extends State<NetworkAudio> {
 
   void _scrubTo(double millis) {
     if (_phase != _AudioPhase.ready) return;
+    if (_duration <= Duration.zero) return; // unknown length → nothing to map
     setState(() => _scrubPos = Duration(milliseconds: millis.round()));
   }
 
   void _scrubEnd(double millis) {
     final p = _player;
     if (p == null || _phase != _AudioPhase.ready) return;
+    if (_duration <= Duration.zero) return; // unknown length → nothing to map
     p.seek(Duration(milliseconds: millis.round()));
     if (_wasPlaying) {
       _AudioCoordinator.instance.exclusivePlay(this);
@@ -351,8 +372,9 @@ class _NetworkAudioState extends State<NetworkAudio> {
     final busy = !_playing &&
         (_phase == _AudioPhase.loading || (ready && _buffering));
     final displayPos = _scrubPos ?? _position;
+    final knownLength = _duration > Duration.zero;
     final totalMs = _duration.inMilliseconds.toDouble();
-    final progress = _duration > Duration.zero
+    final progress = knownLength
         ? (displayPos.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
         : 0.0;
 
@@ -415,7 +437,11 @@ class _NetworkAudioState extends State<NetworkAudio> {
           ),
           // Seek row: a real, tappable slider (the waveform shows progress;
           // the slider IS the scrubber — waveform-only gestures tested as
-          // invisible/unresponsive).
+          // invisible/unresponsive). Length UNKNOWN (proxied/VBR streams may
+          // never report one) → the slider can't map position↔fraction, so
+          // it degrades to a disabled position indicator and the total reads
+          // –:–; ±10s still works (no top clamp) so playback stays
+          // controllable.
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Row(
@@ -425,31 +451,39 @@ class _NetworkAudioState extends State<NetworkAudio> {
                   style: TextStyle(fontSize: 11, color: colors.text3),
                 ),
                 Expanded(
-                  child: SliderTheme(
-                    data: SliderThemeData(
-                      trackHeight: 3,
-                      activeTrackColor: colors.brand,
-                      inactiveTrackColor: colors.text3.withValues(alpha: 0.3),
-                      thumbColor: colors.brand,
-                      overlayShape: SliderComponentShape.noOverlay,
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 5,
+                  child: IgnorePointer(
+                    ignoring: !knownLength,
+                    child: Opacity(
+                      opacity: knownLength ? 1 : 0.4,
+                      child: SliderTheme(
+                        data: SliderThemeData(
+                          trackHeight: 3,
+                          activeTrackColor: colors.brand,
+                          inactiveTrackColor: colors.text3.withValues(
+                            alpha: 0.3,
+                          ),
+                          thumbColor: colors.brand,
+                          overlayShape: SliderComponentShape.noOverlay,
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 5,
+                          ),
+                        ),
+                        child: Slider(
+                          value: displayPos.inMilliseconds
+                              .toDouble()
+                              .clamp(0, knownLength ? totalMs : 1),
+                          min: 0,
+                          max: knownLength ? totalMs : 1,
+                          onChangeStart: _scrubStart,
+                          onChanged: _scrubTo,
+                          onChangeEnd: _scrubEnd,
+                        ),
                       ),
-                    ),
-                    child: Slider(
-                      value: displayPos.inMilliseconds
-                          .toDouble()
-                          .clamp(0, totalMs > 0 ? totalMs : 1),
-                      min: 0,
-                      max: totalMs > 0 ? totalMs : 1,
-                      onChangeStart: _scrubStart,
-                      onChanged: _scrubTo,
-                      onChangeEnd: _scrubEnd,
                     ),
                   ),
                 ),
                 Text(
-                  formatDuration(_duration),
+                  knownLength ? formatDuration(_duration) : '–:–',
                   style: TextStyle(fontSize: 11, color: colors.text3),
                 ),
               ],
