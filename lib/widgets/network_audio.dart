@@ -270,8 +270,19 @@ class _NetworkAudioState extends State<NetworkAudio> {
         ? proxiedUrl(widget.url)
         : widget.url;
     try {
-      // preload: true (default) — duration is known when the future settles.
-      await p.setUrl(effectiveUrl).timeout(const Duration(seconds: 20));
+      // Stream through a local cache file (LockCachingAudioSource) instead
+      // of pure progressive streaming. Progressive MP3 (esp. VBR .mpga)
+      // reports no usable duration and refuses seeks until the whole body is
+      // buffered ("无法快进/倍速/跳转，缓存好了才正常"); the caching source
+      // learns the length from the download headers and serves seeks from the
+      // local file while it still downloads.
+      // The only just_audio source that makes streaming audio seekable;
+      // stable across the 0.9–0.10 releases.
+      // ignore: experimental_member_use
+      final source = LockCachingAudioSource(Uri.parse(effectiveUrl));
+      await p
+          .setAudioSource(source)
+          .timeout(const Duration(seconds: 20));
       await p.setSpeed(_speed);
       _AudioCoordinator.instance.exclusivePlay(this);
       await p.play();
