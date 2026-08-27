@@ -1,7 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- networkSecurityConfig：仅对 127.0.0.1 放行明文——just_audio 的缓存
+         音频源经应用内 127.0.0.1 本地代理供流，Android 9+ 默认禁明文会把
+         它一并拦下，音频点播放即报「无法加载」。对外连接仍全为 HTTPS。 -->
     <application
         android:label="Costr"
         android:name="${applicationName}"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

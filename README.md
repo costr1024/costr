@@ -26,6 +26,12 @@
 > release 包曾缺 `INTERNET` 权限（仅 debug 变体声明），导致 release 连不上中继——
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
+>
+> 帖子音频「边下边播、可随时快进」的实现，会经由应用自己的本机端口（127.0.0.1）
+> 把音频流转给播放器；Android 9+ 默认禁止明文传输，连这个本机端口也会拦下，导致
+> 部分手机上点播放立刻显示「音频无法加载」。已加网络安全策略
+> （`network_security_config.xml`）：只对 127.0.0.1 放行明文，对外连接不受影响、
+> 仍全为 HTTPS。
 
 > 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / v1.1.7 正式版 / v1.2.0 正式版 / v1.2.1 正式版 / v1.2.2 正式版 / **v1.2.3 正式版**。
 

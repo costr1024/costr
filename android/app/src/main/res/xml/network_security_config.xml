@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- just_audio 的缓存音频源（LockCachingAudioSource，帖子音频「边下边播、
+     随时快进」所用）通过应用内建的 http://127.0.0.1 本地代理向播放器供流。
+     Android 9+ 默认禁止明文 HTTP，会连同这个本机回环地址一起拦下，导致
+     点播放立即报「音频无法加载」。此处仅对回环地址放行明文；对外连接
+     （中继/媒体/代理镜像）不受影响，仍为清一色 HTTPS。
+     配置方式即 just_audio README 的推荐做法。 -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
