@@ -8,10 +8,10 @@
 /// the server's own `content-type`, so [inspectUrl] does ONE bounded streaming
 /// GET and branches on the response headers:
 ///
-/// - `image/*` / `video/*` → [UrlImage] / [UrlVideo] — the body is cancelled
-///   right after the headers; not a single byte of the media itself is
-///   downloaded here (the image/video widgets do the real loading, with disk
-///   caching).
+/// - `image/*` / `video/*` / `audio/*` → [UrlImage] / [UrlVideo] /
+///   [UrlAudio] — the body is cancelled right after the headers; not a
+///   single byte of the media itself is downloaded here (the image/video/
+///   audio widgets do the real loading, with disk caching).
 /// - `text/html` → read at most ~128KB of the body (stopping early at
 ///   `</head>` — og: tags live in the head), parse Open Graph metadata via
 ///   [parseLinkPreview] → [UrlWebpage].
@@ -37,8 +37,8 @@ sealed class UrlInspection {
   const UrlInspection();
 }
 
-/// Not an image/video/html page, or the probe failed — the URL stays a plain
-/// clickable link.
+/// Not an image/video/audio/html page, or the probe failed — the URL stays a
+/// plain clickable link.
 class UrlNone extends UrlInspection {
   const UrlNone();
 }
@@ -54,6 +54,12 @@ class UrlImage extends UrlInspection {
 /// The server serves a video — render a player.
 class UrlVideo extends UrlInspection {
   const UrlVideo(this.url);
+  final String url;
+}
+
+/// The server serves audio — render an inline audio player.
+class UrlAudio extends UrlInspection {
+  const UrlAudio(this.url);
   final String url;
 }
 
@@ -93,7 +99,7 @@ class LinkPreview {
 }
 
 /// Coarse response body class for [classifyContentType].
-enum UrlContentKind { image, video, html, other }
+enum UrlContentKind { image, video, audio, html, other }
 
 // --- pure helpers (unit-tested, no I/O) -------------------------------------
 
@@ -108,6 +114,7 @@ UrlContentKind classifyContentType(String? contentType) {
       .toLowerCase();
   if (t.startsWith('image/')) return UrlContentKind.image;
   if (t.startsWith('video/')) return UrlContentKind.video;
+  if (t.startsWith('audio/')) return UrlContentKind.audio;
   if (t == 'text/html' || t == 'application/xhtml+xml') {
     return UrlContentKind.html;
   }
@@ -368,8 +375,13 @@ const Set<String> _kHandledExts = {
   '.txt',
   '.md',
   '.mp3',
+  '.m4a',
+  '.aac',
   '.wav',
   '.ogg',
+  '.oga',
+  '.opus',
+  '.flac',
 };
 
 final RegExp _kHttpUrlRe = RegExp(r'https?://[^\s]+');
@@ -418,9 +430,10 @@ const String _kProbeUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
     '(KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
-/// Probe [url] once and classify it: image / video / webpage (+ parsed Open
-/// Graph metadata) / none. NEVER throws — every failure becomes [UrlNone] so
-/// the caller's fallback (plain clickable link) always holds.
+/// Probe [url] once and classify it: image / video / audio / webpage
+/// (+ parsed Open Graph metadata) / none. NEVER throws — every failure
+/// becomes [UrlNone] so the caller's fallback (plain clickable link) always
+/// holds.
 ///
 /// Bounds: [timeout] per request, ≤[maxRedirects] hops (re-guarded for
 /// scheme + private hosts each hop), HTML bodies read up to [maxBodyBytes]
@@ -478,6 +491,9 @@ Future<UrlInspection> inspectUrl(
         case UrlContentKind.video:
           await _cancelBody(res);
           return UrlVideo(url);
+        case UrlContentKind.audio:
+          await _cancelBody(res);
+          return UrlAudio(url);
         case UrlContentKind.html:
           final html = await _readHeadHtml(res, maxBodyBytes, timeout);
           return UrlWebpage(parseLinkPreview(html, current, sourceUrl: url));

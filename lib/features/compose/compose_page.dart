@@ -91,7 +91,7 @@ class _Attachment {
   final String sha256;
   final String mime;
   final String name;
-  final String kind; // 'image' | 'video' | 'file'
+  final String kind; // 'image' | 'video' | 'audio' | 'file'
 }
 
 class _ComposePageState extends ConsumerState<ComposePage>
@@ -197,7 +197,11 @@ class _ComposePageState extends ConsumerState<ComposePage>
   static const int _maxFileBytes = 100 * 1024 * 1024;
 
   bool get _hasImages => _attachments.any((a) => a.kind == 'image');
-  bool get _hasVideo => _attachments.any((a) => a.kind == 'video');
+
+  /// A video OR audio media attachment occupies the single media slot —
+  /// neither mixes with images, and only one media item is allowed.
+  bool get _hasAV =>
+      _attachments.any((a) => a.kind == 'video' || a.kind == 'audio');
 
   @override
   void initState() {
@@ -428,8 +432,15 @@ class _ComposePageState extends ConsumerState<ComposePage>
   }
 
   Future<void> _pickImages() async {
-    if (_hasVideo) {
-      _snack('已添加视频，不能与图片混合');
+    // In-flight uploads haven't landed in _attachments yet, so the cap count
+    // below is stale while a batch uploads — block new picks until the batch
+    // settles (otherwise picking again mid-upload overshoots the 9-image cap).
+    if (_uploading) {
+      _snack('媒体上传中，请稍候');
+      return;
+    }
+    if (_hasAV) {
+      _snack('已添加音视频，不能与图片混合');
       return;
     }
     final identity = ref.read(identityProvider).value;
@@ -512,27 +523,52 @@ class _ComposePageState extends ConsumerState<ComposePage>
     }
   }
 
-  Future<void> _pickVideo() async {
-    if (_hasImages) {
-      _snack('已添加图片，不能与视频混合');
+  /// The 「音视频」 entry: one media slot for a video OR an audio file.
+  /// [FileType.custom] with an explicit extension list — there is no
+  /// combined video+audio picker type. The attachment kind follows the
+  /// upload's MIME so the rendered post gets an inline player (audio/*)
+  /// or a video player (video/*).
+  Future<void> _pickMedia() async {
+    // Same stale-count guard as _pickImages: _hasAV flips only after the
+    // upload lands, so without this a quick double-tap attaches two media.
+    if (_uploading) {
+      _snack('媒体上传中，请稍候');
       return;
     }
-    if (_hasVideo) return;
+    if (_hasImages) {
+      _snack('已添加图片，不能与音视频混合');
+      return;
+    }
+    if (_hasAV) return;
     final identity = ref.read(identityProvider).value;
     if (identity == null) return;
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.video,
+      type: FileType.custom,
+      allowedExtensions: const [
+        // video
+        'mp4', 'webm', 'mov', 'm4v', 'mkv',
+        // audio
+        'mp3', 'm4a', 'aac', 'wav', 'ogg', 'oga', 'opus', 'flac',
+      ],
       withData: true,
     );
     if (result == null || result.files.isEmpty) return;
     final f = result.files.single;
-    if (f.size > _maxVideoBytes) {
-      _snack('视频超过 100MB');
-      return;
-    }
     final bytes = _bytesOf(f);
     if (bytes == null) return;
     final mime = mimeForExt(f.extension ?? f.name);
+    // Some ROM file managers ignore the extension filter in the picker UI
+    // and let the user tap an image/text file: reject anything that isn't
+    // actually video or audio instead of uploading it under the wrong kind.
+    if (!mime.startsWith('video/') && !mime.startsWith('audio/')) {
+      _snack('请选择视频或音频文件');
+      return;
+    }
+    if (f.size > _maxVideoBytes) {
+      _snack('音视频超过 100MB');
+      return;
+    }
+    final isAudio = mime.startsWith('audio/');
     final servers = await currentBlossomServers(ref);
     if (!mounted) return;
     _uploadStarted();
@@ -542,7 +578,7 @@ class _ComposePageState extends ConsumerState<ComposePage>
         identity,
         bytes,
         mimetype: mime,
-        note: 'costr video',
+        note: isAudio ? 'costr audio' : 'costr video',
         servers: servers,
       );
     } finally {
@@ -555,18 +591,22 @@ class _ComposePageState extends ConsumerState<ComposePage>
         sha256: res.sha256,
         mime: mime,
         name: f.name,
-        kind: 'video',
+        kind: isAudio ? 'audio' : 'video',
       );
       setState(() {
         _attachments.add(att);
         _appendToEditor(att);
       });
     } else {
-      _snack('视频上传失败');
+      _snack('音视频上传失败');
     }
   }
 
   Future<void> _pickFile() async {
+    if (_uploading) {
+      _snack('媒体上传中，请稍候');
+      return;
+    }
     if (_attachments.where((a) => a.kind == 'file').length >= _maxFiles) {
       _snack('最多 $_maxFiles 个附件');
       return;
@@ -574,18 +614,31 @@ class _ComposePageState extends ConsumerState<ComposePage>
     final identity = ref.read(identityProvider).value;
     if (identity == null) return;
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
+      // Only the remaining SUPPORTED upload formats (see mimeForExt) —
+      // images go through 图片, video/audio through 音视频, so this entry
+      // whitelists everything else the MIME map knows about.
+      type: FileType.custom,
+      allowedExtensions: const ['pdf', 'zip', 'txt', 'md'],
       withData: true,
     );
     if (result == null || result.files.isEmpty) return;
     final f = result.files.single;
+    final mime = mimeForExt(f.extension ?? f.name);
+    // ROM pickers that ignore the whitelist can still hand back an
+    // image/video/audio file — route the user to the right entry instead of
+    // uploading under the wrong kind.
+    if (mime.startsWith('image/') ||
+        mime.startsWith('video/') ||
+        mime.startsWith('audio/')) {
+      _snack('图片请用「图片」入口，音视频请用「音视频」入口');
+      return;
+    }
     if (f.size > _maxFileBytes) {
       _snack('附件超过 100MB');
       return;
     }
     final bytes = _bytesOf(f);
     if (bytes == null) return;
-    final mime = mimeForExt(f.extension ?? f.name);
     final servers = await currentBlossomServers(ref);
     if (!mounted) return;
     _uploadStarted();
@@ -640,8 +693,11 @@ class _ComposePageState extends ConsumerState<ComposePage>
     if (identity == null) return;
     final mime = content.mimeType;
     if (!mime.startsWith('image/')) return; // GIF / sticker images only
-    if (_hasVideo) {
-      _snack('已添加视频，不能与图片混合');
+    // Mid-upload the image-count cap is stale — drop the insertion rather
+    // than overshoot the cap (keyboard stickers are opportunistic anyway).
+    if (_uploading) return;
+    if (_hasAV) {
+      _snack('已添加音视频，不能与图片混合');
       return;
     }
     final current = _attachments.where((a) => a.kind == 'image').length;
@@ -1035,17 +1091,17 @@ class _ComposePageState extends ConsumerState<ComposePage>
                 _AttachBtn(
                   icon: Icons.image_outlined,
                   label: '图片',
-                  onPressed: _hasVideo ? null : _pickImages,
+                  onPressed: (_uploading || _hasAV) ? null : _pickImages,
                 ),
                 _AttachBtn(
                   icon: Icons.movie_outlined,
-                  label: '视频',
-                  onPressed: _hasImages ? null : _pickVideo,
+                  label: '音视频',
+                  onPressed: (_uploading || _hasImages) ? null : _pickMedia,
                 ),
                 _AttachBtn(
                   icon: Icons.attach_file,
                   label: '文件',
-                  onPressed: _pickFile,
+                  onPressed: _uploading ? null : _pickFile,
                 ),
                 const Spacer(),
                 FilterChip(
@@ -1149,7 +1205,11 @@ class _AttachmentGrid extends StatelessWidget {
       child: Row(
         children: [
           Icon(
-            a.kind == 'video' ? Icons.movie : Icons.insert_drive_file_outlined,
+            a.kind == 'video'
+                ? Icons.movie
+                : a.kind == 'audio'
+                ? Icons.music_note_rounded
+                : Icons.insert_drive_file_outlined,
             size: 20,
           ),
           const SizedBox(width: 6),

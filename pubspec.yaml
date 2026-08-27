@@ -62,6 +62,14 @@ dependencies:
   markdown: ^7.3.1
   # Inline video playback (network) for video media in posts.
   video_player: ^2.13.0
+  # Inline audio playback (network) for audio media in posts. video_player is
+  # NOT an option here: it officially does not support audio-only streams
+  # (on iOS `initialized` never fires for an audio-only source — flutter#75636),
+  # so audio gets the dedicated engine (ExoPlayer / AVPlayer backends, same as
+  # video). Native implementations ship for Android/iOS/macOS; Windows/Linux
+  # have no registered backend (parity with video there) and callers fall back
+  # to the download chip.
+  just_audio: ^0.10.6
   # Editable text with inline widget spans — used by the composer to render
   # @-mention chips over bare `nostr:nprofile1…` entities (Amethyst UX).
   # 17.0.0 is built against Flutter 3.44.0 (matches our stable line).

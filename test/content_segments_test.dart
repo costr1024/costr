@@ -242,4 +242,71 @@ void main() {
       expect(stripped.replaceAll(RegExp(r'\s+'), ' ').trim(), 'a b');
     });
   });
+
+  group('audio media', () {
+    test('bare mp3 URL → AudioSeg', () {
+      final segs = tokenizeContent('listen https://x/a.mp3 now');
+      expect(segs.length, 3);
+      expect(segs[0], isA<TextSeg>());
+      expect(segs[1], isA<AudioSeg>());
+      expect((segs[1] as AudioSeg).url, 'https://x/a.mp3');
+      expect(segs[2], isA<TextSeg>());
+    });
+
+    test('audio extensions cover m4a/aac/wav/ogg/oga/opus/flac', () {
+      for (final ext in const [
+        'm4a',
+        'aac',
+        'wav',
+        'ogg',
+        'oga',
+        'opus',
+        'flac',
+      ]) {
+        final segs = tokenizeContent('https://x/a.$ext');
+        expect(segs.single, isA<AudioSeg>(), reason: ext);
+      }
+    });
+
+    test('bare audio URL keeps its full ?query (signed CDN shape)', () {
+      const url = 'https://x/a.mp3?sign=abc&t=1';
+      final segs = tokenizeContent(url);
+      expect((segs.single as AudioSeg).url, url);
+    });
+
+    test('audio between images breaks the group (like video)', () {
+      final segs = tokenizeContent(
+        '![](https://x/a.jpg)\nhttps://x/v.mp3\n![](https://x/b.jpg)',
+      );
+      expect(segs.length, 3);
+      expect(segs[0], isA<ImageGroupSeg>());
+      expect(segs[1], isA<AudioSeg>());
+      expect(segs[2], isA<ImageGroupSeg>());
+    });
+
+    test('markdown link to an audio URL stays a text link', () {
+      final segs = tokenizeContent('click [song](https://x/a.mp3) here');
+      expect(segs.length, 1);
+      expect(segs[0], isA<TextSeg>());
+    });
+
+    test('tag-declared audio without extension → AudioSeg (voice note)', () {
+      const url = 'https://x/stream?id=1';
+      final segs = tokenizeContent(
+        'voice note\n$url',
+        tagged: const [MediaAttachment(url: url, mimeType: 'audio/mpeg')],
+      );
+      expect(segs.whereType<AudioSeg>().map((s) => s.url), [url]);
+      for (final s in segs.whereType<TextSeg>()) {
+        expect(s.text.contains('stream?id'), isFalse);
+      }
+    });
+
+    test('stripBareMediaUrls strips the new audio extensions', () {
+      final stripped = stripBareMediaUrls(
+        'a https://x/f.m4a b https://x/g.flac c https://x/h.opus d',
+      );
+      expect(stripped.replaceAll(RegExp(r'\s+'), ' ').trim(), 'a b c d');
+    });
+  });
 }

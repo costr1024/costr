@@ -27,21 +27,25 @@ Duration clampSeek(Duration current, int deltaSeconds, Duration total) {
   return next;
 }
 
-/// Shares a raw video URL through the native share sheet; on desktop
+/// Shares a raw media URL through the native share sheet; on desktop
 /// platforms where share_plus is unavailable, falls back to copying the
-/// link (same pattern as the post share action).
-Future<void> shareVideoUrl(BuildContext context, String url) async {
+/// link (same pattern as the post share action). Shared by the video
+/// controls and the inline audio player ([subject]/[copiedMessage] carry
+/// the medium-specific wording).
+Future<void> shareMediaUrl(
+  BuildContext context,
+  String url, {
+  String subject = 'Costr 视频',
+  String copiedMessage = '已复制视频链接',
+}) async {
   try {
-    await SharePlus.instance.share(ShareParams(text: url, subject: 'Costr 视频'));
+    await SharePlus.instance.share(ShareParams(text: url, subject: subject));
   } catch (_) {
     try {
       await Clipboard.setData(ClipboardData(text: url));
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('已复制视频链接'),
-            duration: Duration(seconds: 2),
-          ),
+          SnackBar(content: Text(copiedMessage), duration: const Duration(seconds: 2)),
         );
       }
     } catch (_) {
@@ -307,7 +311,7 @@ class _VideoControlsOverlayState extends State<VideoControlsOverlay> {
                             icon: Icons.share_outlined,
                             size: 16,
                             onTap: () =>
-                                shareVideoUrl(context, widget.shareUrl),
+                                shareMediaUrl(context, widget.shareUrl),
                           ),
                           const SizedBox(width: 6),
                           if (widget.onEnterFullscreen != null)
@@ -334,7 +338,7 @@ class _VideoControlsOverlayState extends State<VideoControlsOverlay> {
                               icon: Icons.share_outlined,
                               size: 22,
                               onTap: () =>
-                                  shareVideoUrl(context, widget.shareUrl),
+                                  shareMediaUrl(context, widget.shareUrl),
                             ),
                             const SizedBox(width: 8),
                             _CircleChip(

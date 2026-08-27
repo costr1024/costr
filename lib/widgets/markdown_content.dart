@@ -6,10 +6,13 @@
 ///   image renders full-width (not gridded).
 /// - Videos (`![](video.mp4)` or imeta `m video/*`) render full-width via
 ///   video_player.
+/// - Audio (bare `….mp3/…` URLs, imeta `m audio/*`) renders as an inline
+///   player ([NetworkAudio], Amethyst-style waveform card).
 /// - NIP-92 imeta media not already in the content is appended below; its
-///   images are gridded together, videos full-width.
+///   images are gridded together, videos full-width, audio as players.
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,6 +30,7 @@ import '../services/media_download.dart';
 import 'avatar.dart';
 import 'display_name.dart';
 import 'media_viewer_page.dart';
+import 'network_audio.dart';
 import 'proxied_network_image.dart';
 import 'mention_linkifier.dart';
 import 'network_video.dart';
@@ -81,32 +85,32 @@ String preserveBlankLines(String s) {
   return out.join('\n');
 }
 
-/// Bare media URLs in content (image/video/file extensions) — stripped from
-/// text segments so they don't show as plain text; rendered via imeta extra
-/// or, for image/video, by [tokenizeContent] below. Negative lookbehind on
-/// `](` keeps it from matching the URL inside a markdown link/image
-/// `](url)`, so `[text](x.jpg)` links aren't broken. The trailing
+/// Bare media URLs in content (image/video/audio/file extensions) — stripped
+/// from text segments so they don't show as plain text; rendered via imeta
+/// extra or, for image/video/audio, by [tokenizeContent] below. Negative
+/// lookbehind on `](` keeps it from matching the URL inside a markdown
+/// link/image `](url)`, so `[text](x.jpg)` links aren't broken. The trailing
 /// `[?#]…` group keeps query/fragment WITH the URL — signed CDN links like
 /// `…/x.mp4?sign=…&t=…` must strip whole; without it the match ended at
 /// `.mp4` and left an orphan `?sign=…` behind.
 final RegExp _bareMediaUrl = RegExp(
-  r'(?<!\]\()https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|pdf|zip|txt|md|mp3|wav|ogg)(?:[?#][^\s)]*)?',
+  r'(?<!\]\()https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|pdf|zip|txt|md|mp3|m4a|aac|wav|ogg|oga|opus|flac)(?:[?#][^\s)]*)?',
 );
 
 /// Strip bare media/file URLs from [text]. Public wrapper so the strip
 /// regex is unit-testable ([_bareMediaUrl] is private).
 String stripBareMediaUrls(String text) => text.replaceAll(_bareMediaUrl, '');
 
-/// Combined media token: a markdown image `![alt](url)` OR a bare image/video
-/// URL. Group 1+2 = markdown image alt + url; group 3 = bare url (including
-/// any `?query`/`#fragment` — signed CDN links like `…/x.mp4?sign=…&t=…`
-/// must stay whole or the player gets a dead truncated URL). The bare
-/// alternative's negative lookbehind `(?<!\]\()` prevents it from matching the
-/// URL inside `![](url)` or `[text](url)`, so only genuinely bare media URLs
-/// are extracted as images.
+/// Combined media token: a markdown image `![alt](url)` OR a bare
+/// image/video/audio URL. Group 1+2 = markdown image alt + url; group 3 =
+/// bare url (including any `?query`/`#fragment` — signed CDN links like
+/// `…/x.mp4?sign=…&t=…` must stay whole or the player gets a dead truncated
+/// URL). The bare alternative's negative lookbehind `(?<!\]\()` prevents it
+/// from matching the URL inside `![](url)` or `[text](url)`, so only
+/// genuinely bare media URLs are extracted as media.
 const _mdImagePattern = r'!\[([^\]]*)\]\(([^)\s]+)\)';
 const _bareMediaPattern =
-    r'(?<!\]\()(https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv)(?:[?#][^\s)]*)?)';
+    r'(?<!\]\()(https?://[^\s)]+\.(?:jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mkv|mp3|m4a|aac|wav|ogg|oga|opus|flac)(?:[?#][^\s)]*)?)';
 final RegExp _mediaTokenRegex = RegExp(
   '$_mdImagePattern|$_bareMediaPattern',
   caseSensitive: false,
@@ -303,6 +307,8 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
           previewTagged.add(MediaAttachment(url: url, mimeType: 'image/jpeg'));
         case UrlVideo(:final url):
           previewTagged.add(MediaAttachment(url: url, mimeType: 'video/mp4'));
+        case UrlAudio(:final url):
+          previewTagged.add(MediaAttachment(url: url, mimeType: 'audio/mpeg'));
         case UrlWebpage(:final preview):
           previewCards.add((cand, preview));
         case UrlNone() || null:
@@ -402,15 +408,17 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
         children.add(_ImageGrid(urls: seg.urls, proxyMedia: widget.proxyMedia));
       } else if (seg is SingleVideoSeg) {
         children.add(NetworkVideo(url: seg.url, forceProxy: widget.proxyMedia));
+      } else if (seg is AudioSeg) {
+        children.add(_audioWidget(seg.url));
       }
     }
 
     // 3. Append NIP-92 imeta / `["image",...]` media whose URL is NOT already
     // rendered from the content. [tokenizeContent] now extracts both markdown
-    // `![](url)` and bare image/video URLs into image groups, so any media URL
-    // that appears in the content has already been rendered — skip it to avoid
-    // duplication. Media whose URL is absent from the content (pure imeta
-    // attachments) still renders here.
+    // `![](url)` and bare image/video/audio URLs into segments, so any media
+    // URL that appears in the content has already been rendered — skip it to
+    // avoid duplication. Media whose URL is absent from the content (pure
+    // imeta attachments) still renders here.
     final extra = event.mediaAttachments
         .where((m) => !event.content.contains(m.url))
         .toList();
@@ -419,6 +427,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
         .map((m) => m.url)
         .toList();
     final extraVideos = extra.where((m) => m.isVideo).toList();
+    final extraAudios = extra.where((m) => m.isAudio).toList();
     if (extraImages.isNotEmpty) {
       children.add(const SizedBox(height: 8));
       children.add(
@@ -436,7 +445,13 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
         ),
       );
     }
-    final extraFiles = extra.where((m) => !m.isImage && !m.isVideo).toList();
+    for (final a in extraAudios) {
+      children.add(const SizedBox(height: 8));
+      children.add(_audioWidget(a.url, attachment: a));
+    }
+    final extraFiles = extra
+        .where((m) => !m.isImage && !m.isVideo && !m.isAudio)
+        .toList();
     if (extraFiles.isNotEmpty) {
       children.add(const SizedBox(height: 8));
       children.add(
@@ -496,6 +511,32 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
         children: children,
       ),
     );
+  }
+
+  /// Inline audio player for [url]; on platforms without an audio backend
+  /// (Windows/Linux — video is equally unsupported there) degrades to the
+  /// download chip instead. [attachment] supplies the real waveform when
+  /// already at hand (imeta extra path); otherwise the event's attachments
+  /// are consulted so tag-declared audio URLs in the content also get their
+  /// `waveform` field.
+  Widget _audioWidget(String url, {MediaAttachment? attachment}) {
+    if (defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux) {
+      return _FileChip(url: url, name: _fileName(url));
+    }
+    final a = attachment ?? _attachmentFor(url);
+    return NetworkAudio(
+      url: url,
+      waveform: a?.waveform,
+      forceProxy: widget.proxyMedia,
+    );
+  }
+
+  MediaAttachment? _attachmentFor(String url) {
+    for (final m in widget.event.mediaAttachments) {
+      if (m.url == url) return m;
+    }
+    return null;
   }
 }
 
@@ -652,29 +693,36 @@ class _FileChip extends StatelessWidget {
   }
 }
 
-/// Tokenize content into text / contiguous image-group / single-video
-/// segments, so consecutive images render as a 九宫格 grid and text-broken
-/// runs form separate groups. Public for unit testing.
-/// True if [event] carries ANY renderable image or video — markdown
-/// `![](url)`, a bare image/video URL in the content, or a NIP-92 imeta
-/// `["image",url]` / `["video",url]` tag. Used by the post's name bar to
-/// decide whether to surface the per-post "代理媒体" toggle (the toggle is
-/// only meaningful when there's media to proxy; text-only posts hide it).
+/// Tokenize content into text / contiguous image-group / single-video /
+/// single-audio segments, so consecutive images render as a 九宫格 grid and
+/// text-broken runs form separate groups. Public for unit testing.
+/// True if [event] carries ANY renderable image, video or audio — markdown
+/// `![](url)`, a bare image/video/audio URL in the content, or a NIP-92
+/// imeta `["image",url]` / `["video",url]` / `["audio",url]` tag. Used by
+/// the post's name bar to decide whether to surface the per-post "代理媒体"
+/// toggle (the toggle is only meaningful when there's media to proxy;
+/// text-only posts hide it).
 bool postHasMedia(Event event) {
-  // imeta image/video attachments.
-  if (event.mediaAttachments.any((m) => m.isImage || m.isVideo)) return true;
-  // Markdown images / bare image-video URLs in the content body. Bounded to
-  // a prefix: this runs on every visible-card build (name-bar proxy toggle),
-  // and adversariously long posts (100KB+ spam) must not be tokenized in
-  // full here — media within the first few KB is plenty for the toggle
-  // decision, and the card itself parses the same bounded prefix while
-  // collapsed (see [_kCollapsedParseCap]).
+  // imeta image/video/audio attachments.
+  if (event.mediaAttachments.any(
+    (m) => m.isImage || m.isVideo || m.isAudio,
+  )) {
+    return true;
+  }
+  // Markdown images / bare image-video-audio URLs in the content body.
+  // Bounded to a prefix: this runs on every visible-card build (name-bar
+  // proxy toggle), and adversariously long posts (100KB+ spam) must not be
+  // tokenized in full here — media within the first few KB is plenty for
+  // the toggle decision, and the card itself parses the same bounded prefix
+  // while collapsed (see [_kCollapsedParseCap]).
   final body = event.content.length > 4000
       ? event.content.substring(0, 4000)
       : event.content;
   final segs = tokenizeContent(body);
   for (final s in segs) {
-    if (s is ImageGroupSeg || s is SingleVideoSeg) return true;
+    if (s is ImageGroupSeg || s is SingleVideoSeg || s is AudioSeg) {
+      return true;
+    }
   }
   return false;
 }
@@ -686,16 +734,16 @@ List<ContentSeg> tokenizeContent(
   final out = <ContentSeg>[];
   final group = <String>[];
   int lastEnd = 0;
-  // Tag-declared media (imeta / `["video",url,mime]` / `["image",url,mime]`)
-  // whose bare URL lacks a media file extension — e.g. a 抖音 share link like
-  // `…/playwm/?video_id=…`. The base regex would miss it and it would render
-  // as a plain link instead of a player ("视频链接不渲染播放控件" bug). The
-  // tag's MIME wins over the extension guess; listed BEFORE the bare-ext
-  // alternative so the exact full URL wins over an extension-terminated
-  // prefix of it.
+  // Tag-declared media (imeta / `["video",url,mime]` / `["image",url,mime]`
+  // / `["audio",url,mime]`) whose bare URL lacks a media file extension —
+  // e.g. a 抖音 share link like `…/playwm/?video_id=…`. The base regex would
+  // miss it and it would render as a plain link instead of a player
+  // ("视频链接不渲染播放控件" bug). The tag's MIME wins over the extension
+  // guess; listed BEFORE the bare-ext alternative so the exact full URL wins
+  // over an extension-terminated prefix of it.
   final taggedByUrl = <String, MediaAttachment>{
     for (final m in tagged)
-      if (m.isImage || m.isVideo) m.url: m,
+      if (m.isImage || m.isVideo || m.isAudio) m.url: m,
   };
   final regex = taggedByUrl.isEmpty
       ? _mediaTokenRegex
@@ -717,22 +765,19 @@ List<ContentSeg> tokenizeContent(
     // tag-declared literal match carries neither → group(0) is the url.
     final url = (m.group(2) ?? m.group(3) ?? m.group(0)!).toString();
     if (url.isEmpty) continue;
-    final isVideo = (taggedByUrl[url] ?? MediaAttachment(url: url)).isVideo;
-    if (between.trim().isEmpty) {
-      if (isVideo) {
-        flushGroup();
-        out.add(SingleVideoSeg(url));
-      } else {
-        group.add(url);
-      }
-    } else {
+    final attachment = taggedByUrl[url] ?? MediaAttachment(url: url);
+    if (between.trim().isNotEmpty) {
       flushGroup();
       out.add(TextSeg(between));
-      if (isVideo) {
-        out.add(SingleVideoSeg(url));
-      } else {
-        group.add(url);
-      }
+    }
+    if (attachment.isVideo) {
+      flushGroup();
+      out.add(SingleVideoSeg(url));
+    } else if (attachment.isAudio) {
+      flushGroup();
+      out.add(AudioSeg(url));
+    } else {
+      group.add(url);
     }
     lastEnd = m.end;
   }
@@ -761,6 +806,13 @@ class ImageGroupSeg extends ContentSeg {
 
 class SingleVideoSeg extends ContentSeg {
   SingleVideoSeg(this.url);
+  final String url;
+}
+
+/// A single audio URL (bare audio-extension URL or tag-declared `audio/*`
+/// media). Rendered as an inline player by [NetworkAudio].
+class AudioSeg extends ContentSeg {
+  AudioSeg(this.url);
   final String url;
 }
 

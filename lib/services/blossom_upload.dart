@@ -67,6 +67,11 @@ String mimeForExt(String? ext) {
     'mp3': 'audio/mpeg',
     'wav': 'audio/wav',
     'ogg': 'audio/ogg',
+    'oga': 'audio/ogg',
+    'm4a': 'audio/mp4',
+    'aac': 'audio/aac',
+    'opus': 'audio/opus',
+    'flac': 'audio/flac',
   };
   return map[e] ?? 'application/octet-stream';
 }

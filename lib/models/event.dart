@@ -337,12 +337,15 @@ class Event {
   }
 
   /// Media attachments from NIP-92 `imeta` tags AND the simpler
-  /// `["image", url, mime?]` / `["video", url, mime?]` tags some clients emit
-  /// (Damus/Jumble-era convention, not standardized in a NIP but widespread).
+  /// `["image", url, mime?]` / `["video", url, mime?]` / `["audio", url, mime?]`
+  /// tags some clients emit (Damus/Jumble-era convention, not standardized in
+  /// a NIP but widespread).
   /// Each imeta tag is
   /// `["imeta", "url <u>", "m <mimetype>", "x <w>", "y <h>", "dim WxH", ...]`.
-  /// `blurhash`/`alt` are parsed but not surfaced in v1. Attachments are
-  /// deduped by URL across both tag forms. Memoized per instance (same
+  /// `blurhash`/`alt` are parsed but not surfaced in v1. Audio imeta may
+  /// carry a `waveform` field (NIP-A0 style: space-separated amplitudes)
+  /// which the inline audio player renders as its real waveform. Attachments
+  /// are deduped by URL across both tag forms. Memoized per instance (same
   /// pattern as [language] / [hashtags]): MarkdownContent consults this
   /// several times per build, on every visible card, on every rebuild.
   List<MediaAttachment>? _mediaAttachments;
@@ -359,6 +362,7 @@ class Event {
         String? mimeType;
         int? width;
         int? height;
+        List<double>? waveform;
         for (int i = 1; i < tag.length; i++) {
           final part = tag[i];
           if (part is! String) continue;
@@ -381,6 +385,8 @@ class Event {
                 width = int.tryParse(parts[0]);
                 height = int.tryParse(parts[1]);
               }
+            case 'waveform':
+              waveform ??= parseWaveform(value);
           }
         }
         if (url != null && url.isNotEmpty && seen.add(url)) {
@@ -390,13 +396,15 @@ class Event {
               mimeType: mimeType,
               width: width,
               height: height,
+              waveform: waveform,
             ),
           );
         }
-      } else if (kind == 'image' || kind == 'video') {
-        // `["image", url, mimetype?]` / `["video", url, mimetype?]` — a
-        // simpler, non-NIP-92 convention some clients emit. mimetype is
-        // optional; when absent it's inferred from the URL extension later.
+      } else if (kind == 'image' || kind == 'video' || kind == 'audio') {
+        // `["image", url, mimetype?]` / `["video", url, mimetype?]` /
+        // `["audio", url, mimetype?]` — a simpler, non-NIP-92 convention some
+        // clients emit. mimetype is optional; when absent it's inferred from
+        // the URL extension later.
         if (tag.length < 2 || tag[1] is! String) continue;
         final url = tag[1] as String;
         if (url.isEmpty || !seen.add(url)) continue;
@@ -463,8 +471,22 @@ final RegExp _kInlineHashtag = RegExp(
   unicode: true,
 );
 
-/// A media attachment (image or video) from a NIP-92 imeta tag, or inferred
-/// from a URL's extension when the mimetype is absent.
+/// Parse the NIP-A0 style `waveform` value (imeta `waveform <samples>`):
+/// space-separated amplitude numbers ("less than 100 values should be
+/// enough"). Unparsable tokens are skipped; null when nothing parses.
+/// Public for unit testing.
+List<double>? parseWaveform(String s) {
+  final out = <double>[];
+  for (final part in s.split(' ')) {
+    if (part.isEmpty) continue;
+    final v = double.tryParse(part);
+    if (v != null) out.add(v);
+  }
+  return out.isEmpty ? null : List<double>.unmodifiable(out);
+}
+
+/// A media attachment (image, video or audio) from a NIP-92 imeta tag, or
+/// inferred from a URL's extension when the mimetype is absent.
 @immutable
 class MediaAttachment {
   const MediaAttachment({
@@ -472,6 +494,7 @@ class MediaAttachment {
     this.mimeType,
     this.width,
     this.height,
+    this.waveform,
   });
 
   final String url;
@@ -479,12 +502,16 @@ class MediaAttachment {
   final int? width;
   final int? height;
 
+  /// Audio waveform samples from the imeta `waveform` field (voice notes);
+  /// null when absent — the player then draws a seeded synthetic waveform.
+  final List<double>? waveform;
+
   bool get isVideo {
     final m = mimeType;
     if (m != null && m.isNotEmpty) {
       if (m.startsWith('video/')) return true;
-      if (m.startsWith('image/')) return false;
-      // mime set but neither image nor video → fall through to URL check.
+      if (m.startsWith('image/') || m.startsWith('audio/')) return false;
+      // mime set but not a known media kind → fall through to URL check.
     }
     return _hasExt(const {'.mp4', '.webm', '.mov', '.m4v', '.mkv'});
   }
@@ -493,10 +520,32 @@ class MediaAttachment {
     final m = mimeType;
     if (m != null && m.isNotEmpty) {
       if (m.startsWith('image/')) return true;
-      if (m.startsWith('video/')) return false;
-      // mime set but neither image nor video → fall through to URL check.
+      if (m.startsWith('video/') || m.startsWith('audio/')) return false;
+      // mime set but not a known media kind → fall through to URL check.
     }
     return _hasExt(const {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'});
+  }
+
+  /// Audio: mime `audio/*`, or — when the mime is absent/unrecognized — one
+  /// of the common audio file extensions. `.ogg` counts as audio (Nostr
+  /// voice notes); a video/image mime always wins over the extension.
+  bool get isAudio {
+    final m = mimeType;
+    if (m != null && m.isNotEmpty) {
+      if (m.startsWith('audio/')) return true;
+      if (m.startsWith('image/') || m.startsWith('video/')) return false;
+      // mime set but not a known media kind → fall through to URL check.
+    }
+    return _hasExt(const {
+      '.mp3',
+      '.m4a',
+      '.aac',
+      '.wav',
+      '.ogg',
+      '.oga',
+      '.opus',
+      '.flac',
+    });
   }
 
   bool _hasExt(Set<String> exts) {

@@ -238,7 +238,7 @@ CREATE TABLE relay_config (
 
 - `relay_config` 表是 kind 10002 的本地缓存 + 本地独有设置（enabled 开关等不发布到中继的字段）
 - 修改中继列表时：① 更新 `relay_config` 表 ② 签发 kind 10002（`["r", "url", "read"/"write"]` tags）发布到中继 ③ 更新 RelayPool 连接
-- 冷启动从 `relay_config` 表 hydrate（秒出），同时 REQ kind 10002 后台刷新
+- 冷启动从 `relay_config` 表 回填（秒出），同时 REQ kind 10002 后台刷新
 
 ---
 
@@ -270,7 +270,7 @@ UI 读取 → Provider
        └─ 新事件到达 → 写 SQLite + 更新内存 → Provider 自动 rebuild
 ```
 
-**关键保证**：SQLite 写入在内存更新之后（同一 listener 回调内），不会出现内存有但 SQLite 没有的窗口（写入失败时内存数据仍可用）。反过来，SQLite 有但内存没有的数据（如重启后冷启动），通过 hydration 加载到内存。
+**关键保证**：SQLite 写入在内存更新之后（同一 listener 回调内），不会出现内存有但 SQLite 没有的窗口（写入失败时内存数据仍可用）。反过来，SQLite 有但内存没有的数据（如重启后冷启动），通过 缓存回填 加载到内存。
 
 ### 3.3 多设备一致性
 
@@ -350,7 +350,7 @@ WHERE id IN (
 
 | 过滤类型 | 当前（内存扫描） | 优化后（SQLite 索引） |
 |---|---|---|
-| 语言过滤 | O(n) 遍历 + regex | 查询时加 WHERE（或内存过滤已 hydrate 的数据） |
+| 语言过滤 | O(n) 遍历 + regex | 查询时加 WHERE（或内存过滤已回填的数据） |
 | tag 过滤 | O(n) 遍历 + contains | `JOIN event_tags WHERE name='t' AND value=?` |
 | 关注人过滤 | 内存 set.contains | `WHERE pubkey IN (follows)` |
 | 用户帖子 | 中继 REQ + 等待 | `WHERE pubkey=? AND kind=1 ORDER BY created_at DESC LIMIT 100` |
@@ -396,7 +396,7 @@ app 启动 → bootstrapProvider
   │
   ├─→ ① 打开 SQLite (drift)
   │
-  ├─→ ② 从 SQLite hydrate 内存数据
+  ├─→ ② 从 SQLite 回填内存数据
   │     ├─ events: SELECT kind=1 ORDER BY created_at DESC LIMIT 200 → feed 首屏
   │     ├─ replaceable: SELECT kind=0 → 全部 metadata 到内存 Map
   │     ├─ replaceable: SELECT kind=3 (own pubkey) → contactListCache
