@@ -10,9 +10,9 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **1.2.0** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.2.0/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.2.1** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.2.1/app-release.apk)（≈72 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 当前为正式版（v1.2.0）。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为正式版（v1.2.1）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
 >
@@ -27,7 +27,7 @@
 > 已把 `uses-permission INTERNET` 提到主 manifest，对所有构建变体生效。选图/视频/文件
 > 走 SAF 系统选择器，无需额外存储或相机权限。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / v1.1.7 正式版 / **v1.2.0 正式版**。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / v1.1.7 正式版 / v1.2.0 正式版 / **v1.2.1 正式版**。
 
 ---
 
@@ -423,6 +423,21 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 通知中心、多账号、关注分组（NIP-51 kind-30000，Amethyst 兼容）、收藏（NIP-51 + NIP-44 私密）、
 屏蔽列表、媒体代理、服务器节点自定义 + 去中心化推荐、本地 SQLite 缓存秒开。覆盖安装即可从
 任一 0.x-beta 升级，登录 / 关注 / 屏蔽 / 收藏 / 本地缓存全部保留。
+
+**v1.2.1 相对 v1.2.0 的修复/新增**：
+1. **头像/背景图代理覆盖帖子列表小头像，且统一受「代理媒体」开关控制**——此前 `proxyable`
+   参数只挂在资料页大头像上（代理按钮只出现在大头像），代理成功后帖子列表的小头像仍走直连、
+   不更新；且代理按钮不受「代理媒体」开关约束。现在所有头像（含列表小头像）与资料页背景图在
+   「代理媒体」开关开启时统一走 `ProxyableNetworkImage`（手动、非自动）：被墙浮现「代理」按钮、
+   点按走代理并落磁盘缓存，被墙域名按域名记忆（会话内）、同域其余头像直接走代理；开关关闭则
+   普通加载、不出现任何代理按钮。
+2. **回帖树 X 式小缩进 + 通高竖线**——回帖树每级缩进 10px、最多 4 级封顶（旧实现
+   `深度*24px` 无上限，层级一多内容被挤成一条窄缝）；二级及以下回帖卡片左缘画一条通高竖线
+   （独立线槽，绝不覆盖头像），相邻兄弟回帖竖线首尾相接，深帖树也清晰可读。
+3. **服务器节点页单独列出收件箱（inbox）中继**——NIP-65 只写（write-only）的收件箱中继
+   （bostr `/inbox` 端点，`isInboxRelay` 与 kind-10002 write 标记同源判定）单独列为
+   「收件箱中继（inbox）」分区，显示在「中继服务器」下方，共用同一份列表与「自定义」入口；
+   列表无 inbox 中继时分区整体隐藏。「这些服务器都是干嘛的」补一条收件箱说明。
 
 **v1.2.0 相对 v1.1.7 的修复/新增**：
 1. **关注流缓存按账号隔离水合**——此前 `events` 表全设备共享、冷启动取「全局最新 1000 条」，
