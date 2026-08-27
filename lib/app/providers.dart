@@ -2996,34 +2996,56 @@ final eventByIdProvider = FutureProvider.family<Event?, String>((
   return null;
 });
 
-/// In-flight pool-broadcast note lookups, keyed by pool+id. Concurrent
-/// lookups for the same id (a thread's ancestor BFS + its quote/repost cards
-/// + the detail page all resolve the same parent) share ONE relay REQ, and —
-/// crucially — the lookup survives its originating provider being disposed
-/// (see [eventByIdProvider] tier 3): the listener + REQ stay alive until the
-/// lookup settles, so a late relay response still completes the shared future
-/// for whoever re-asks. Entries are removed the moment the future settles —
-/// this dedupes IN-FLIGHT work only; it never caches results (a miss must
-/// stay retryable).
-final Map<String, Future<Event?>> _noteLookupsInFlight =
+/// In-flight pool-broadcast lookups, keyed by pool+dedupe-key. Concurrent
+/// lookups for the same target (a thread's ancestor BFS + its quote/repost
+/// cards + the detail page all resolve the same parent) share ONE relay REQ,
+/// and — crucially — the lookup survives its originating provider being
+/// disposed (see [eventByIdProvider] tier 3): the listener + REQ stay alive
+/// until the lookup settles, so a late relay response still completes the
+/// shared future for whoever re-asks. Entries are removed the moment the
+/// future settles — this dedupes IN-FLIGHT work only; it never caches
+/// results (a miss must stay retryable).
+final Map<String, Future<Event?>> _broadcastLookupsInFlight =
     <String, Future<Event?>>{};
 
-Future<Event?> _broadcastNoteLookup(RelayPool pool, String id) {
-  final key = '${identityHashCode(pool)}\x1f$id';
-  final existing = _noteLookupsInFlight[key];
+/// Broadcast a REQ [filter] to the main pool and return the first event
+/// satisfying [matches] — deduped/shared per [dedupeKey] (see
+/// [_broadcastLookupsInFlight]).
+Future<Event?> _broadcastLookup(
+  RelayPool pool,
+  String dedupeKey,
+  Map<String, dynamic> filter,
+  bool Function(Event) matches,
+) {
+  final key = '${identityHashCode(pool)}\x1f$dedupeKey';
+  final existing = _broadcastLookupsInFlight[key];
   if (existing != null) return existing;
-  final fut = _runBroadcastNoteLookup(pool, id);
-  _noteLookupsInFlight[key] = fut;
-  unawaited(fut.whenComplete(() => _noteLookupsInFlight.remove(key)));
+  final fut = _runBroadcastLookup(pool, filter, matches);
+  _broadcastLookupsInFlight[key] = fut;
+  unawaited(fut.whenComplete(() => _broadcastLookupsInFlight.remove(key)));
   return fut;
 }
 
-Future<Event?> _runBroadcastNoteLookup(RelayPool pool, String id) async {
+Future<Event?> _broadcastNoteLookup(RelayPool pool, String id) =>
+    _broadcastLookup(
+      pool,
+      id,
+      <String, dynamic>{
+        'ids': [id],
+      },
+      (e) => e.id == id,
+    );
+
+Future<Event?> _runBroadcastLookup(
+  RelayPool pool,
+  Map<String, dynamic> filter,
+  bool Function(Event) matches,
+) async {
   final completer = Completer<Event?>();
   final relayCount = pool.states.length;
   var eoses = 0;
   final sub = pool.rawEvents.listen((e) {
-    if (e.id == id && !completer.isCompleted) completer.complete(e);
+    if (matches(e) && !completer.isCompleted) completer.complete(e);
   });
   final subId = nextSubId('note');
   // EOSE AND relay-CLOSED frames both count as "this relay has answered":
@@ -3036,9 +3058,7 @@ Future<Event?> _runBroadcastNoteLookup(RelayPool pool, String id) async {
       completer.complete(null);
     }
   });
-  pool.request(subId, <String, dynamic>{
-    'ids': [id],
-  }, closeOnEose: true);
+  pool.request(subId, filter, closeOnEose: true);
   try {
     return await completer.future.timeout(
       const Duration(seconds: 8),
@@ -3082,6 +3102,82 @@ final quotedEventProvider = FutureProvider.family<Event?, String>((
   );
   for (final e in hits) {
     if (e.id == id) {
+      // Cache in SQLite so a repeat scroll-by is instant.
+      unawaited(ref.read(eventStoreProvider.notifier).cacheThreadEvent(e));
+      return e;
+    }
+  }
+  return null;
+});
+
+/// The first `d` tag value of [e] (its identifier as a parameterized
+/// replaceable event), or null when it has none.
+String? dTagOf(Event e) {
+  for (final t in e.tags) {
+    if (t.length >= 2 && t[0] == 'd' && t[1] is String) return t[1] as String;
+  }
+  return null;
+}
+
+/// Address-coordinate resolution for NIP-19 `nostr:naddr1…` entities
+/// (parameterized replaceable events — most commonly kind-30023 long-form
+/// articles): the in-memory store and the ephemeral global window first,
+/// then a broadcast REQ `kinds+authors+#d`, then — on miss — a one-shot
+/// fetch on the relay hints carried inside the naddr itself (articles often
+/// live ONLY on the author's own relays, same outbox rationale as
+/// [quotedEventProvider]). Key = `kind\x1fpubkey\x1fd[\x1frelay…]` (hints
+/// baked into the family key so the widget stays a plain ConsumerWidget).
+final addressedEventProvider = FutureProvider.family<Event?, String>((
+  ref,
+  key,
+) async {
+  final parts = key.split('\x1f');
+  final kind = int.tryParse(parts.isNotEmpty ? parts[0] : '');
+  final pubkey = parts.length > 1 ? parts[1] : '';
+  final d = parts.length > 2 ? parts[2] : '';
+  final hints = parts.skip(3).where((r) => r.isNotEmpty).toList();
+  if (kind == null || pubkey.isEmpty || d.isEmpty) return null;
+  bool matches(Event e) =>
+      e.kind == kind && e.pubkey == pubkey && dTagOf(e) == d;
+  // 1. In-memory store. READ, not watch — same rationale as
+  //    eventByIdProvider tier 2 (a watch would restart this lookup on every
+  //    200ms flush and starve the relay tier).
+  for (final e in ref.read(eventStoreProvider)) {
+    if (matches(e)) return e;
+  }
+  // 2. Ephemeral global window (firehose posts live ONLY here while the
+  //    全球 tab is open).
+  for (final e in ref.read(globalFeedWindowProvider.notifier).window.posts) {
+    if (matches(e)) return e;
+  }
+  // 3. Relay REQ broadcast to the main pool (shared in-flight future, same
+  //    churn-safety as the note lookup).
+  final pool = ref.watch(relayPoolProvider);
+  final hit = await _broadcastLookup(
+    pool,
+    'addr\x1f$kind\x1f$pubkey\x1f$d',
+    <String, dynamic>{
+      'kinds': [kind],
+      'authors': [pubkey],
+      '#d': [d],
+    },
+    matches,
+  );
+  if (hit != null) return hit;
+  if (!ref.mounted) return null;
+  // 4. The naddr's own relay hints.
+  if (hints.isEmpty) return null;
+  final hits = await pool.fetchFromUrls(
+    <String, dynamic>{
+      'kinds': [kind],
+      'authors': [pubkey],
+      '#d': [d],
+    },
+    hints,
+    timeout: const Duration(seconds: 6),
+  );
+  for (final e in hits) {
+    if (matches(e)) {
       // Cache in SQLite so a repeat scroll-by is instant.
       unawaited(ref.read(eventStoreProvider.notifier).cacheThreadEvent(e));
       return e;

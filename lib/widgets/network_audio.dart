@@ -1,19 +1,20 @@
 /// Inline network audio player (just_audio) for audio media in posts: bare
 /// audio URLs in content, NIP-92 imeta audio attachments, and extensionless
-/// audio links classified by the link probe. Amethyst-style presentation:
-/// the waveform strip is the visual body. When the imeta carries a
-/// `waveform` field (NIP-A0 voice notes: space-separated amplitudes) the
-/// REAL waveform renders; otherwise a stable synthetic waveform is generated
-/// from the URL seed (Amethyst seeds from the event id — the URL is costr's
-/// per-attachment stable seed). Playback progress tints the bars; tap/drag
-/// on the strip seeks (release commits, same scrub discipline as the video
-/// overlay). Controls: play/pause, speed (shares the video bottom sheet),
-/// share link.
+/// audio links classified by the link probe. The waveform strip is the
+/// Amethyst-style visual identity (real imeta `waveform` samples when the
+/// source carries them, a URL-seeded synthetic waveform otherwise; playback
+/// progress tints the bars) — but every control is an explicit, tappable
+/// Material widget (play/pause, ±10s, a real seek slider, speed, share):
+/// waveform-only gestures read as "没法点/没反应" in user testing.
 ///
 /// The player is created LAZILY on the first play tap — a feed can hold many
 /// audio cards and pre-creating controllers would hit the network for every
-/// one of them (metadata probes + buffer priming). A card costs nothing
-/// until the user explicitly plays it.
+/// one of them. A card costs nothing until the user explicitly plays it.
+///
+/// Coordination ([_AudioCoordinator]): at most one card plays at a time,
+/// and leaving the foreground pauses every player (a plain AudioPlayer keeps
+/// sounding with the app in the background — users expect feed audio to stop
+/// when they leave).
 library;
 
 import 'dart:async';
@@ -26,7 +27,8 @@ import '../app/theme.dart';
 import '../services/link_preview.dart' show displayDomain;
 import '../utils/format.dart';
 import 'proxied_network_image.dart' show proxiedUrl;
-import 'video_controls.dart' show showSpeedPickerSheet, shareMediaUrl;
+import 'video_controls.dart'
+    show clampSeek, showSpeedPickerSheet, shareMediaUrl;
 
 /// Number of bars in the synthetic waveform (Amethyst uses 96).
 const int kAudioWaveformBars = 96;
@@ -71,6 +73,50 @@ int _stableHash(String s) {
 
 enum _AudioPhase { idle, loading, ready, error }
 
+/// Cross-card audio coordination: at most ONE inline audio plays at a time
+/// (starting one pauses the others), and EVERYTHING pauses when the app
+/// leaves the foreground — a plain [AudioPlayer] keeps sounding in the
+/// background otherwise ("切到后台还在响，想停停不掉"). Deliberately NOT a
+/// background-playback service: Costr's audio belongs to the visible card.
+class _AudioCoordinator with WidgetsBindingObserver {
+  _AudioCoordinator();
+
+  static final _AudioCoordinator instance = _AudioCoordinator();
+
+  final Set<_NetworkAudioState> _active = {};
+  bool _observing = false;
+
+  void register(_NetworkAudioState s) {
+    _active.add(s);
+    if (!_observing) {
+      _observing = true;
+      WidgetsBinding.instance.addObserver(this);
+    }
+  }
+
+  void unregister(_NetworkAudioState s) {
+    _active.remove(s);
+  }
+
+  /// [s] is about to start playing — pause every other card first.
+  void exclusivePlay(_NetworkAudioState s) {
+    for (final other in List.of(_active)) {
+      if (!identical(other, s)) other.pauseIfPlaying();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      for (final s in List.of(_active)) {
+        s.pauseIfPlaying();
+      }
+    }
+  }
+}
+
 class NetworkAudio extends StatefulWidget {
   const NetworkAudio({
     super.key,
@@ -105,10 +151,11 @@ class _NetworkAudioState extends State<NetworkAudio> {
   Duration _duration = Duration.zero;
   double _speed = 1.0;
 
-  /// Local scrub position (fraction of duration) while dragging the waveform;
-  /// the seek commits on release only (no seek-storm on remote URLs — same
-  /// discipline as the video overlay).
-  double? _scrubFraction;
+  /// Local scrub position while dragging the slider; the seek commits on
+  /// release only (no seek-storm on remote URLs — same discipline as the
+  /// video overlay, whose [clampSeek] also bounds the ±10s steps).
+  Duration? _scrubPos;
+  bool _wasPlaying = false;
 
   late List<double> _wave;
 
@@ -116,6 +163,7 @@ class _NetworkAudioState extends State<NetworkAudio> {
   void initState() {
     super.initState();
     _wave = _resolveWave();
+    _AudioCoordinator.instance.register(this);
   }
 
   List<double> _resolveWave() {
@@ -138,6 +186,7 @@ class _NetworkAudioState extends State<NetworkAudio> {
 
   @override
   void dispose() {
+    _AudioCoordinator.instance.unregister(this);
     _teardown();
     super.dispose();
   }
@@ -154,29 +203,40 @@ class _NetworkAudioState extends State<NetworkAudio> {
     _position = Duration.zero;
     _duration = Duration.zero;
     _speed = 1.0;
-    _scrubFraction = null;
+    _scrubPos = null;
   }
 
   Future<void> _togglePlay() async {
     final p = _player;
     if (_phase == _AudioPhase.error || _phase == _AudioPhase.loading) return;
-    if (_phase == _AudioPhase.idle || p == null) {
+    if (p == null) {
       await _initAndPlay();
       return;
     }
-    if (_playing) {
+    // The PLAYER is the source of truth here — not _playing, which is one
+    // stream event behind; routing a stale pause-tap into play() reads as
+    // 「按了没反应」.
+    if (p.playing) {
       await p.pause();
     } else {
       try {
         if (p.processingState == ProcessingState.completed) {
           await p.seek(Duration.zero);
         }
+        _AudioCoordinator.instance.exclusivePlay(this);
         await p.play();
       } catch (_) {
         // A dead source surfaces here rather than in setUrl — degrade.
         if (mounted) setState(() => _phase = _AudioPhase.error);
       }
     }
+  }
+
+  /// Coordinator hook (other card started playing / app backgrounded): pause
+  /// without ceremony.
+  void pauseIfPlaying() {
+    final p = _player;
+    if (p != null && p.playing) p.pause();
   }
 
   Future<void> _initAndPlay() async {
@@ -201,6 +261,7 @@ class _NetworkAudioState extends State<NetworkAudio> {
       // preload: true (default) — duration is known when the future settles.
       await p.setUrl(effectiveUrl);
       await p.setSpeed(_speed);
+      _AudioCoordinator.instance.exclusivePlay(this);
       await p.play();
     } catch (_) {
       if (!mounted) {
@@ -221,18 +282,35 @@ class _NetworkAudioState extends State<NetworkAudio> {
     });
   }
 
-  void _seekToFraction(double fraction) {
+  void _step(int seconds) {
     final p = _player;
     if (p == null || _phase != _AudioPhase.ready) return;
-    final target = Duration(
-      milliseconds: (fraction * _duration.inMilliseconds).round(),
-    );
-    // Fire-and-forget: the position stream repaints the bar as it lands.
-    p.seek(target);
+    p.seek(clampSeek(_scrubPos ?? _position, seconds, _duration));
   }
 
-  double _fractionAt(Offset local, double width) =>
-      width <= 0 ? 0 : (local.dx / width).clamp(0.0, 1.0);
+  void _scrubStart(double millis) {
+    final p = _player;
+    if (p == null || _phase != _AudioPhase.ready) return;
+    _wasPlaying = p.playing;
+    if (_wasPlaying) p.pause();
+    setState(() => _scrubPos = Duration(milliseconds: millis.round()));
+  }
+
+  void _scrubTo(double millis) {
+    if (_phase != _AudioPhase.ready) return;
+    setState(() => _scrubPos = Duration(milliseconds: millis.round()));
+  }
+
+  void _scrubEnd(double millis) {
+    final p = _player;
+    if (p == null || _phase != _AudioPhase.ready) return;
+    p.seek(Duration(milliseconds: millis.round()));
+    if (_wasPlaying) {
+      _AudioCoordinator.instance.exclusivePlay(this);
+      p.play();
+    }
+    setState(() => _scrubPos = null);
+  }
 
   Future<void> _pickSpeed() async {
     final v = await showSpeedPickerSheet(context, _speed);
@@ -251,11 +329,7 @@ class _NetworkAudioState extends State<NetworkAudio> {
       return _Card(
         child: Row(
           children: [
-            Icon(
-              Icons.music_off_outlined,
-              size: 18,
-              color: colors.text3,
-            ),
+            Icon(Icons.music_off_outlined, size: 18, color: colors.text3),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -270,16 +344,17 @@ class _NetworkAudioState extends State<NetworkAudio> {
       );
     }
 
-    final busy =
-        _phase == _AudioPhase.loading ||
-        (_phase == _AudioPhase.ready && _buffering);
-    final progress = _scrubFraction ??
-        (_duration > Duration.zero
-            ? (_position.inMilliseconds / _duration.inMilliseconds).clamp(
-                0.0,
-                1.0,
-              )
-            : 0.0);
+    final ready = _phase == _AudioPhase.ready;
+    // Spinner only while NOTHING plays yet (initial load / pre-play
+    // buffering). While playing the pause icon ALWAYS shows — even mid
+    // buffering — otherwise the button reads as dead ("无法暂停").
+    final busy = !_playing &&
+        (_phase == _AudioPhase.loading || (ready && _buffering));
+    final displayPos = _scrubPos ?? _position;
+    final totalMs = _duration.inMilliseconds.toDouble();
+    final progress = _duration > Duration.zero
+        ? (displayPos.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
+        : 0.0;
 
     return _Card(
       child: Column(
@@ -303,73 +378,94 @@ class _NetworkAudioState extends State<NetworkAudio> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
+          // Transport row: play/pause, ±10s, waveform (progress visual).
           Row(
             children: [
               _PlayButton(
                 busy: busy,
-                playing: _playing && !busy,
+                playing: _playing,
                 onTap: _togglePlay,
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
+              _StepButton(
+                icon: Icons.replay_10_rounded,
+                onTap: ready ? () => _step(-10) : null,
+              ),
+              const SizedBox(width: 6),
               Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final width = constraints.maxWidth;
-                    return GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTapDown: (d) => setState(
-                        () => _scrubFraction = _fractionAt(d.localPosition, width),
-                      ),
-                      onTapUp: (d) {
-                        final f = _fractionAt(d.localPosition, width);
-                        setState(() => _scrubFraction = null);
-                        _seekToFraction(f);
-                      },
-                      onTapCancel: () => setState(() => _scrubFraction = null),
-                      onHorizontalDragStart: (d) => setState(
-                        () => _scrubFraction = _fractionAt(d.localPosition, width),
-                      ),
-                      onHorizontalDragUpdate: (d) => setState(
-                        () => _scrubFraction = _fractionAt(d.localPosition, width),
-                      ),
-                      onHorizontalDragEnd: (_) {
-                        final f = _scrubFraction;
-                        setState(() => _scrubFraction = null);
-                        if (f != null) _seekToFraction(f);
-                      },
-                      child: SizedBox(
-                        height: 44,
-                        child: CustomPaint(
-                          painter: _WaveformPainter(
-                            bars: _wave,
-                            progress: progress,
-                            activeColor: colors.brand,
-                            inactiveColor: colors.text3.withValues(alpha: 0.45),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
+                child: SizedBox(
+                  height: 40,
+                  child: CustomPaint(
+                    painter: _WaveformPainter(
+                      bars: _wave,
+                      progress: progress,
+                      activeColor: colors.brand,
+                      inactiveColor: colors.text3.withValues(alpha: 0.45),
+                    ),
+                  ),
                 ),
+              ),
+              const SizedBox(width: 6),
+              _StepButton(
+                icon: Icons.forward_10_rounded,
+                onTap: ready ? () => _step(10) : null,
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          // Seek row: a real, tappable slider (the waveform shows progress;
+          // the slider IS the scrubber — waveform-only gestures tested as
+          // invisible/unresponsive).
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Row(
+              children: [
+                Text(
+                  formatDuration(displayPos),
+                  style: TextStyle(fontSize: 11, color: colors.text3),
+                ),
+                Expanded(
+                  child: SliderTheme(
+                    data: SliderThemeData(
+                      trackHeight: 3,
+                      activeTrackColor: colors.brand,
+                      inactiveTrackColor: colors.text3.withValues(alpha: 0.3),
+                      thumbColor: colors.brand,
+                      overlayShape: SliderComponentShape.noOverlay,
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 5,
+                      ),
+                    ),
+                    child: Slider(
+                      value: displayPos.inMilliseconds
+                          .toDouble()
+                          .clamp(0, totalMs > 0 ? totalMs : 1),
+                      min: 0,
+                      max: totalMs > 0 ? totalMs : 1,
+                      onChangeStart: _scrubStart,
+                      onChanged: _scrubTo,
+                      onChangeEnd: _scrubEnd,
+                    ),
+                  ),
+                ),
+                Text(
+                  formatDuration(_duration),
+                  style: TextStyle(fontSize: 11, color: colors.text3),
+                ),
+              ],
+            ),
+          ),
+          // Action row: speed + share, right-aligned.
           Row(
             children: [
-              Text(
-                '${formatDuration(_scrubFraction != null && _duration > Duration.zero ? Duration(milliseconds: (_scrubFraction! * _duration.inMilliseconds).round()) : _position)} / ${formatDuration(_duration)}',
-                style: const TextStyle(fontSize: 11).copyWith(
-                  color: colors.text3,
-                ),
-              ),
               const Spacer(),
               TextButton(
-                onPressed: _phase == _AudioPhase.ready ? _pickSpeed : null,
+                onPressed: ready ? _pickSpeed : null,
                 style: TextButton.styleFrom(
                   foregroundColor: colors.text2,
-                  disabledForegroundColor: colors.text3.withValues(alpha: 0.5),
+                  disabledForegroundColor: colors.text3.withValues(
+                    alpha: 0.5,
+                  ),
                   minimumSize: Size.zero,
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -426,7 +522,8 @@ class _Card extends StatelessWidget {
 }
 
 /// Brand-filled circular play/pause button; shows a spinner while the source
-/// loads/buffers.
+/// loads/buffers (only before playback starts — see the `busy` note in
+/// build).
 class _PlayButton extends StatelessWidget {
   const _PlayButton({
     required this.busy,
@@ -445,10 +542,7 @@ class _PlayButton extends StatelessWidget {
       child: Container(
         width: 40,
         height: 40,
-        decoration: BoxDecoration(
-          color: colors.brand,
-          shape: BoxShape.circle,
-        ),
+        decoration: BoxDecoration(color: colors.brand, shape: BoxShape.circle),
         alignment: Alignment.center,
         child: busy
             ? SizedBox(
@@ -464,6 +558,37 @@ class _PlayButton extends StatelessWidget {
                 color: colors.onBrand,
                 size: 26,
               ),
+      ),
+    );
+  }
+}
+
+/// Small circular ±10s step chip.
+class _StepButton extends StatelessWidget {
+  const _StepButton({required this.icon, required this.onTap});
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = CostrColors.of(context);
+    final disabled = onTap == null;
+    return Material(
+      color: Colors.transparent,
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(
+            icon,
+            size: 20,
+            color: disabled
+                ? colors.text3.withValues(alpha: 0.5)
+                : colors.text2,
+          ),
+        ),
       ),
     );
   }
@@ -495,7 +620,8 @@ class _SmallIconButton extends StatelessWidget {
 
 /// Waveform strip painter: [bars] amplitude samples (normalized to their own
 /// max so real NIP-A0 waveforms of any scale fill the strip), left of
-/// [progress] painted [activeColor], the rest [inactiveColor].
+/// [progress] painted [activeColor], the rest [inactiveColor]. Display-only
+/// — the seek surface is the slider below it.
 class _WaveformPainter extends CustomPainter {
   _WaveformPainter({
     required this.bars,

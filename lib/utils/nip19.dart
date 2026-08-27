@@ -228,6 +228,71 @@ String? entityToEventIdHex(String entity) {
   return null;
 }
 
+/// Decoded `naddr1...` parts (NIP-19): the address coordinate of a
+/// parameterized replaceable event — `kind` + author `pubkey` + `d`
+/// identifier, plus relay hints for where it lives.
+class Naddr {
+  const Naddr({
+    required this.kind,
+    required this.pubkey,
+    required this.d,
+    this.relays = const [],
+  });
+  final int kind;
+  final String pubkey; // 32-byte hex author
+  final String d; // identifier (the event's `d` tag)
+  final List<String> relays;
+
+  @override
+  String toString() => 'Naddr($kind:$pubkey:$d)';
+}
+
+/// Decode an `naddr1...` (NIP-19) to its address coordinate. The payload is
+/// TLV: type 0x00 = identifier (`d` tag value, UTF-8), 0x01 = relay hint,
+/// 0x02 = author pubkey (32 bytes), 0x03 = kind (4 bytes big-endian).
+/// Accepts an optional `nostr:` prefix. Returns null when not an naddr or
+/// when ANY of d/author/kind is missing or the bech32 is malformed — these
+/// decoders run on untrusted post content during widget build, junk must
+/// yield null, not throw.
+Naddr? naddrDecode(String naddr) {
+  var e = naddr;
+  if (e.toLowerCase().startsWith('nostr:')) e = e.substring(6);
+  if (!e.toLowerCase().startsWith('naddr1')) return null;
+  final List<int> bytes;
+  try {
+    bytes = decodeBech32(e).data;
+  } on Bech32Exception {
+    return null; // malformed bech32 — treat as "not an naddr"
+  }
+  int i = 0;
+  String? d;
+  final relays = <String>[];
+  String? pubkey;
+  int? kind;
+  while (i + 2 <= bytes.length) {
+    final type = bytes[i];
+    final len = bytes[i + 1];
+    if (i + 2 + len > bytes.length) break;
+    final value = bytes.sublist(i + 2, i + 2 + len);
+    switch (type) {
+      case 0x00:
+        d = utf8.decode(value, allowMalformed: true);
+      case 0x01:
+        relays.add(utf8.decode(value, allowMalformed: true));
+      case 0x02:
+        if (len == 32) pubkey = _bytesToHex(value);
+      case 0x03:
+        if (len == 4) {
+          kind =
+              (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+        }
+    }
+    i += 2 + len;
+  }
+  if (d == null || d.isEmpty || pubkey == null || kind == null) return null;
+  return Naddr(kind: kind, pubkey: pubkey, d: d, relays: relays);
+}
+
 /// Resolve a pasted/typed NIP-19 entity to an in-app route: `/u/<pubkey-hex>`
 /// for `npub1…`/`nprofile1…`, `/n/<event-id-hex>` for `note1…`/`nevent1…`.
 /// Returns null for anything else — plain keywords, `nsec1…` (never resolve

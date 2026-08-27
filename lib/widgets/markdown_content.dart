@@ -8,6 +8,9 @@
 ///   video_player.
 /// - Audio (bare `….mp3/…` URLs, imeta `m audio/*`) renders as an inline
 ///   player ([NetworkAudio], Amethyst-style waveform card).
+/// - NIP-19 `naddr1…` address references (parameterized replaceable events,
+///   typically long-form articles) render as embedded cards below, same
+///   pattern as NIP-27 quote embeds.
 /// - NIP-92 imeta media not already in the content is appended below; its
 ///   images are gridded together, videos full-width, audio as players.
 library;
@@ -52,6 +55,13 @@ final RegExp _pubkeyEntityRegex = RegExp(
 /// 1 captures the bare entity so we can decode the referenced event id.
 final RegExp _eventEntityRegex = RegExp(
   r'(?:nostr:)?((?:nevent1|note1)[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
+);
+
+/// Matches `nostr:naddr1…` (NIP-19 address coordinates of parameterized
+/// replaceable events — typically long-form articles). Group 1 captures the
+/// bare entity so [naddrDecode] can read kind/author/d + relay hints.
+final RegExp _addrEntityRegex = RegExp(
+  r'(?:nostr:)?(naddr1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,})',
 );
 
 /// Preserve blank lines in text fed to [MarkdownBody]. Markdown collapses
@@ -286,6 +296,26 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
         ? linkified
         : _replaceOutsideUrls(linkified, _eventEntityRegex, (Match m) => '');
 
+    // 1b'. NIP-19 address references (`nostr:naddr1…` — parameterized
+    // replaceable coordinates, typically long-form articles): collect the
+    // decoded coordinates, then strip the raw entities from the content
+    // (rendered as embedded cards below, same pattern as NIP-27 quotes).
+    final addrRefs = <Naddr>[];
+    final seenAddr = <String>{};
+    for (final m in _addrEntityRegex.allMatches(stripped)) {
+      // Same URL guard as the other entities: an naddr inside a URL must
+      // not be stripped out of it.
+      if (entityMatchInUrl(stripped, m)) continue;
+      final addr = naddrDecode(m.group(1)!);
+      if (addr == null) continue;
+      final coord = '${addr.kind}\x1f${addr.pubkey}\x1f${addr.d}';
+      if (!seenAddr.add(coord)) continue;
+      addrRefs.add(addr);
+    }
+    final strippedAll = addrRefs.isEmpty
+        ? stripped
+        : _replaceOutsideUrls(stripped, _addrEntityRegex, (Match m) => '');
+
     // 1c. Probe candidates: bare http(s) URLs that are NOT already handled —
     // not media/file-extension URLs (tokenized/stripped above), not markdown
     // link targets, not tag-declared attachments. Each resolves async via
@@ -299,7 +329,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     final previewTagged = <MediaAttachment>[];
     final previewCards = <(String, LinkPreview)>[];
     for (final cand in extractPreviewCandidates(
-      stripped,
+      strippedAll,
       exclude: {for (final m in event.mediaAttachments) m.url},
     )) {
       switch (ref.watch(linkPreviewProvider(cand)).value) {
@@ -322,7 +352,7 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
     // players instead of plain links — same mechanism carries probe-resolved
     // media (previewTagged).
     final segments = tokenizeContent(
-      stripped,
+      strippedAll,
       tagged: [...event.mediaAttachments, ...previewTagged],
     );
 
@@ -484,6 +514,12 @@ class _MarkdownContentState extends ConsumerState<MarkdownContent> {
       children.add(
         _EventEmbed(id: id, relayHints: relayHintsById[id] ?? const []),
       );
+    }
+
+    // 4b. Append embedded cards for NIP-19 address references (`naddr1…` —
+    // parameterized replaceable events, typically long-form articles).
+    for (final a in addrRefs) {
+      children.add(_AddrEmbed(addr: a));
     }
 
     if (hardTruncated) {
@@ -1071,6 +1107,162 @@ class _EventEmbed extends ConsumerWidget {
                 ),
               ),
               maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shared quote-embed box (left border + bg2, Amethyst style).
+Widget _embedBox(BuildContext context, {required Widget child}) {
+  final theme = Theme.of(context);
+  return Container(
+    margin: const EdgeInsets.only(top: 8),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: CostrColors.of(context).bg2,
+      border: Border(left: BorderSide(color: theme.colorScheme.outline, width: 3)),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: child,
+  );
+}
+
+/// First non-empty string value of tag [name] on [e] (e.g. a long-form
+/// article's `title`).
+String? _stringTag(Event e, String name) {
+  for (final t in e.tags) {
+    if (t.length >= 2 && t[0] == name && t[1] is String) {
+      final v = (t[1] as String).trim();
+      if (v.isNotEmpty) return v;
+    }
+  }
+  return null;
+}
+
+/// An embedded card for a NIP-19 address reference (`nostr:naddr1…` — a
+/// parameterized replaceable coordinate; in notes this is typically a
+/// long-form article). Resolves via [addressedEventProvider] (store → global
+/// window → broadcast kinds+authors+#d → the naddr's own relay hints) and
+/// renders author + title (when the event carries one) + content snippet;
+/// tap opens the post detail. When the lookup settles empty the card shows
+/// "引用内容不可用" and a tap retries — same contract as [_EventEmbed].
+class _AddrEmbed extends ConsumerWidget {
+  const _AddrEmbed({required this.addr});
+  final Naddr addr;
+
+  /// Family key: kind + author + d + relay hints (baked in so the widget
+  /// stays a ConsumerWidget).
+  String get _key => <String>[
+    '${addr.kind}',
+    addr.pubkey,
+    addr.d,
+    ...addr.relays,
+  ].join('\x1f');
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final mute = ref.watch(myMuteSetProvider);
+    final async = ref.watch(addressedEventProvider(_key));
+    final ev = async.value;
+    if (ev == null) {
+      final notFound = !async.isLoading;
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: notFound
+            ? () => ref.invalidate(addressedEventProvider(_key))
+            : null,
+        child: _embedBox(
+          context,
+          child: Text(
+            notFound ? '引用内容不可用 · 点击重试' : '加载引用…',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: CostrColors.of(context).text3,
+            ),
+          ),
+        ),
+      );
+    }
+    // Muted referenced note: name + content stay hidden; only the hint shows
+    // until the user explicitly taps the card open (same rule as
+    // [_EventEmbed]).
+    if (mute.hidesEvent(ev)) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => pushPostDetail(context, ev.id),
+        child: _embedBox(
+          context,
+          child: Text(
+            mute.hintFor(ev),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: CostrColors.of(context).text3,
+            ),
+          ),
+        ),
+      );
+    }
+    // Non-post events referenced via naddr (relay lists, app data, …) must
+    // NOT render as a post card — compact inline label, same rule as NIP-27.
+    if (!ev.isPostLike) {
+      return _NonPostRefLabel(ev: ev);
+    }
+    final meta = ref.watch(metadataProvider(ev.pubkey)).value;
+    final title = _stringTag(ev, 'title');
+    return GestureDetector(
+      onTap: () => pushPostDetail(context, ev.id),
+      child: _embedBox(
+        context,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Avatar(pubkey: ev.pubkey, radius: 12),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: DisplayName(
+                    pubkey: ev.pubkey,
+                    meta: meta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            if (title != null) ...[
+              Text(
+                title,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+            ],
+            Text.rich(
+              linkifyMentions(
+                ev.content,
+                ref,
+                baseStyle: theme.textTheme.bodySmall?.copyWith(
+                  color: CostrColors.of(context).text2,
+                  height: 1.4,
+                ),
+                mentionStyle: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              maxLines: title != null ? 2 : 4,
               overflow: TextOverflow.ellipsis,
             ),
           ],
