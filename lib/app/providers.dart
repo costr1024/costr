@@ -68,9 +68,7 @@ const List<String> defaultRelays = <String>[
 /// query (the "irrelevant results" bug). search.nos.today implements NIP-50
 /// full-text search. (relay.ditto.pub was retired from SEARCH: it rate-limits
 /// "too many subscriptions"; it stays in [defaultRelays] for reads/writes.)
-const List<String> searchRelays = <String>[
-  'wss://search.nos.today/',
-];
+const List<String> searchRelays = <String>['wss://search.nos.today/'];
 
 /// Indexer relays: relays that aggregate ALL users' kind-0 metadata (and
 /// kind-3 / kind-10002). Used as the cold-miss fallback when a user's
@@ -1020,8 +1018,9 @@ Future<void> _runBootstrap(Ref ref) async {
     // already does in-session per-relay retry; this covers cross-session.
     unawaited(
       connected.then(
-        (_) =>
-            ref.read(localCacheProvider.future).then((db) => retryDrafts(pool, db)),
+        (_) => ref
+            .read(localCacheProvider.future)
+            .then((db) => retryDrafts(pool, db)),
       ),
     );
     // Bulk-prefetch metadata (kind 0) for the whole social graph (follows +
@@ -3027,14 +3026,9 @@ Future<Event?> _broadcastLookup(
 }
 
 Future<Event?> _broadcastNoteLookup(RelayPool pool, String id) =>
-    _broadcastLookup(
-      pool,
-      id,
-      <String, dynamic>{
-        'ids': [id],
-      },
-      (e) => e.id == id,
-    );
+    _broadcastLookup(pool, id, <String, dynamic>{
+      'ids': [id],
+    }, (e) => e.id == id);
 
 Future<Event?> _runBroadcastLookup(
   RelayPool pool,
@@ -3620,6 +3614,144 @@ List<Event> _snapshotSorted(Map<String, Event> merged) {
       return c != 0 ? c : a.id.compareTo(b.id);
     });
   return List<Event>.unmodifiable(list);
+}
+
+/// Backward-pagination state for a user's profile posts/replies.
+///
+/// [userPostsProvider] only pulls the NEWEST window (limit 100), so a profile
+/// with more than ~100 notes showed no way to reach older history ("看不到 1
+/// 个多月之前的历史帖子，下拉也没有加载更多"). The profile tabs scroll-trigger
+/// [UserPostsPagerNotifier.loadMore], which fetches one strictly-older page and
+/// appends it to [older]; the tabs merge it under the provider's newest window.
+class UserPostsPage {
+  const UserPostsPage({
+    this.older = const <Event>[],
+    this.loadingMore = false,
+    this.hasMore = true,
+  });
+  final List<Event> older;
+  final bool loadingMore;
+
+  /// False once a backward page came back empty (relays have nothing older).
+  /// The tabs then show 「没有更多了」 and stop triggering. [retry] re-arms it
+  /// (e.g. after a pull-to-refresh, since a dead relay may recover).
+  final bool hasMore;
+}
+
+final userPostsPagerProvider =
+    NotifierProvider.family<UserPostsPagerNotifier, UserPostsPage, String>(
+      UserPostsPagerNotifier.new,
+    );
+
+class UserPostsPagerNotifier extends Notifier<UserPostsPage> {
+  UserPostsPagerNotifier(this.pubkey);
+  final String pubkey;
+
+  @override
+  UserPostsPage build() => const UserPostsPage();
+
+  /// Re-arm after a refresh that may revive relays (keeps the already-loaded
+  /// pages, just allows digging again past a 「没有更多了」).
+  void retry() {
+    if (state.hasMore && !state.loadingMore) return;
+    state = UserPostsPage(
+      older: state.older,
+      loadingMore: false,
+      hasMore: true,
+    );
+  }
+
+  /// Fetch one page of notes strictly older than [oldestCreatedAt] (the
+  /// current oldest visible note in the requesting tab) and merge it into
+  /// [UserPostsPage.older]. No-op while a page is already in flight or after
+  /// an empty page ([UserPostsPage.hasMore] false).
+  Future<void> loadMore({required int oldestCreatedAt}) async {
+    if (state.loadingMore || !state.hasMore) return;
+    state = UserPostsPage(older: state.older, loadingMore: true, hasMore: true);
+    try {
+      final page = await _fetchOlderPage(ref, pubkey, oldestCreatedAt - 1);
+      if (page.isEmpty) {
+        state = UserPostsPage(
+          older: state.older,
+          loadingMore: false,
+          hasMore: false,
+        );
+        return;
+      }
+      final byId = <String, Event>{for (final e in state.older) e.id: e};
+      for (final e in page) {
+        byId[e.id] = e;
+      }
+      state = UserPostsPage(
+        older: _snapshotSorted(byId),
+        loadingMore: false,
+        hasMore: true,
+      );
+    } catch (_) {
+      // Fetch threw (relay unreachable, …) — keep what we have, stop the
+      // spinner; the next scroll-to-bottom retries.
+      state = UserPostsPage(
+        older: state.older,
+        loadingMore: false,
+        hasMore: state.hasMore,
+      );
+    }
+  }
+}
+
+/// One backward page of [pubkey]'s kind-1 notes with `created_at < until`,
+/// newest-first. Mirrors [userPostsProvider]'s fetch routing: the author's
+/// NIP-65 outbox relays when they publish a kind-10002, else a broadcast to
+/// the main pool (resolved on the FIRST EOSE so one slow relay doesn't stall
+/// the page). Each hit is ingested into the store (persisted + resolvable by
+/// id for detail pages), same as the newest-window fetch.
+Future<List<Event>> _fetchOlderPage(Ref ref, String pubkey, int until) async {
+  final pool = ref.read(relayPoolProvider);
+  final store = ref.read(eventStoreProvider.notifier);
+  final filter = <String, dynamic>{
+    'authors': [pubkey],
+    'kinds': [1],
+    'limit': 100,
+    'until': until,
+  };
+  final got = <Event>[];
+  final seen = <String>{};
+  void onFresh(Event e) {
+    if (!e.isTextNote || e.pubkey != pubkey) return;
+    if (seen.add(e.id)) {
+      got.add(e);
+      // Persist to SQLite (instant tap-through via [eventByIdProvider] +
+      // next-visit cache) but deliberately NOT into the in-memory feed store:
+      // deep history is profile-scope, and the following feed renders the whole
+      // store filtered by follows — pushing years of old posts into the store
+      // would surface them deep in the home feed. The newest window fetched by
+      // [userPostsProvider] still ingests normally (recent = feed-relevant).
+      unawaited(store.cacheThreadEvent(e));
+    }
+  }
+
+  final relays = await ref.read(userRelayListProvider(pubkey).future);
+  final outbox = relays?.read ?? const <String>[];
+  if (outbox.isNotEmpty) {
+    await pool.fetchFromUrls(filter, outbox, onEvent: onFresh);
+    return got;
+  }
+  // No published relay list — broadcast, resolve on first EOSE (the pool's
+  // closeOnEose waits ALL relays; resolve locally so a slow one doesn't stall).
+  final subId = nextSubId('user-more');
+  final done = Completer<void>();
+  final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+    if (!done.isCompleted) done.complete();
+  });
+  pool.request(subId, filter, closeOnEose: true, onEvent: onFresh);
+  final t = Timer(const Duration(seconds: 10), () {
+    if (!done.isCompleted) done.complete();
+  });
+  await done.future;
+  t.cancel();
+  await eoseSub.cancel();
+  pool.closeSubscription(subId);
+  return got;
 }
 
 /// Whether [kind] is a NIP-01 replaceable / parameterized-replaceable kind

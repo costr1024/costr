@@ -42,6 +42,10 @@ Future<void> refreshProfileData(WidgetRef ref, String pubkey) async {
   ref.invalidate(userFollowsProvider(pubkey));
   ref.invalidate(userFollowersProvider(pubkey));
   ref.invalidate(userPostsProvider(pubkey));
+  // Re-arm backward pagination: a refresh may revive a relay that earlier
+  // returned nothing older (keeps the pages already loaded, just allows
+  // digging past a 「没有更多了」).
+  ref.read(userPostsPagerProvider(pubkey).notifier).retry();
   // Await the posts re-fetch so the spinner stays until it resolves (the
   // other invalidates re-fire their own streams, which the header watches).
   await ref.read(userPostsProvider(pubkey).future);
@@ -151,8 +155,8 @@ class _ProfileBody extends ConsumerWidget {
         },
         body: TabBarView(
           children: [
-            _PostsTab(pubkey: pubkey),
-            _RepliesTab(pubkey: pubkey),
+            _NotesTab(pubkey: pubkey, repliesOnly: false),
+            _NotesTab(pubkey: pubkey, repliesOnly: true),
             _FollowsTab(pubkey: pubkey, isSelf: isSelf),
             _FollowersTab(pubkey: pubkey, isSelf: isSelf),
             _BookmarksTab(pubkey: pubkey),
@@ -193,59 +197,59 @@ class _Header extends ConsumerWidget {
           width: double.infinity,
           child: (meta?.banner != null && meta!.banner!.isNotEmpty)
               ? (ref.watch(proxyMediaEnabledProvider)
-                  ? ProxyableNetworkImage(
-                      url: meta!.banner!,
-                      fit: BoxFit.cover,
-                      placeholder: Container(
-                        width: double.infinity,
-                        height: 150,
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Color(0xFF6750A4),
-                              Color(0xFF7B1FA2),
-                              Color(0xFF512DA8),
-                            ],
+                    ? ProxyableNetworkImage(
+                        url: meta!.banner!,
+                        fit: BoxFit.cover,
+                        placeholder: Container(
+                          width: double.infinity,
+                          height: 150,
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                Color(0xFF6750A4),
+                                Color(0xFF7B1FA2),
+                                Color(0xFF512DA8),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    )
-                  : CostrNetworkImage(
-                      url: meta!.banner!,
-                      fit: BoxFit.cover,
-                      placeholder: (BuildContext _) => Container(
-                        width: double.infinity,
-                        height: 150,
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Color(0xFF6750A4),
-                              Color(0xFF7B1FA2),
-                              Color(0xFF512DA8),
-                            ],
+                      )
+                    : CostrNetworkImage(
+                        url: meta!.banner!,
+                        fit: BoxFit.cover,
+                        placeholder: (BuildContext _) => Container(
+                          width: double.infinity,
+                          height: 150,
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                Color(0xFF6750A4),
+                                Color(0xFF7B1FA2),
+                                Color(0xFF512DA8),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                      errorWidget: (BuildContext _) => Container(
-                        width: double.infinity,
-                        height: 150,
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Color(0xFF6750A4),
-                              Color(0xFF7B1FA2),
-                              Color(0xFF512DA8),
-                            ],
+                        errorWidget: (BuildContext _) => Container(
+                          width: double.infinity,
+                          height: 150,
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                Color(0xFF6750A4),
+                                Color(0xFF7B1FA2),
+                                Color(0xFF512DA8),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ))
+                      ))
               : Container(
                   decoration: const BoxDecoration(
                     gradient: LinearGradient(
@@ -849,15 +853,44 @@ class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {
       tabBar != old.tabBar || color != old.color;
 }
 
-class _PostsTab extends ConsumerStatefulWidget {
-  const _PostsTab({required this.pubkey});
-  final String pubkey;
-
-  @override
-  ConsumerState<_PostsTab> createState() => _PostsTabState();
+/// Merge [userPostsProvider]'s newest window ([base]) with the backward pages
+/// the profile has paged in ([older]). Dedup by id, newest-first with an
+/// id-ascending tie-break so the order is stable across rebuilds (no flicker).
+List<Event> _mergedUserNotes(List<Event> base, List<Event> older) {
+  if (older.isEmpty) return base;
+  final byId = <String, Event>{for (final e in base) e.id: e};
+  for (final e in older) {
+    byId[e.id] = e;
+  }
+  final list = byId.values.toList()
+    ..sort((a, b) {
+      final c = b.createdAt.compareTo(a.createdAt);
+      return c != 0 ? c : a.id.compareTo(b.id);
+    });
+  return list;
 }
 
-class _PostsTabState extends ConsumerState<_PostsTab> {
+/// 帖子 / 回帖 tab (shared implementation). [repliesOnly] false = top-level
+/// posts, true = replies. Watches [userPostsProvider] (the newest window) plus
+/// [userPostsPagerProvider] (older pages) and merges them; scrolling to the
+/// bottom auto-loads the next older page, so a profile's full history is
+/// reachable instead of stopping at the first ~100 notes
+/// ("看不到 1 个多月之前的历史帖子，下拉也没有加载更多").
+class _NotesTab extends ConsumerStatefulWidget {
+  const _NotesTab({required this.pubkey, required this.repliesOnly});
+  final String pubkey;
+
+  /// false = 帖子 tab, true = 回帖 tab.
+  final bool repliesOnly;
+
+  @override
+  ConsumerState<_NotesTab> createState() => _NotesTabState();
+}
+
+class _NotesTabState extends ConsumerState<_NotesTab> {
+  /// Trigger load-more when this close (px) to the bottom of the list.
+  static const int _loadMoreThreshold = 300;
+
   final _controller = TextEditingController();
   String _query = '';
   Timer? _debounce;
@@ -876,9 +909,17 @@ class _PostsTabState extends ConsumerState<_PostsTab> {
     });
   }
 
+  /// True when [e] belongs to this tab (post vs reply).
+  bool _matchesTab(Event e) => widget.repliesOnly ? e.isReply : !e.isReply;
+
+  String get _hint => widget.repliesOnly ? '搜索该用户的回帖…' : '搜索该用户的帖子…';
+  String get _emptyAll => widget.repliesOnly ? '暂无回帖' : '暂无帖子';
+  String get _emptyMatch => widget.repliesOnly ? '无匹配回帖' : '无匹配帖子';
+
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(userPostsProvider(widget.pubkey));
+    final pager = ref.watch(userPostsPagerProvider(widget.pubkey));
     // Sliver-based body (not Column[SearchBar, Expanded]) so the fixed-height
     // search bar doesn't overflow when the NestedScrollView body is given a
     // bounded height smaller than the bar during header scroll (the recurring
@@ -886,131 +927,152 @@ class _PostsTabState extends ConsumerState<_PostsTab> {
     // any bounded height; a Column with a fixed-height child does not.
     return RefreshIndicator(
       onRefresh: () => refreshProfileData(ref, widget.pubkey),
-      child: CustomScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          SliverToBoxAdapter(
-            child: _SearchBar(
-              controller: _controller,
-              hint: '搜索该用户的帖子…',
-              onChanged: _onChanged,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: _SearchBar(
+                controller: _controller,
+                hint: _hint,
+                onChanged: _onChanged,
+              ),
             ),
-          ),
-          async.when(
-            loading: () => const SliverFillRemaining(
-              hasScrollBody: false,
-              child: Center(child: CircularProgressIndicator()),
-            ),
-            error: (Object e, _) => SliverFillRemaining(
-              hasScrollBody: false,
-              child: Center(child: Text('加载失败：$e')),
-            ),
-            data: (List<Event> all) {
-              var posts = all.where((e) => !e.isReply).toList();
-              if (_query.isNotEmpty) {
-                final q = _query.toLowerCase();
-                posts = posts
-                    .where((e) => e.content.toLowerCase().contains(q))
-                    .toList();
-              }
-              if (posts.isEmpty) {
-                return SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(child: Text(_query.isEmpty ? '暂无帖子' : '无匹配帖子')),
-                );
-              }
-              return SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (BuildContext context, int i) =>
-                      UserPostItem(event: posts[i]),
-                  childCount: posts.length,
-                ),
-              );
-            },
-          ),
-        ],
+            ..._bodySlivers(async, pager),
+          ],
+        ),
       ),
     );
   }
-}
 
-class _RepliesTab extends ConsumerStatefulWidget {
-  const _RepliesTab({required this.pubkey});
-  final String pubkey;
-
-  @override
-  ConsumerState<_RepliesTab> createState() => _RepliesTabState();
-}
-
-class _RepliesTabState extends ConsumerState<_RepliesTab> {
-  final _controller = TextEditingController();
-  String _query = '';
-  Timer? _debounce;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _debounce?.cancel();
-    super.dispose();
+  List<Widget> _bodySlivers(
+    AsyncValue<List<Event>> async,
+    UserPostsPage pager,
+  ) {
+    if (async.isLoading) {
+      return const [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ];
+    }
+    if (async.hasError) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(child: Text('加载失败：${async.error}')),
+        ),
+      ];
+    }
+    final all = async.value ?? const <Event>[];
+    final merged = _mergedUserNotes(all, pager.older);
+    var notes = merged.where(_matchesTab).toList();
+    if (_query.isNotEmpty) {
+      final q = _query.toLowerCase();
+      notes = notes.where((e) => e.content.toLowerCase().contains(q)).toList();
+    }
+    if (notes.isEmpty) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(child: Text(_query.isEmpty ? _emptyAll : _emptyMatch)),
+        ),
+      ];
+    }
+    return [
+      SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (BuildContext context, int i) => UserPostItem(event: notes[i]),
+          childCount: notes.length,
+        ),
+      ),
+      // Pagination footer only when not searching: a filtered list's bottom
+      // isn't a meaningful backward cursor (and the trigger skips searching).
+      if (_query.isEmpty)
+        SliverToBoxAdapter(child: _LoadMoreFooter(pager: pager)),
+    ];
   }
 
-  void _onChanged(String v) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) setState(() => _query = v.trim());
-    });
+  /// Scroll-driven auto load-more (same shape as the home feed): near the
+  /// bottom of THIS tab's list, fetch the next older page.
+  bool _onScroll(ScrollNotification n) {
+    // Ignore horizontal scrollables nested inside cards (their metrics used to
+    // misfire bottom-detection — see the home feed's identical guard).
+    final axis = n.metrics.axisDirection;
+    if (axis != AxisDirection.down && axis != AxisDirection.up) return false;
+    if (n is! ScrollUpdateNotification && n is! ScrollEndNotification) {
+      return false;
+    }
+    if (_query.isNotEmpty) return false; // don't page while a search filters
+    if (n.metrics.pixels < n.metrics.maxScrollExtent - _loadMoreThreshold) {
+      return false;
+    }
+    _maybeLoadMore();
+    return false;
   }
+
+  void _maybeLoadMore() {
+    final pager = ref.read(userPostsPagerProvider(widget.pubkey));
+    if (pager.loadingMore || !pager.hasMore) return;
+    final base = ref.read(userPostsProvider(widget.pubkey)).value;
+    if (base == null) return; // newest window still loading
+    final merged = _mergedUserNotes(base, pager.older);
+    // Oldest visible item for THIS tab (merged is newest-first → scan from the
+    // end). That item's createdAt is the backward cursor.
+    Event? oldest;
+    for (var i = merged.length - 1; i >= 0; i--) {
+      if (_matchesTab(merged[i])) {
+        oldest = merged[i];
+        break;
+      }
+    }
+    if (oldest == null) return;
+    ref
+        .read(userPostsPagerProvider(widget.pubkey).notifier)
+        .loadMore(oldestCreatedAt: oldest.createdAt);
+  }
+}
+
+/// Trailing pagination indicator under the post/reply list: a spinner while a
+/// backward page loads, 「没有更多了」 once relays report nothing older.
+class _LoadMoreFooter extends StatelessWidget {
+  const _LoadMoreFooter({required this.pager});
+  final UserPostsPage pager;
 
   @override
   Widget build(BuildContext context) {
-    final async = ref.watch(userPostsProvider(widget.pubkey));
-    return RefreshIndicator(
-      onRefresh: () => refreshProfileData(ref, widget.pubkey),
-      child: CustomScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          SliverToBoxAdapter(
-            child: _SearchBar(
-              controller: _controller,
-              hint: '搜索该用户的回帖…',
-              onChanged: _onChanged,
-            ),
-          ),
-          async.when(
-            loading: () => const SliverFillRemaining(
-              hasScrollBody: false,
-              child: Center(child: CircularProgressIndicator()),
-            ),
-            error: (Object e, _) => SliverFillRemaining(
-              hasScrollBody: false,
-              child: Center(child: Text('加载失败：$e')),
-            ),
-            data: (List<Event> all) {
-              var replies = all.where((e) => e.isReply).toList();
-              if (_query.isNotEmpty) {
-                final q = _query.toLowerCase();
-                replies = replies
-                    .where((e) => e.content.toLowerCase().contains(q))
-                    .toList();
-              }
-              if (replies.isEmpty) {
-                return SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(child: Text(_query.isEmpty ? '暂无回帖' : '无匹配回帖')),
-                );
-              }
-              return SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (BuildContext context, int i) =>
-                      UserPostItem(event: replies[i]),
-                  childCount: replies.length,
-                ),
-              );
-            },
-          ),
-        ],
-      ),
+    final theme = Theme.of(context);
+    final hintStyle = theme.textTheme.bodySmall?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
     );
+    if (pager.loadingMore) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Text('正在加载更早的内容…', style: hintStyle),
+            ],
+          ),
+        ),
+      );
+    }
+    if (!pager.hasMore) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: Text('没有更多了', style: hintStyle)),
+      );
+    }
+    return const SizedBox.shrink();
   }
 }
 

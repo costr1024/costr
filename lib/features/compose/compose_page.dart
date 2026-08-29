@@ -1131,11 +1131,14 @@ class _ComposePageState extends ConsumerState<ComposePage>
                   onPressed: _uploading ? null : _pickFile,
                 ),
                 const Spacer(),
-                FilterChip(
-                  label: const Text('NSFW'),
-                  selected: _nsfw,
-                  onSelected: (v) => setState(() => _nsfw = v),
-                  visualDensity: VisualDensity.compact,
+                // NSFW toggle as a fixed-size 🔞 emoji instead of a FilterChip:
+                // the chip's selected-state checkmark widened it ("占位太宽",
+                // especially when ON), squeezing the character counter on the
+                // right off-screen. The emoji never changes size; grayscale =
+                // off, full color = on.
+                _NsfwToggle(
+                  value: _nsfw,
+                  onChanged: (v) => setState(() => _nsfw = v),
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -1171,8 +1174,60 @@ class _AttachBtn extends StatelessWidget {
     onPressed: onPressed,
     style: TextButton.styleFrom(
       padding: const EdgeInsets.symmetric(horizontal: 6),
+      // Drop Material's 64px minimum button width + padded tap-target so the
+      // toolbar (3 attach buttons + NSFW toggle + char counter) fits narrow
+      // screens instead of clipping the counter on the right.
+      minimumSize: const Size(0, 36),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
     ),
   );
+}
+
+/// Compact NSFW (18禁) toggle for the compose toolbar: a fixed-size 🔞 emoji —
+/// grayscale while OFF, full color when ON. A FilterChip used to do this job,
+/// but its selected-state checkmark widened the chip (worst when ON), which
+/// pushed the character counter off-screen on narrow layouts. The emoji is a
+/// constant ~36px either way, and the grayscale/color contrast reads as an
+/// on/off state at a glance.
+class _NsfwToggle extends StatelessWidget {
+  const _NsfwToggle({required this.value, required this.onChanged});
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    const emoji = Text('🔞', style: TextStyle(fontSize: 20, height: 1.1));
+    return Tooltip(
+      message: value ? '18禁标记：开' : '18禁标记：关',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => onChanged(!value),
+        child: Container(
+          width: 36,
+          height: 36,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            // ON: a soft primary-tinted pill behind the colored emoji; OFF:
+            // nothing — the desaturated emoji alone marks the off state.
+            color: value
+                ? theme.colorScheme.primary.withValues(alpha: 0.14)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: value
+              ? emoji
+              : ColorFiltered(
+                  colorFilter: const ColorFilter.mode(
+                    Colors.grey,
+                    BlendMode.saturation,
+                  ),
+                  child: Opacity(opacity: 0.7, child: emoji),
+                ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AttachmentGrid extends StatelessWidget {
