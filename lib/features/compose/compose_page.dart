@@ -1183,12 +1183,17 @@ class _AttachBtn extends StatelessWidget {
   );
 }
 
-/// Compact NSFW (18禁) toggle for the compose toolbar: a fixed-size 🔞 emoji —
-/// grayscale while OFF, full color when ON. A FilterChip used to do this job,
-/// but its selected-state checkmark widened the chip (worst when ON), which
-/// pushed the character counter off-screen on narrow layouts. The emoji is a
-/// constant ~36px either way, and the grayscale/color contrast reads as an
-/// on/off state at a glance.
+/// Compact NSFW (18禁) toggle for the compose toolbar: a fixed-size 18+ icon —
+/// gray when OFF, red when ON. A FilterChip used to do this job, but its
+/// selected-state checkmark widened the chip (worst when ON), which pushed the
+/// character counter off-screen on narrow layouts.
+///
+/// Grayscaling a 🔞 emoji via `ColorFiltered(Colors.grey, BlendMode.saturation)`
+/// was tried first, but on some Android devices (Impeller) the filter layer
+/// mis-bounds and fills the ENTIRE body with the filter color — the whole
+/// compose page went #9E9E9E gray while OFF (covering the editor + attach
+/// buttons). A vector [Icon] colored directly has no filter layer and renders
+/// identically everywhere, while keeping the same 灰=关 / 彩=开 read.
 class _NsfwToggle extends StatelessWidget {
   const _NsfwToggle({required this.value, required this.onChanged});
   final bool value;
@@ -1197,7 +1202,6 @@ class _NsfwToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    const emoji = Text('🔞', style: TextStyle(fontSize: 20, height: 1.1));
     return Tooltip(
       message: value ? '18禁标记：开' : '18禁标记：关',
       child: InkWell(
@@ -1208,22 +1212,20 @@ class _NsfwToggle extends StatelessWidget {
           height: 36,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            // ON: a soft primary-tinted pill behind the colored emoji; OFF:
-            // nothing — the desaturated emoji alone marks the off state.
+            // ON: a soft red pill behind the red icon; OFF: nothing — the
+            // muted-gray icon alone marks the off state.
             color: value
-                ? theme.colorScheme.primary.withValues(alpha: 0.14)
+                ? theme.colorScheme.error.withValues(alpha: 0.12)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
-          child: value
-              ? emoji
-              : ColorFiltered(
-                  colorFilter: const ColorFilter.mode(
-                    Colors.grey,
-                    BlendMode.saturation,
-                  ),
-                  child: Opacity(opacity: 0.7, child: emoji),
-                ),
+          child: Icon(
+            Icons.eighteen_up_rating,
+            size: 22,
+            color: value
+                ? theme.colorScheme.error
+                : theme.colorScheme.onSurfaceVariant,
+          ),
         ),
       ),
     );
