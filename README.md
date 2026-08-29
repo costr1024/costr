@@ -10,9 +10,9 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **1.2.3** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.2.3/app-release.apk)（≈74 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.2.5** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.2.5/app-release.apk)（≈74 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 当前为正式版（v1.2.3）。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为正式版（v1.2.5）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
 >
@@ -33,7 +33,7 @@
 > （`network_security_config.xml`）：只对 127.0.0.1 放行明文，对外连接不受影响、
 > 仍全为 HTTPS。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / v1.1.7 正式版 / v1.2.0 正式版 / v1.2.1 正式版 / v1.2.2 正式版 / **v1.2.3 正式版**。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / v1.1.7 正式版 / v1.2.0 正式版 / v1.2.1 正式版 / v1.2.2 正式版 / v1.2.3 正式版 / **v1.2.5 正式版**（跳过 1.2.4，避讳 4）。
 
 ---
 
@@ -441,6 +441,14 @@ markdown 渲染（九宫格/自定义表情/mention）、语言检测、打闪�
 通知中心、多账号、关注分组（NIP-51 kind-30000，Amethyst 兼容）、收藏（NIP-51 + NIP-44 私密）、
 屏蔽列表、媒体代理、服务器节点自定义 + 去中心化推荐、本地 SQLite 缓存秒开。覆盖安装即可从
 任一 0.x-beta 升级，登录 / 关注 / 屏蔽 / 收藏 / 本地缓存全部保留。
+
+**v1.2.5 相对 v1.2.3 的修复/新增**（版本号跳过 1.2.4，避讳 4）：
+1. **个人主页可以一直往下翻历史帖了**——此前帖子/回帖列表只显示最近约 100 条，
+   刷到底就没了、下拉也不加载更早的。现在刷到最老一条会自动加载更早的一页，
+   可以一直翻到最早的帖子；翻空中继后底部显示「没有更多了」，下拉刷新可再试。
+   自己的主页和其他用户的主页都一样，「帖子」「回帖」两个列表都支持。
+2. **发帖页 18禁（NSFW）开关改成 🔞 表情**——灰色＝关、彩色＝开，点一下切换。
+   修复了此前开关（尤其打开时）太宽、把右边的帖子字数挤出屏幕显示不全的问题。
 
 **v1.2.3 相对 v1.2.2 的修复/新增**：
 1. **帖子里的音频能直接听了**——此前帖子里的音频链接（.mp3、语音等）只能点一下跳
