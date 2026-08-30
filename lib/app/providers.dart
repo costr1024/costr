@@ -2608,6 +2608,107 @@ Future<OutboxMap> buildOutboxMap(
   return OutboxMap(relayToAuthors, defaultBucket);
 }
 
+/// Interval of the following-feed catch-up sweep — see
+/// [runFollowingCatchUp].
+const Duration kFollowingSweepInterval = Duration(minutes: 2);
+
+bool _followingSweepInFlight = false;
+
+/// Incremental catch-up for the following feed over TRANSIENT connections,
+/// routed straight into the store (bypassing the merged stream + the live
+/// long-lived subs). The following feed's live pipelines (feed-me own-post
+/// sub, outbox router, default bucket) can die silently — a relay-side
+/// CLOSED on a healthy socket, a zombie TCP path the OS never reports — and
+/// pull-refresh re-issues them onto the same dead path, which left the feed
+/// frozen until a restart/background-resume forced fresh sockets ("关注流停
+/// 更，刷新无效"). Every [kFollowingSweepInterval] this fetches strictly-newer
+/// own + followee posts (`since` = newest held) so a dead pipeline heals
+/// within one sweep no matter what killed it. Skips when nothing is held yet
+/// (cold load is the live subs' job) and never stacks two sweeps.
+Future<void> runFollowingCatchUp(
+  Ref ref,
+  Identity identity,
+  List<String> follows,
+) async {
+  if (!ref.mounted) return;
+  final pool = ref.read(relayPoolProvider);
+  final store = ref.read(eventStoreProvider.notifier);
+  final held = ref.read(eventStoreProvider);
+  final followsSet = follows.toSet();
+  var newestOwn = 0;
+  var newestFollowee = 0;
+  for (final e in held) {
+    if (e.pubkey == identity.pubkeyHex) {
+      if (e.createdAt > newestOwn) newestOwn = e.createdAt;
+    } else if (followsSet.contains(e.pubkey) && e.createdAt > newestFollowee) {
+      newestFollowee = e.createdAt;
+    }
+  }
+  // Own posts first (the feed-me sub is the one that died in the field):
+  // one-shot routed REQ, newest-own cursor.
+  if (newestOwn > 0) {
+    final subId = nextSubId('sweep-me');
+    final done = Completer<void>();
+    final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+      if (!done.isCompleted) done.complete();
+    });
+    pool.request(subId, <String, dynamic>{
+      'kinds': [1, 6],
+      'authors': [identity.pubkeyHex],
+      'since': newestOwn,
+      'limit': 100,
+    }, closeOnEose: true, onEvent: (e) => unawaited(store.ingest(e)));
+    final t = Timer(const Duration(seconds: 8), () {
+      if (!done.isCompleted) done.complete();
+    });
+    await done.future;
+    t.cancel();
+    await eoseSub.cancel();
+    pool.closeSubscription(subId);
+    if (!ref.mounted) return;
+  }
+  // Followees: transient NIP-65 outbox page (fresh socket per relay) plus a
+  // default-bucket broadcast for followees without a usable outbox.
+  if (newestFollowee > 0 && follows.isNotEmpty) {
+    final map = await buildOutboxMap(
+      (pk) => ref.read(userRelayListProvider(pk).future),
+      follows,
+    );
+    if (!ref.mounted) return;
+    final router = OutboxRouter(
+      makeClient: RelayClient.new,
+      identityGetter: () => ref.read(identityProvider).value,
+    );
+    await router.fetchOnce(
+      map.relayToAuthors,
+      since: newestFollowee,
+      onEvent: (e) => unawaited(store.ingest(e)),
+    );
+    await router.close();
+    if (!ref.mounted) return;
+    if (map.defaultBucket.isNotEmpty) {
+      final subId = nextSubId('sweep-follows');
+      final done = Completer<void>();
+      final eoseSub = pool.eoseStream.where((s) => s == subId).listen((_) {
+        if (!done.isCompleted) done.complete();
+      });
+      pool.request(subId, <String, dynamic>{
+        'kinds': [0, 1, 6, 7],
+        'authors': List<String>.from(map.defaultBucket),
+        'since': newestFollowee,
+        'limit': 200,
+      }, closeOnEose: true, onEvent: (e) => unawaited(store.ingest(e)));
+      final t = Timer(const Duration(seconds: 8), () {
+        if (!done.isCompleted) done.complete();
+      });
+      await done.future;
+      t.cancel();
+      await eoseSub.cancel();
+      pool.closeSubscription(subId);
+    }
+  }
+}
+
 /// Drives the **following** feed via NIP-65 outbox routing. A void provider
 /// (kept alive by [currentFeedEventsProvider]); rebuilds — tearing down the
 /// old [OutboxRouter] + default-bucket sub via onDispose — when feed mode,
@@ -2667,7 +2768,19 @@ final followingOutboxProvider = Provider<void>((ref) {
   // one in the store, but once it's evicted (5000 in-memory cap) nothing would
   // ever re-fetch it — so keep a small live REQ for your own recent posts.
   final meSubId = nextSubId('feed-me');
+  // Periodic catch-up sweep over transient connections — the safety net that
+  // heals the feed when a live sub dies silently (see runFollowingCatchUp).
+  final sweep = Timer.periodic(kFollowingSweepInterval, (_) {
+    if (_followingSweepInFlight) return;
+    _followingSweepInFlight = true;
+    unawaited(
+      runFollowingCatchUp(ref, identity, follows).whenComplete(() {
+        _followingSweepInFlight = false;
+      }),
+    );
+  });
   ref.onDispose(() {
+    sweep.cancel();
     router.close();
     final sid = defaultSubId;
     if (sid != null) pool.closeSubscription(sid);

@@ -44,6 +44,32 @@ class RelayPool {
   final Set<String> _closeOnEose = {};
   final Map<String, int> _eoseCount = {};
   final LinkedHashSet<String> _seenIds = LinkedHashSet();
+  bool _disposed = false;
+
+  /// Connections currently running a liveness probe (so the periodic check
+  /// never stacks two probes on the same socket).
+  final Set<RelayConnection> _probing = {};
+
+  /// Backoff attempt counters for relay-CLOSED live-sub re-issues, keyed
+  /// `<url>|<subId>`. Cleared when the sub closes.
+  final Map<String, int> _closedRetryAttempts = {};
+
+  /// Periodic zombie-socket probe (started in [connect], cancelled in
+  /// [dispose]).
+  Timer? _livenessTimer;
+
+  /// Liveness probe tuning (mutable so tests can shorten the timings):
+  /// probe a connected-but-silent socket after [idleProbeThreshold], give the
+  /// probe [probeTimeout] to answer, and scan every [livenessPeriod] once
+  /// [connect] has run. Production defaults: silent 3 min → 8 s probe →
+  /// 1 min cadence.
+  Duration idleProbeThreshold = const Duration(minutes: 3);
+  Duration probeTimeout = const Duration(seconds: 8);
+  Duration livenessPeriod = const Duration(minutes: 1);
+
+  /// Cap on relay-CLOSED re-issue attempts per sub (doubling backoff 2s→60s);
+  /// past this the periodic following-feed sweep is the safety net.
+  static const int _kMaxClosedRetries = 6;
 
   /// Subscription-scoped event routes: subId → handler. Events arriving under
   /// a routed subId go ONLY to its handler — they never reach the [events] /
@@ -249,6 +275,13 @@ class RelayPool {
     if (_connecting || _mergedWired) return;
     _connecting = true;
     _wireMerged();
+    // Liveness probing only means anything on real sockets (fakes in tests
+    // have no idle/probe semantics) — and a periodic Timer registered under
+    // fake-async tests would trip the "timer still pending" invariant.
+    if (_connections.any((c) => c is RelayClient)) {
+      _livenessTimer ??=
+          Timer.periodic(livenessPeriod, (_) => checkLiveness());
+    }
     // Connect all relays concurrently (not sequentially) so a blocked relay
     // (RelayClient.connect awaits a 10s ready timeout) doesn't stall reachable
     // relays behind it.
@@ -276,6 +309,56 @@ class RelayPool {
       if (!c.isConnected) await c.connect().catchError((Object _) {});
     }
     _emitStatus();
+    // Backgrounding suspends TCP; a socket can come back half-dead (the OS
+    // still says connected). Probe the silent ones so zombies get re-dialed
+    // and their live subscriptions re-issued.
+    checkLiveness();
+  }
+
+  /// Probe every connection that has been silent too long; a failed probe
+  /// force-reconnects the socket (zombie), and the on-connected hook then
+  /// re-issues ALL active subscriptions on the fresh socket. Real clients
+  /// only — fakes in tests don't surface idle/probe semantics.
+  void checkLiveness() {
+    for (final c in _connections) {
+      if (c is! RelayClient) continue;
+      if (!c.isConnected || _probing.contains(c)) continue;
+      if (c.idleFor() <= idleProbeThreshold) continue;
+      _probing.add(c);
+      unawaited(() async {
+        try {
+          final ok = await c.measureRtt(timeout: probeTimeout);
+          if (ok == null && !_disposed && c.isConnected) {
+            c.dropForReconnect();
+          }
+        } finally {
+          _probing.remove(c);
+        }
+      }());
+    }
+  }
+
+  /// Re-issue a LIVE (non closeOnEose) subscription the relay just CLOSED
+  /// (rate-limit, relay restart that kept the socket): the relay will never
+  /// deliver on it again and no reconnect fires (the socket is fine), so
+  /// without this the sub stays silently dead. Capped exponential backoff
+  /// (2s→60s, [RelayPool._kMaxClosedRetries] attempts); past the cap the
+  /// following-feed sweep is the safety net.
+  void resubscribeAfterClosed(RelayConnection c, String subId) {
+    final filter = _activeSubs[subId];
+    if (filter == null) return; // locally closed already
+    if (_closeOnEose.contains(subId)) return; // one-shot sub, closing anyway
+    final key = '${c.url}|$subId';
+    final attempts = _closedRetryAttempts[key] ?? 0;
+    if (attempts >= _kMaxClosedRetries) return;
+    _closedRetryAttempts[key] = attempts + 1;
+    final secs = (1 << attempts).clamp(2, 60);
+    Timer(Duration(seconds: secs), () {
+      if (_disposed) return;
+      final f = _activeSubs[subId];
+      if (f == null || _closeOnEose.contains(subId)) return;
+      if (c.isConnected) c.request(subId, f);
+    });
   }
 
   void _wireMerged() {
@@ -315,6 +398,13 @@ class RelayPool {
         _seenIds.remove(_seenIds.first);
       }
     });
+    // Relay-side CLOSED of a LIVE sub (rate-limit "too many subscriptions",
+    // a relay restart that kept the socket): the relay never delivers on it
+    // again, and because the SOCKET is fine no reconnect fires to re-issue
+    // it — the sub stays silently dead. Re-send it with capped backoff.
+    if (c is RelayClient) {
+      c.closed.listen((pair) => resubscribeAfterClosed(c, pair.$1));
+    }
     c.eose.listen((String subId) {
       if (!_eose.isClosed) _eose.add(subId);
       // closeOnEose subs close only after ALL connected relays have EOSE'd —
@@ -459,6 +549,7 @@ class RelayPool {
     _closeOnEose.remove(subId);
     _eoseCount.remove(subId);
     _routeSubs.remove(subId);
+    _closedRetryAttempts.removeWhere((k, _) => k.endsWith('|$subId'));
     for (final c in _connections) {
       if (c.isConnected) c.closeSubscription(subId);
     }
@@ -689,6 +780,8 @@ class RelayPool {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
+    _livenessTimer?.cancel();
     for (final c in _connections) {
       await c.dispose();
     }

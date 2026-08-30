@@ -96,6 +96,11 @@ class RelayClient implements RelayConnection {
   Timer? _reconnectTimer;
   bool _connected = false;
   bool _disposed = false;
+  /// Last time ANY frame arrived from the relay — the liveness signal the
+  /// pool's zombie-socket probe uses ([idleFor]). A connected-but-silent
+  /// socket (NAT drop, relay-side half-close) keeps `_connected` true forever
+  /// without this; the probe then proves it dead and forces a reconnect.
+  DateTime _lastFrame = DateTime.now();
   // True once the current channel's WS/TLS handshake completed (ready fired).
   // A channel whose handshake NEVER completed (GFW-blackholed relay) has a
   // pending connect future, and its sink.close() would block forever on that
@@ -188,6 +193,7 @@ class RelayClient implements RelayConnection {
     );
     _connected = true;
     _backoffMs = 1000; // reset on success
+    _lastFrame = DateTime.now();
     _onConnected?.call();
   }
 
@@ -208,6 +214,7 @@ class RelayClient implements RelayConnection {
   }
 
   void _onData(dynamic data) {
+    _lastFrame = DateTime.now();
     try {
       final msg = jsonDecode(data as String);
       if (msg is! List || msg.length < 2) return;
@@ -346,6 +353,21 @@ class RelayClient implements RelayConnection {
       await closedSub.cancel();
       _send(['CLOSE', subId]);
     }
+  }
+
+  /// How long this connection has received NO frames at all. The pool's
+  /// liveness probe treats "connected but silent past the threshold" as a
+  /// zombie candidate and verifies it with [measureRtt].
+  Duration idleFor() => DateTime.now().difference(_lastFrame);
+
+  /// Tear down a socket that LOOKS connected but is silently dead (the OS
+  /// never reported the half-dead TCP path, so [_handleDisconnect] never ran
+  /// and the backoff reconnect never fired). Runs the normal disconnect path:
+  /// onDisconnected hook + scheduled reconnect, and the pool's on-connected
+  /// hook then re-issues every active subscription on the fresh socket.
+  void dropForReconnect() {
+    if (_disposed || !_connected) return;
+    _handleDisconnect();
   }
 
   @override
