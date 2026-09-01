@@ -598,7 +598,7 @@
 
       <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);padding:4px 8px 4px 16px;margin-top:14px">
         <b style="font-size:13px">Blossom 图床服务器</b>
-        <button style="border:none;background:none;color:var(--brand);font:600 13px var(--font);cursor:pointer;padding:6px" onclick="openSheet('server-list-sheet')">自定义</button>
+        <button style="border:none;background:none;color:var(--brand);font:600 13px var(--font);cursor:pointer;padding:6px" onclick="openSheet('blossom-list-sheet')">自定义</button>
       </div>
       <div style="background:var(--bg);border-top:1px solid var(--bd)">
         <div style="display:flex;align-items:center;gap:10px;padding:7px 16px"><span style="width:9px;height:9px;border-radius:50%;background:#17bf63;flex:none"></span><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">https://blossom.ditto.pub</span><b style="font-size:13px;color:#17bf63">132ms</b></div>
@@ -791,6 +791,54 @@
           <span style="flex:1"></span>
           <button class="big-btn" style="padding:10px 20px" onclick="closeSheet('server-list-sheet')">取消</button>
           <button class="big-btn primary" style="padding:10px 20px" onclick="closeSheet('server-list-sheet');alert('已保存（demo 占位）')">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 自定义 Blossom 图床 sheet（高级功能：拖拽排序 + 一键测速 + 增删，保存才生效） -->
+  <div class="sheet" id="blossom-list-sheet">
+    <div class="card">
+      <div class="grab"></div>
+      <div style="padding:8px 20px 20px;overflow:auto">
+        <h3 style="font-size:17px;margin-bottom:10px">自定义 Blossom 图床</h3>
+        <div style="background:#FFF4E6;border:1px solid #FFD9A0;border-radius:8px;padding:12px;font-size:13px;line-height:1.6;color:var(--tx)">这是高级功能。这里的服务器用来存放你上传的图片和视频，只支持使用 Blossom 协议的图床。拖动调整顺序，排在前面的优先使用；点「测速」可实测每台的上传/下载速度，把快的放前面。只有当某台服务器长期处于离线状态时，才需要来自定义。如果列表配置错误，图片和视频会上传失败。不确定怎么改的话，保持默认就好。</div>
+        <!-- 图床行比其他类别多两样：左侧拖拽手柄（⠿）+ 行下方的测速结果 -->
+        <div style="margin-top:12px;border-top:1px solid var(--bd)">
+          <div style="padding:6px 0;border-bottom:1px solid var(--bd)">
+            <div style="display:flex;align-items:center;gap:8px"><span style="color:var(--tx3);cursor:grab" title="拖动调整顺序">⠿</span><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">https://blossom.ditto.pub</span><span style="color:var(--tx3);cursor:pointer" title="删除">🗑</span></div>
+            <div style="margin:2px 0 0 28px;font-size:12px;color:var(--tx2)">上传 2.4 MB/s · 下载 9.8 MB/s</div>
+          </div>
+          <div style="padding:6px 0;border-bottom:1px solid var(--bd)">
+            <div style="display:flex;align-items:center;gap:8px"><span style="color:var(--tx3);cursor:grab" title="拖动调整顺序">⠿</span><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">https://media.libernet.app</span><span style="color:var(--tx3);cursor:pointer" title="删除">🗑</span></div>
+            <div style="margin:2px 0 0 28px;font-size:12px;color:var(--tx2)">上传 1.1 MB/s · 下载 6.3 MB/s</div>
+          </div>
+          <div style="padding:6px 0;border-bottom:1px solid var(--bd)">
+            <div style="display:flex;align-items:center;gap:8px"><span style="color:var(--tx3);cursor:grab" title="拖动调整顺序">⠿</span><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">https://nostr.download</span><span style="color:var(--tx3);cursor:pointer" title="删除">🗑</span></div>
+            <div style="margin:2px 0 0 28px;font-size:12px;color:#f4212e">测速失败</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <input style="flex:1;box-sizing:border-box;border:1px solid var(--bd);border-radius:8px;padding:10px;font:14px var(--font)" placeholder="https://…">
+          <button style="border:none;background:var(--brand);color:#fff;border-radius:999px;padding:0 18px;font:600 14px var(--font);cursor:pointer">添加</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:16px">
+          <button style="border:none;background:none;color:var(--brand);font:600 14px var(--font);cursor:pointer;padding:8px">恢复默认</button>
+          <button style="border:none;background:none;color:var(--brand);font:600 14px var(--font);cursor:pointer;padding:8px" onclick="alert('测速中…（demo 占位）')">⚡ 测速</button>
+          <span style="flex:1"></span>
+          <button class="big-btn" style="padding:10px 20px" onclick="closeSheet('blossom-list-sheet')">取消</button>
+          <button class="big-btn primary" style="padding:10px 20px" onclick="closeSheet('blossom-list-sheet');alert('已保存（demo 占位）')">保存</button>
+        </div>
+        <div style="color:var(--tx3);font-size:12px;margin-top:8px">共 3 台 · 最多 10 台 · 至少保留 1 台 · 测速会上传一个 10 MB 测试文件，测完自动删除 · 测速结果不保存，关面板即清空</div>
+        <!-- 为你推荐（图床文案：实测上传极小测试文件验证） -->
+        <div style="margin-top:14px;border-top:1px solid var(--bd);padding-top:10px">
+          <div style="display:flex;align-items:center">
+            <b style="font-size:14px">为你推荐</b>
+            <span style="flex:1"></span>
+            <button style="border:none;background:none;color:var(--brand);font:600 13px var(--font);cursor:pointer;padding:4px">换一批</button>
+          </div>
+          <div style="color:var(--tx3);font-size:12px;margin-top:2px">这些图床经过实测：可以免费上传（检测时上传了一个极小的测试文件）。之后仍可能失效，添加后可自行上传一张图片验证。</div>
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">https://blossom.example.org</span><button style="border:1px solid var(--bd);background:none;color:var(--brand);border-radius:999px;padding:4px 14px;font:600 13px var(--font);cursor:pointer">添加</button></div>
         </div>
       </div>
     </div>

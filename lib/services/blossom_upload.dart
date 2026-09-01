@@ -9,9 +9,17 @@
 /// 4. Response JSON: {url, sha256, size, type, uploaded}.
 ///
 /// Tries servers in order; on failure (network error / non-2xx) retries the next.
+///
+/// Also hosts the manual Blossom SPEED TEST (customize sheet's 「测速」):
+/// [measureBlossomSpeed] uploads a fresh 10 MiB random file (video/mp4) to ONE
+/// server and times it, downloads that file back and times it, then
+/// best-effort DELETEs the test file so speed tests don't pile garbage on the
+/// server. Results are never persisted — see features/settings/server_list_sheet.dart.
 library;
 
 import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:http/http.dart' as http;
@@ -124,41 +132,71 @@ Future<BlossomResult?> blossomUpload(
   final auth = _buildAuthEvent(identity, sha, bytes.length, mimetype, note);
   // BUD-11 says base64url without padding, but libernet (Python b64) rejects
   // no-pad with "Incorrect padding"; ditto accepts both. Padded works for all.
-  final authHeader =
-      'Nostr ${base64Url.encode(utf8.encode(jsonEncode(auth.toWireObject())))}';
+  final authHeader = _nostrAuthHeader(auth);
 
   final targets = (servers == null || servers.isEmpty)
       ? blossomServers
       : servers;
   final uploader = client ?? _uploadClient;
   for (final server in targets) {
-    final url = '${server.replaceAll(RegExp(r'/+$'), '')}/upload';
-    try {
-      final res = await uploader
-          .put(
-            Uri.parse(url),
-            headers: <String, String>{
-              'Authorization': authHeader,
-              'Content-Type': mimetype,
-              'Content-Length': '${bytes.length}',
-              'X-SHA-256': sha,
-            },
-            body: bytes,
-          )
-          .timeout(timeout);
-      if (res.statusCode == 200 || res.statusCode == 201) {
-        final body = jsonDecode(res.body);
-        if (body is Map && body['url'] is String) {
-          return BlossomResult(
-            url: body['url'] as String,
-            sha256: (body['sha256'] as String?) ?? sha,
-          );
-        }
+    final result = await _putToServer(
+      uploader,
+      server,
+      bytes,
+      sha: sha,
+      authHeader: authHeader,
+      mimetype: mimetype,
+      timeout: timeout,
+    );
+    if (result != null) return result;
+    // Non-success: try the next server.
+  }
+  return null;
+}
+
+/// Encodes a signed kind-24242 auth event into the `Authorization` header
+/// value. Shared by upload and speed-test delete (both use the padded
+/// base64url encoding — see [blossomUpload]).
+String _nostrAuthHeader(Event authEvent) =>
+    'Nostr ${base64Url.encode(utf8.encode(jsonEncode(authEvent.toWireObject())))}';
+
+/// A single PUT /upload attempt against ONE [server]. Returns the parsed
+/// [BlossomResult], or null on any failure (non-2xx, malformed body, network
+/// error, timeout) — the caller decides whether to retry another server.
+Future<BlossomResult?> _putToServer(
+  http.Client uploader,
+  String server,
+  List<int> bytes, {
+  required String sha,
+  required String authHeader,
+  required String mimetype,
+  required Duration timeout,
+}) async {
+  final url = '${server.replaceAll(RegExp(r'/+$'), '')}/upload';
+  try {
+    final res = await uploader
+        .put(
+          Uri.parse(url),
+          headers: <String, String>{
+            'Authorization': authHeader,
+            'Content-Type': mimetype,
+            'Content-Length': '${bytes.length}',
+            'X-SHA-256': sha,
+          },
+          body: bytes,
+        )
+        .timeout(timeout);
+    if (res.statusCode == 200 || res.statusCode == 201) {
+      final body = jsonDecode(res.body);
+      if (body is Map && body['url'] is String) {
+        return BlossomResult(
+          url: body['url'] as String,
+          sha256: (body['sha256'] as String?) ?? sha,
+        );
       }
-      // Non-success: try the next server.
-    } catch (_) {
-      // Network / decode error: try the next server.
     }
+  } catch (_) {
+    // Network / decode error — the caller decides what's next.
   }
   return null;
 }
@@ -180,6 +218,153 @@ Event _buildAuthEvent(
       <String>['expiration', '$exp'],
       <String>['size', '$size'],
       <String>['m', mimetype],
+    ],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Speed test (customize sheet 「测速」 — manual, results never persisted)
+// ---------------------------------------------------------------------------
+
+/// Size of the speed-test payload: 10 MiB.
+const int blossomSpeedTestBytesSize = 10 * 1024 * 1024;
+
+/// Generates the speed-test payload: [size] bytes of pseudo-random data,
+/// FRESH on every call. One 32-bit seed comes from [Random.secure], the rest
+/// from a fast PRNG seeded with it (filling via 32-bit writes, ~tens of ms
+/// for 10 MiB). Freshness matters: if the bytes were the same across runs, a
+/// server that dedupes by sha256 could short-circuit the re-upload and the
+/// measured "upload speed" would be fictitious.
+Uint8List blossomSpeedTestBytes({int size = blossomSpeedTestBytesSize}) {
+  final seed = Random.secure().nextInt(1 << 32);
+  final rand = Random(seed);
+  final out = Uint8List(size);
+  final data = out.buffer.asByteData();
+  var i = 0;
+  for (; i + 4 <= size; i += 4) {
+    data.setUint32(i, rand.nextInt(1 << 32));
+  }
+  for (; i < size; i++) {
+    out[i] = rand.nextInt(256);
+  }
+  return out;
+}
+
+/// Upload + download bandwidth measured against ONE Blossom server.
+/// Both speeds null = the upload failed (unreachable / auth rejected /
+/// timeout); only [downloadMBps] null = upload succeeded but download failed.
+class BlossomSpeed {
+  const BlossomSpeed({this.uploadMBps, this.downloadMBps});
+  final double? uploadMBps;
+  final double? downloadMBps;
+
+  @override
+  String toString() =>
+      'BlossomSpeed(upload: $uploadMBps MB/s, download: $downloadMBps MB/s)';
+}
+
+/// Measures real upload AND download bandwidth against ONE Blossom [server]:
+///
+/// 1. UPLOAD — PUTs [testBytes] (default: a fresh [blossomSpeedTestBytesSize]
+///    random file declared as video/mp4, i.e. the exact real-upload path with
+///    BUD-02 auth) and times the full round trip. package:http's `put` only
+///    returns after the whole body is sent and the response received, so the
+///    stopwatch spans the entire transfer — true end-to-end throughput.
+/// 2. DOWNLOAD — GETs the public URL the upload returned (whole body received
+///    before `get` returns) and times it.
+/// 3. CLEANUP — best-effort `DELETE <server>/<sha256>` (BUD delete endpoint)
+///    so repeated speed tests don't pile 10 MiB files on the server. Any
+///    delete failure (unsupported, rejected, timeout) is ignored and never
+///    taints the measured result.
+///
+/// [timeout] caps EACH direction separately (30s default ≈ 0.35 MB/s floor —
+/// a server slower than that is unusable for media uploads anyway).
+/// [client] is injectable for tests (MockClient); production shares
+/// [_uploadClient] (connection reuse, same as real uploads).
+Future<BlossomSpeed> measureBlossomSpeed(
+  Identity identity,
+  String server, {
+  List<int>? testBytes,
+  Duration timeout = const Duration(seconds: 30),
+  http.Client? client,
+}) async {
+  final bytes = testBytes ?? blossomSpeedTestBytes();
+  final sha = crypto.sha256.convert(bytes).toString();
+  final authHeader = _nostrAuthHeader(
+    _buildAuthEvent(
+      identity,
+      sha,
+      bytes.length,
+      'video/mp4',
+      'costr speed test',
+    ),
+  );
+  final c = client ?? _uploadClient;
+
+  // Upload.
+  final upSw = Stopwatch()..start();
+  final uploaded = await _putToServer(
+    c,
+    server,
+    bytes,
+    sha: sha,
+    authHeader: authHeader,
+    mimetype: 'video/mp4',
+    timeout: timeout,
+  );
+  upSw.stop();
+  if (uploaded == null) return const BlossomSpeed();
+  final uploadMBps = _mbPerSecond(bytes.length, upSw.elapsed);
+
+  // Download.
+  double? downloadMBps;
+  try {
+    final downSw = Stopwatch()..start();
+    final res = await c.get(Uri.parse(uploaded.url)).timeout(timeout);
+    downSw.stop();
+    if (res.statusCode == 200) {
+      downloadMBps = _mbPerSecond(res.bodyBytes.length, downSw.elapsed);
+    }
+  } catch (_) {
+    // Download failed / timed out — still report the upload speed.
+  }
+
+  // Best-effort cleanup.
+  try {
+    final deleteAuth = _nostrAuthHeader(_buildDeleteEvent(identity, sha));
+    await c
+        .delete(
+          Uri.parse('${server.replaceAll(RegExp(r'/+$'), '')}/$sha'),
+          headers: <String, String>{'Authorization': deleteAuth},
+        )
+        .timeout(const Duration(seconds: 5));
+  } catch (_) {
+    // Cleanup is best-effort; the result stands either way.
+  }
+
+  return BlossomSpeed(uploadMBps: uploadMBps, downloadMBps: downloadMBps);
+}
+
+/// MB/s (MiB basis, matching the UI's 「MB/s」 label) from a byte count and
+/// an elapsed time; clamps the divisor so an instant (cached) transfer can't
+/// divide by zero.
+double _mbPerSecond(int byteCount, Duration elapsed) {
+  final seconds = elapsed.inMicroseconds / Duration.microsecondsPerSecond;
+  return byteCount / (1024 * 1024) / (seconds < 0.001 ? 0.001 : seconds);
+}
+
+/// BUD delete auth event: same kind-24242 as upload auth but with
+/// `t=delete` and only the hash tag. Kept separate from [_buildAuthEvent]
+/// (which hardcodes `t=upload` plus the size/m tags).
+Event _buildDeleteEvent(Identity id, String sha256Hex) {
+  final exp = (DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600; // +1h
+  return id.signEvent(
+    kind: 24242,
+    content: 'costr speed test cleanup',
+    tags: <List<String>>[
+      <String>['t', 'delete'],
+      <String>['x', sha256Hex],
+      <String>['expiration', '$exp'],
     ],
   );
 }
