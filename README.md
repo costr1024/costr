@@ -10,9 +10,9 @@
 
 | 平台 | 版本 | 文件 |
 | --- | --- | --- |
-| Android | **1.2.6** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.2.6/app-release.apk)（≈74 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
+| Android | **1.2.7** | [`app-release.apk`](https://github.com/costr1024/costr/releases/download/v1.2.7/app-release.apk)（≈74 MB，universal APK，含 arm64/arm/x86_64/x64 全 ABI） |
 
-> 当前为正式版（v1.2.6）。Android 包 `applicationId = com.costr.costr`，用正式
+> 当前为正式版（v1.2.7）。Android 包 `applicationId = com.costr.costr`，用正式
 > release keystore 自签（SHA-256 `4851d3b7…95eeaa`）。安装需在系统设置中允许「未知来源」。
 > 桌面端（Linux/Windows/macOS）与 iOS 暂未发版，可从源码自行编译。
 >
@@ -33,7 +33,7 @@
 > （`network_security_config.xml`）：只对 127.0.0.1 放行明文，对外连接不受影响、
 > 仍全为 HTTPS。
 
-> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / v1.1.7 正式版 / v1.2.0 正式版 / v1.2.1 正式版 / v1.2.2 正式版 / v1.2.3 正式版 / v1.2.5 正式版（跳过 1.2.4，避讳 4）/ **v1.2.6 正式版**。
+> 全部历史版本见 [Releases](https://github.com/costr1024/costr/releases)（v0.1.5-beta / v0.2-beta / v0.3-beta / v0.5-beta / v0.5.5-beta / v0.6-beta / v0.6.1-beta / v0.6.2-beta / v0.6.3-beta / v0.6.4-beta / v0.6.5-beta / v0.6.6-beta / v0.6.8-beta / v0.6.9-beta / v0.8-beta / v0.8.1-beta / v0.8.2-beta / v0.8.3-beta / v0.8.4-beta / v0.8.5-beta / v0.8.6-beta / v0.8.7-beta / v0.8.8-beta / v0.8.9-beta / v0.9-beta / v0.10-beta / v0.11-beta / v0.11.1-beta / v0.11.2-beta / v0.11.3-beta / v1.0.0 正式版 / v1.0.1 正式版 / v1.0.2 正式版 / v1.0.3 正式版 / v1.0.4 正式版 / v1.0.5 正式版 / v1.0.6 正式版 / v1.0.7 正式版 / v1.0.8 正式版 / v1.0.9 正式版 / v1.0.10 正式版 / v1.1.0 正式版 / v1.1.1 正式版 / v1.1.2 正式版 / v1.1.3 正式版 / v1.1.5 正式版（跳过 1.1.4，避讳 4）/ v1.1.6 正式版 / v1.1.7 正式版 / v1.2.0 正式版 / v1.2.1 正式版 / v1.2.2 正式版 / v1.2.3 正式版 / v1.2.5 正式版（跳过 1.2.4，避讳 4）/ v1.2.6 正式版 / **v1.2.7 正式版**。
 
 ---
 
